@@ -41,7 +41,7 @@ export function GamesScreen() {
         {games.map((g) => (
           <Link
             key={g.name}
-            href="/league/match"
+            href="/match"
             style={{
               cursor: "pointer",
               background: SQ.panel,

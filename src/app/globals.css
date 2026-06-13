@@ -12,19 +12,14 @@
 
   html,
   body {
-    background: #05060a;
-    color: #e5e7eb;
-    font-family: var(--font-sans);
+    background: #0e0f13;
+    color: #f2f1ed;
+    font-family: var(--font-sq-sans), "Archivo", system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
 
   body {
-    background-image:
-      radial-gradient(1200px 600px at 80% -10%, rgba(168, 85, 247, 0.12), transparent 60%),
-      radial-gradient(1000px 600px at -10% 10%, rgba(0, 229, 255, 0.10), transparent 60%),
-      linear-gradient(180deg, #05060a 0%, #05060a 60%, #07091a 100%);
-    background-attachment: fixed;
     min-height: 100vh;
   }
 

@@ -14,7 +14,7 @@ export function FranchiseScreen() {
   return (
     <div>
       <Link
-        href="/league/franchises"
+        href="/franchises"
         style={{
           fontFamily: FONT.mono,
           fontSize: 11,
@@ -133,7 +133,7 @@ export function FranchiseScreen() {
           {roster.map((p) => (
             <Link
               key={p.name}
-              href="/league/player"
+              href="/player"
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -183,7 +183,7 @@ export function FranchiseScreen() {
               {franchiseGames.map((g) => (
                 <Link
                   key={g.match}
-                  href="/league/match"
+                  href="/match"
                   style={{
                     display: "flex",
                     alignItems: "center",

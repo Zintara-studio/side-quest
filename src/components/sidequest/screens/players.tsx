@@ -83,7 +83,7 @@ export function PlayersScreen() {
           {players.map((p, i) => (
             <Link
               key={p.rank}
-              href="/league/player"
+              href="/player"
               style={{
                 display: "flex",
                 alignItems: "center",

@@ -148,7 +148,7 @@ export function RegisterScreen() {
                 </div>
               ))}
             </div>
-            <Link href="/league/player" style={submitBtn}>
+            <Link href="/player" style={submitBtn}>
               Submit registration ▸
             </Link>
           </div>
@@ -195,7 +195,7 @@ export function RegisterScreen() {
             <Field>Raghavan Iyer</Field>
             <div style={{ ...fieldLabel, margin: "20px 0 8px" }}>CONTACT</div>
             <ContactRow />
-            <Link href="/league/match" style={submitBtn}>
+            <Link href="/match" style={submitBtn}>
               Lock squad &amp; register ▸
             </Link>
           </div>

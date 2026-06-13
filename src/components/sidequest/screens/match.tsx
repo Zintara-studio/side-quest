@@ -53,7 +53,7 @@ function TeamCard({
       {roster.map((p) => (
         <Link
           key={p.name}
-          href="/league/player"
+          href="/player"
           style={{
             display: "flex",
             alignItems: "center",
@@ -88,7 +88,7 @@ export function MatchScreen() {
   return (
     <div>
       <Link
-        href="/league"
+        href="/"
         style={{
           fontFamily: FONT.mono,
           fontSize: 11,

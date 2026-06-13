@@ -75,7 +75,7 @@ export function HomeScreen() {
 
         {/* live match card */}
         <Link
-          href="/league/match"
+          href="/match"
           style={{
             cursor: "pointer",
             width: "min(420px,100%)",
@@ -223,7 +223,7 @@ export function HomeScreen() {
           >
             <div style={sectionLabel}>Franchise Standings</div>
             <Link
-              href="/league/franchises"
+              href="/franchises"
               style={{
                 fontFamily: FONT.mono,
                 fontSize: 11,
@@ -257,7 +257,7 @@ export function HomeScreen() {
                 return (
                   <Link
                     key={t.rank}
-                    href="/league/franchise"
+                    href="/franchise"
                     style={{
                       display: "flex",
                       alignItems: "center",
@@ -338,7 +338,7 @@ export function HomeScreen() {
           {upcoming.map((u, i) => (
             <Link
               key={i}
-              href="/league/match"
+              href="/match"
               style={{
                 display: "flex",
                 gap: 14,
@@ -373,7 +373,7 @@ export function HomeScreen() {
           {announceShort.map((a) => (
             <Link
               key={a.title}
-              href="/league/announcements"
+              href="/announcements"
               style={{
                 display: "flex",
                 alignItems: "center",

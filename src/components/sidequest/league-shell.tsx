@@ -7,21 +7,21 @@ import { cn } from "@/lib/utils";
 import { SQ, FONT } from "./tokens";
 
 const navLinks = [
-  { key: "home", label: "Home", href: "/league" },
-  { key: "games", label: "Games", href: "/league/games" },
-  { key: "franchises", label: "Franchises", href: "/league/franchises" },
-  { key: "players", label: "Players", href: "/league/players" },
-  { key: "match", label: "History", href: "/league/match" },
-  { key: "announcements", label: "Announcements", href: "/league/announcements" },
+  { key: "home", label: "Home", href: "/" },
+  { key: "games", label: "Games", href: "/games" },
+  { key: "franchises", label: "Franchises", href: "/franchises" },
+  { key: "players", label: "Players", href: "/players" },
+  { key: "match", label: "History", href: "/match" },
+  { key: "announcements", label: "Announcements", href: "/announcements" },
 ];
 
 function activeKey(pathname: string): string {
-  if (pathname === "/league") return "home";
-  if (pathname.startsWith("/league/games")) return "games";
-  if (pathname.startsWith("/league/franchise")) return "franchises"; // franchises + franchise
-  if (pathname.startsWith("/league/player")) return "players"; // players + player
-  if (pathname.startsWith("/league/match")) return "match";
-  if (pathname.startsWith("/league/announcements")) return "announcements";
+  if (pathname === "/") return "home";
+  if (pathname.startsWith("/games")) return "games";
+  if (pathname.startsWith("/franchise")) return "franchises"; // franchises + franchise
+  if (pathname.startsWith("/player")) return "players"; // players + player
+  if (pathname.startsWith("/match")) return "match";
+  if (pathname.startsWith("/announcements")) return "announcements";
   return "home";
 }
 
@@ -32,7 +32,7 @@ export function LeagueShell({
   children: ReactNode;
   fontClass: string;
 }) {
-  const pathname = usePathname() ?? "/league";
+  const pathname = usePathname() ?? "/";
   const cur = activeKey(pathname);
 
   return (
@@ -63,7 +63,7 @@ export function LeagueShell({
         }}
       >
         <Link
-          href="/league"
+          href="/"
           style={{
             display: "flex",
             alignItems: "center",
@@ -133,7 +133,7 @@ export function LeagueShell({
 
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           <Link
-            href="/league/register"
+            href="/register"
             style={{
               fontFamily: FONT.mono,
               fontSize: 11,
@@ -151,7 +151,7 @@ export function LeagueShell({
             Register ▸
           </Link>
           <Link
-            href="/league/player"
+            href="/player"
             style={{
               display: "flex",
               alignItems: "center",

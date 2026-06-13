@@ -14,7 +14,7 @@ export function PlayerScreen() {
   return (
     <div>
       <Link
-        href="/league/players"
+        href="/players"
         style={{
           fontFamily: FONT.mono,
           fontSize: 11,
@@ -76,7 +76,7 @@ export function PlayerScreen() {
           </div>
         </div>
         <Link
-          href="/league/franchise"
+          href="/franchise"
           style={{
             cursor: "pointer",
             fontFamily: FONT.mono,
@@ -191,7 +191,7 @@ export function PlayerScreen() {
               {playerMatches.map((m) => (
                 <Link
                   key={m.match}
-                  href="/league/match"
+                  href="/match"
                   style={{
                     display: "flex",
                     alignItems: "center",

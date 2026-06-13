@@ -84,7 +84,7 @@ export function FranchisesScreen() {
             return (
               <Link
                 key={t.rank}
-                href="/league/franchise"
+                href="/franchise"
                 style={{
                   display: "flex",
                   alignItems: "center",

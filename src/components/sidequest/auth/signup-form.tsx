@@ -1,0 +1,92 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { SQ } from "../tokens";
+import {
+  AuthCard,
+  AuthField,
+  AuthSubmit,
+  OrDivider,
+  SocialRow,
+  AuthFootnote,
+  authLinkStyle,
+} from "./auth-ui";
+
+export function SignupForm() {
+  const router = useRouter();
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    router.push("/2fa");
+  };
+
+  return (
+    <AuthCard
+      eyebrow="Season 04"
+      title="CREATE ACCOUNT"
+      subtitle="Join the league — claim your handle, then register for a title."
+    >
+      <form onSubmit={onSubmit}>
+        <AuthField
+          label="DISPLAY NAME"
+          name="name"
+          placeholder="e.g. Raghavan"
+          autoComplete="name"
+          required
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+        <AuthField
+          label="EMAIL"
+          type="email"
+          name="email"
+          placeholder="you@email.com"
+          autoComplete="email"
+          required
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
+        <AuthField
+          label="PASSWORD"
+          type="password"
+          name="password"
+          placeholder="At least 8 characters"
+          autoComplete="new-password"
+          minLength={8}
+          required
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+        <label
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 9,
+            fontSize: 12.5,
+            color: SQ.mute,
+            lineHeight: 1.5,
+            margin: "2px 0 18px",
+            cursor: "pointer",
+          }}
+        >
+          <input type="checkbox" required style={{ accentColor: SQ.red, marginTop: 2 }} />
+          I agree to the Side Quest league rules &amp; fair-play policy.
+        </label>
+        <AuthSubmit>Create account ▸</AuthSubmit>
+      </form>
+      <OrDivider />
+      <SocialRow />
+      <AuthFootnote>
+        Already registered?{" "}
+        <Link href="/login" style={authLinkStyle}>
+          Sign in
+        </Link>
+      </AuthFootnote>
+    </AuthCard>
+  );
+}

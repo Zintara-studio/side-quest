@@ -138,6 +138,15 @@
   border-radius: 4px;
 }
 
+/* Side Quest auth inputs */
+.sq-field::placeholder {
+  color: #8a8c93;
+}
+.sq-field:focus {
+  border-color: #ff3d2e;
+  outline: none;
+}
+
 @layer utilities {
   .no-scrollbar::-webkit-scrollbar {
     display: none;

@@ -1,0 +1,29 @@
+spring:
+  application:
+    name: ai-recommendation-service
+  main:
+    web-application-type: servlet
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    consumer:
+      group-id: ai-recommendation-service
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+
+server:
+  port: 8094
+  shutdown: graceful
+
+management:
+  endpoints:
+    web.exposure.include: health,info,prometheus
+
+esports:
+  vector:
+    backend: ${VECTOR_BACKEND:qdrant}
+    url: ${VECTOR_URL:http://localhost:6333}
+    collection: ${VECTOR_COLLECTION:player-embeddings}
+  llm:
+    provider: ${LLM_PROVIDER:anthropic}
+    model: ${LLM_MODEL:claude-sonnet-4-6}
+    api-key: ${LLM_API_KEY:}

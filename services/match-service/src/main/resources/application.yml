@@ -1,0 +1,34 @@
+spring:
+  application:
+    name: match-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/matches}
+    username: ${DB_USER:matches}
+    password: ${DB_PASSWORD:matches}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+  elasticsearch:
+    uris: ${ES_URIS:http://localhost:9200}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    consumer:
+      group-id: match-service
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+
+server:
+  port: 8086
+  shutdown: graceful
+
+management:
+  endpoints:
+    web.exposure.include: health,info,prometheus

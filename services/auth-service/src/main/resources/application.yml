@@ -1,0 +1,44 @@
+spring:
+  application:
+    name: auth-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/auth}
+    username: ${DB_USER:auth}
+    password: ${DB_PASSWORD:auth}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc.time_zone: UTC
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    producer:
+      acks: all
+      properties:
+        enable.idempotence: true
+    consumer:
+      group-id: auth-service
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+
+server:
+  port: 8081
+  shutdown: graceful
+
+management:
+  endpoints:
+    web.exposure.include: health,info,prometheus
+  endpoint:
+    health.probes.enabled: true
+
+esports:
+  jwt:
+    issuer: https://auth.esports.local
+    access-ttl: 900s
+    refresh-ttl: 30d
+    signing-key: ${JWT_SIGNING_KEY:dev-only-change-me}

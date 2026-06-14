@@ -1,0 +1,8 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/auctions
+    username: auctions
+    password: auctions
+logging:
+  level:
+    com.esports.auction: DEBUG

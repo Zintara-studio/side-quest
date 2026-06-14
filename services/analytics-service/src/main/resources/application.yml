@@ -1,0 +1,29 @@
+spring:
+  application:
+    name: analytics-service
+  elasticsearch:
+    uris: ${ES_URIS:http://localhost:9200}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    streams:
+      application-id: analytics-streams
+      properties:
+        processing.guarantee: exactly_once_v2
+        num.stream.threads: 4
+  graphql:
+    graphiql:
+      enabled: true
+
+server:
+  port: 8089
+  shutdown: graceful
+
+management:
+  endpoints:
+    web.exposure.include: health,info,prometheus
+
+esports:
+  clickhouse:
+    url: ${CLICKHOUSE_URL:jdbc:ch://localhost:8123/analytics}
+    user: ${CLICKHOUSE_USER:default}
+    password: ${CLICKHOUSE_PASSWORD:}

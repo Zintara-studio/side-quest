@@ -1,0 +1,42 @@
+spring:
+  application:
+    name: auction-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/auctions}
+    username: ${DB_USER:auctions}
+    password: ${DB_PASSWORD:auctions}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    producer:
+      acks: all
+      properties:
+        enable.idempotence: true
+    consumer:
+      group-id: auction-service
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+
+server:
+  port: 8087
+  shutdown: graceful
+
+management:
+  endpoints:
+    web.exposure.include: health,info,prometheus
+
+esports:
+  auction:
+    anti-snipe-seconds: 15
+    bid-lock-ttl-ms: 2000
+    autobid-batch-size: 32

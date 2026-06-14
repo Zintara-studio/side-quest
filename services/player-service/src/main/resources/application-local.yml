@@ -1,0 +1,8 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/players
+    username: players
+    password: players
+logging:
+  level:
+    com.esports.player: DEBUG

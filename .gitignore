@@ -1,0 +1,33 @@
+# --- Maven / Java build ---
+target/
+build/
+*.class
+*.jar
+*.war
+!**/.mvn/wrapper/maven-wrapper.jar
+dependency-reduced-pom.xml
+
+# --- Logs ---
+*.log
+logs/
+
+# --- IDE ---
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.project
+.classpath
+.factorypath
+*.swp
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Local / secrets ---
+.claude/settings.local.json
+*.local.env
+.env

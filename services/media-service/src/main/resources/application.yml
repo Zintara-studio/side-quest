@@ -1,0 +1,39 @@
+spring:
+  application:
+    name: media-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/media}
+    username: ${DB_USER:media}
+    password: ${DB_PASSWORD:media}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    consumer:
+      group-id: media-service
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+  servlet:
+    multipart:
+      max-file-size: 1GB
+      max-request-size: 1GB
+
+server:
+  port: 8092
+  shutdown: graceful
+
+management:
+  endpoints:
+    web.exposure.include: health,info,prometheus
+
+esports:
+  storage:
+    backend: ${MEDIA_BACKEND:s3}
+    bucket: ${MEDIA_BUCKET:esports-media}
+    region: ${MEDIA_REGION:us-east-1}
+    endpoint: ${MEDIA_ENDPOINT:}

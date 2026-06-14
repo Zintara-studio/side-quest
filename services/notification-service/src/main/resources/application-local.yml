@@ -1,8 +1,0 @@
-spring:
-  datasource:
-    url: jdbc:postgresql://localhost:5432/notifications
-    username: notifications
-    password: notifications
-logging:
-  level:
-    com.esports.notification: DEBUG

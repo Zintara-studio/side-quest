@@ -1,0 +1,12 @@
+# Keep the build context small and reproducible
+.git/
+.github/
+.claude/
+target/
+*.log
+*.md
+!README.md
+.idea/
+*.iml
+.vscode/
+.DS_Store

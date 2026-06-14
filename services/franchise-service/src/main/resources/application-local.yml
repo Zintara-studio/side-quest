@@ -1,8 +1,0 @@
-spring:
-  datasource:
-    url: jdbc:postgresql://localhost:5432/franchises
-    username: franchises
-    password: franchises
-logging:
-  level:
-    com.esports.franchise: DEBUG

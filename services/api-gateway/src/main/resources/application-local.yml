@@ -1,4 +1,0 @@
-logging:
-  level:
-    com.esports.gateway: DEBUG
-    org.springframework.cloud.gateway: INFO

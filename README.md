@@ -70,4 +70,4 @@ src/
 
 - All data lives in `src/lib/mock/*`.
 - The auction room uses a `MockSocket` that emits randomized `bid:new` events every 2–5s.
-- No real authentication — form validation only.
+- No real authentication — form validation only. hulla bulla

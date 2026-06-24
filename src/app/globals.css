@@ -7,13 +7,82 @@
     --font-display: "Space Grotesk", "Inter", system-ui, sans-serif;
     --font-sans: "Inter", system-ui, sans-serif;
     --font-mono: "JetBrains Mono", ui-monospace, monospace;
+    color-scheme: light;
+
+    /* ===== Warm Paper (light) theme ===== */
+    --sq-bg: #f2ebdf;
+    --sq-league: #fbf7f1;
+    --sq-sidebar: #efe7d8;
+    --sq-panel: #ffffff;
+    --sq-inset: #f6f0e6;
+    --sq-ink: #2b2622;
+    --sq-red: #e8602c;
+    --sq-ember: #c2521e;
+    --sq-green: #1f9d63;
+    --sq-amber: #b5831a;
+    --sq-blue: #3b6fd4;
+    --sq-faint: #5c554c;
+    --sq-mute: #6e665b;
+    --sq-dim: #94897a;
+    --sq-label: #8a8174;
+    --sq-steel: #a89c8b;
+    --sq-slate: #9a9082;
+    --sq-hairline: rgba(43, 38, 34, 0.12);
+    --sq-hairline-soft: rgba(43, 38, 34, 0.07);
+    --sq-hairline-faint: rgba(43, 38, 34, 0.08);
+    --sq-hairline-cell: rgba(43, 38, 34, 0.09);
+    --sq-input-border: rgba(43, 38, 34, 0.2);
+    --sq-field: rgba(43, 38, 34, 0.16);
+    --sq-avatar: #eadfcf;
+    --sq-avatar-border: rgba(43, 38, 34, 0.14);
+    --sq-nav-bg: rgba(251, 247, 241, 0.9);
+    --sq-nav-bg-admin: rgba(242, 235, 223, 0.92);
+    --sq-avatar-grad: linear-gradient(135deg, #eadfcf, #d9c9b2);
+    --sq-hatch: repeating-linear-gradient(45deg, #f0e6d6, #f0e6d6 12px, #e9ddc9 12px, #e9ddc9 24px);
+    --sq-track: rgba(43, 38, 34, 0.1);
+    --sq-toggle-off: #c9bba6;
+  }
+
+  /* ===== Warm Espresso (dark) theme ===== */
+  :root[data-theme="dark"] {
     color-scheme: dark;
+    --sq-bg: #1a1714;
+    --sq-league: #1e1b18;
+    --sq-sidebar: #211d19;
+    --sq-panel: #27231f;
+    --sq-inset: #211d19;
+    --sq-ink: #ece4d8;
+    --sq-red: #ee6a38;
+    --sq-ember: #f2885e;
+    --sq-green: #4ecb8e;
+    --sq-amber: #e0ae4a;
+    --sq-blue: #7aa6f0;
+    --sq-faint: #c9bfb0;
+    --sq-mute: #a89e8f;
+    --sq-dim: #8a8073;
+    --sq-label: #978c7d;
+    --sq-steel: #7c7264;
+    --sq-slate: #8c8275;
+    --sq-hairline: rgba(255, 247, 235, 0.12);
+    --sq-hairline-soft: rgba(255, 247, 235, 0.06);
+    --sq-hairline-faint: rgba(255, 247, 235, 0.07);
+    --sq-hairline-cell: rgba(255, 247, 235, 0.08);
+    --sq-input-border: rgba(255, 247, 235, 0.18);
+    --sq-field: rgba(255, 247, 235, 0.16);
+    --sq-avatar: #322c26;
+    --sq-avatar-border: rgba(255, 247, 235, 0.14);
+    --sq-nav-bg: rgba(30, 27, 24, 0.9);
+    --sq-nav-bg-admin: rgba(26, 23, 20, 0.92);
+    --sq-avatar-grad: linear-gradient(135deg, #3a332c, #262019);
+    --sq-hatch: repeating-linear-gradient(45deg, #2a251f, #2a251f 12px, #322c25 12px, #322c25 24px);
+    --sq-track: rgba(255, 247, 235, 0.1);
+    --sq-toggle-off: #4a4138;
   }
 
   html,
   body {
-    background: #0e0f13;
-    color: #f2f1ed;
+    background: var(--sq-league);
+    color: var(--sq-ink);
     font-family: var(--font-sq-sans), "Archivo", system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
@@ -24,8 +93,8 @@
   }
 
   ::selection {
-    background: rgba(0, 229, 255, 0.35);
-    color: #fff;
+    background: rgba(232, 96, 44, 0.24);
+    color: var(--sq-ink);
   }
 
   ::-webkit-scrollbar {
@@ -36,12 +105,14 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: linear-gradient(180deg, #1a1f33, #0f1220);
+    background: var(--sq-input-border);
     border-radius: 9999px;
-    border: 2px solid #05060a;
+    border: 2px solid transparent;
+    background-clip: padding-box;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: linear-gradient(180deg, #2a3150, #141833);
+    background: var(--sq-field);
+    background-clip: padding-box;
   }
 }
 
@@ -133,17 +204,17 @@
   background: transparent;
 }
 .admin-scope ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--sq-input-border);
   border: 0;
   border-radius: 4px;
 }
 
 /* Side Quest auth inputs */
 .sq-field::placeholder {
-  color: #8a8c93;
+  color: var(--sq-label);
 }
 .sq-field:focus {
-  border-color: #ff3d2e;
+  border-color: var(--sq-red);
   outline: none;
 }
 

@@ -4,10 +4,12 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { SQ, FONT } from "../tokens";
+import { useAuth, apiErrorMessage } from "@/lib/auth/context";
 import {
   AuthCard,
   AuthField,
   AuthSubmit,
+  AuthError,
   OrDivider,
   SocialRow,
   AuthFootnote,
@@ -16,12 +18,24 @@ import {
 
 export function LoginForm() {
   const router = useRouter();
+  const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
 
-  const onSubmit = (e: React.FormEvent) => {
+  const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    router.push("/");
+    setError(null);
+    setPending(true);
+    try {
+      const role = await login({ identifier: email, password });
+      router.push(role === "ADMIN" ? "/admin" : "/");
+    } catch (err) {
+      setError(apiErrorMessage(err, "Invalid email or password."));
+    } finally {
+      setPending(false);
+    }
   };
 
   return (
@@ -40,6 +54,7 @@ export function LoginForm() {
         <AuthField
           label="PASSWORD"
           type="password"
+          reveal
           name="password"
           placeholder="••••••••"
           autoComplete="current-password"
@@ -81,7 +96,8 @@ export function LoginForm() {
             Forgot?
           </Link>
         </div>
-        <AuthSubmit>Sign in ▸</AuthSubmit>
+        <AuthError>{error}</AuthError>
+        <AuthSubmit disabled={pending}>{pending ? "Signing in…" : "Sign in ▸"}</AuthSubmit>
       </form>
       <OrDivider />
       <SocialRow />

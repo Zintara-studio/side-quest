@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Archivo, Archivo_Black, Spline_Sans_Mono } from "next/font/google";
 import "./globals.css";
+import { Providers } from "./providers";
 
 const archivo = Archivo({
   subsets: ["latin"],
@@ -33,7 +34,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0E0F13",
+  themeColor: "#FBF7F1",
   width: "device-width",
   initialScale: 1,
 };
@@ -46,10 +47,19 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${archivo.variable} ${archivoBlack.variable} ${splineMono.variable} dark`}
+      className={`${archivo.variable} ${archivoBlack.variable} ${splineMono.variable}`}
       suppressHydrationWarning
     >
-      <body className="min-h-screen antialiased">{children}</body>
+      <body className="min-h-screen antialiased">
+        {/* Apply the saved/system theme before paint to avoid a flash of the wrong theme. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "(function(){try{var t=localStorage.getItem('sq-theme');if(t!=='light'&&t!=='dark'){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.dataset.theme=t;}catch(e){document.documentElement.dataset.theme='light';}})();",
+          }}
+        />
+        <Providers>{children}</Providers>
+      </body>
     </html>
   );
 }

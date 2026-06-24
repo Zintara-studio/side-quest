@@ -4,10 +4,12 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { SQ } from "../tokens";
+import { useAuth, apiErrorMessage } from "@/lib/auth/context";
 import {
   AuthCard,
   AuthField,
   AuthSubmit,
+  AuthError,
   OrDivider,
   SocialRow,
   AuthFootnote,
@@ -16,13 +18,31 @@ import {
 
 export function SignupForm() {
   const router = useRouter();
+  const { signup } = useAuth();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
 
-  const onSubmit = (e: React.FormEvent) => {
+  const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    router.push("/2fa");
+    setError(null);
+    if (password !== confirm) {
+      setError("Passwords do not match.");
+      return;
+    }
+    setPending(true);
+    try {
+      // Backend has no 2FA/email-verification step yet — registration returns a live session.
+      const role = await signup({ name, email, password });
+      router.push(role === "ADMIN" ? "/admin" : "/");
+    } catch (err) {
+      setError(apiErrorMessage(err, "Could not create account."));
+    } finally {
+      setPending(false);
+    }
   };
 
   return (
@@ -54,6 +74,7 @@ export function SignupForm() {
         <AuthField
           label="PASSWORD"
           type="password"
+          reveal
           name="password"
           placeholder="At least 8 characters"
           autoComplete="new-password"
@@ -61,6 +82,18 @@ export function SignupForm() {
           required
           value={password}
           onChange={(e) => setPassword(e.target.value)}
+        />
+        <AuthField
+          label="CONFIRM PASSWORD"
+          type="password"
+          reveal
+          name="confirmPassword"
+          placeholder="Re-enter your password"
+          autoComplete="new-password"
+          minLength={8}
+          required
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
         />
         <label
           style={{
@@ -77,7 +110,10 @@ export function SignupForm() {
           <input type="checkbox" required style={{ accentColor: SQ.red, marginTop: 2 }} />
           I agree to the Side Quest league rules &amp; fair-play policy.
         </label>
-        <AuthSubmit>Create account ▸</AuthSubmit>
+        <AuthError>{error}</AuthError>
+        <AuthSubmit disabled={pending}>
+          {pending ? "Creating account…" : "Create account ▸"}
+        </AuthSubmit>
       </form>
       <OrDivider />
       <SocialRow />

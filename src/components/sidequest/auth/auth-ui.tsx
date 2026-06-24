@@ -1,4 +1,6 @@
-import type { ReactNode, InputHTMLAttributes } from "react";
+"use client";
+
+import { useState, type ReactNode, type InputHTMLAttributes } from "react";
 import { SQ, FONT } from "../tokens";
 
 const fieldLabel = {
@@ -62,34 +64,71 @@ export function AuthCard({
 
 export function AuthField({
   label,
+  reveal = false,
   ...props
-}: { label: string } & Omit<InputHTMLAttributes<HTMLInputElement>, "style">) {
+}: { label: string; reveal?: boolean } & Omit<InputHTMLAttributes<HTMLInputElement>, "style">) {
+  const [show, setShow] = useState(false);
+  const type = reveal ? (show ? "text" : "password") : props.type;
   return (
     <label style={{ display: "block", marginBottom: 16 }}>
       <div style={fieldLabel}>{label}</div>
-      <input
-        className="sq-field"
-        {...props}
-        style={{
-          width: "100%",
-          marginTop: 8,
-          background: SQ.inset,
-          border: `1px solid ${SQ.field}`,
-          borderRadius: 5,
-          padding: "12px 14px",
-          fontSize: 14,
-          color: SQ.ink,
-          fontFamily: FONT.sans,
-        }}
-      />
+      <div style={{ position: "relative" }}>
+        <input
+          className="sq-field"
+          {...props}
+          type={type}
+          style={{
+            width: "100%",
+            marginTop: 8,
+            background: SQ.inset,
+            border: `1px solid ${SQ.field}`,
+            borderRadius: 5,
+            padding: "12px 14px",
+            paddingRight: reveal ? 62 : 14,
+            fontSize: 14,
+            color: SQ.ink,
+            fontFamily: FONT.sans,
+          }}
+        />
+        {reveal ? (
+          <button
+            type="button"
+            onClick={() => setShow((s) => !s)}
+            aria-label={show ? "Hide password" : "Show password"}
+            style={{
+              position: "absolute",
+              right: 8,
+              top: "calc(50% + 4px)",
+              transform: "translateY(-50%)",
+              background: "transparent",
+              border: "none",
+              cursor: "pointer",
+              fontFamily: FONT.mono,
+              fontSize: 10.5,
+              letterSpacing: ".1em",
+              color: SQ.ember,
+              padding: "4px 6px",
+            }}
+          >
+            {show ? "HIDE" : "SHOW"}
+          </button>
+        ) : null}
+      </div>
     </label>
   );
 }
 
-export function AuthSubmit({ children }: { children: ReactNode }) {
+export function AuthSubmit({
+  children,
+  disabled = false,
+}: {
+  children: ReactNode;
+  disabled?: boolean;
+}) {
   return (
     <button
       type="submit"
+      disabled={disabled}
       style={{
         width: "100%",
         marginTop: 8,
@@ -103,11 +142,34 @@ export function AuthSubmit({ children }: { children: ReactNode }) {
         border: "none",
         padding: 13,
         borderRadius: 5,
-        cursor: "pointer",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.6 : 1,
       }}
     >
       {children}
     </button>
+  );
+}
+
+/** Inline form-level error banner shown above the submit button. */
+export function AuthError({ children }: { children: ReactNode }) {
+  if (!children) return null;
+  return (
+    <div
+      role="alert"
+      style={{
+        margin: "0 0 14px",
+        padding: "10px 12px",
+        borderRadius: 5,
+        background: "rgba(232,96,44,.10)",
+        border: `1px solid ${SQ.red}`,
+        color: SQ.ember,
+        fontSize: 12.5,
+        lineHeight: 1.45,
+      }}
+    >
+      {children}
+    </div>
   );
 }
 

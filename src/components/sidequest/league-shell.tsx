@@ -1,9 +1,12 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/lib/auth/context";
+import { ThemeToggle } from "@/lib/theme";
+import { NotificationBell } from "./notification-bell";
 import { SQ, FONT } from "./tokens";
 
 const navLinks = [
@@ -22,6 +25,7 @@ function activeKey(pathname: string): string {
   if (pathname.startsWith("/player")) return "players"; // players + player
   if (pathname.startsWith("/match")) return "match";
   if (pathname.startsWith("/announcements")) return "announcements";
+  if (pathname.startsWith("/my")) return "my";
   return "home";
 }
 
@@ -34,6 +38,20 @@ export function LeagueShell({
 }) {
   const pathname = usePathname() ?? "/";
   const cur = activeKey(pathname);
+  const router = useRouter();
+  const { user, playerId, isAuthenticated, isAdmin, hydrated, logout } = useAuth();
+
+  // Admins belong in the control room — bounce them out of the public site.
+  useEffect(() => {
+    if (hydrated && isAdmin) {
+      router.replace("/admin");
+    }
+  }, [hydrated, isAdmin, router]);
+
+  const onLogout = async () => {
+    await logout();
+    router.push("/");
+  };
 
   return (
     <div
@@ -57,7 +75,7 @@ export function LeagueShell({
           gap: "14px 22px",
           flexWrap: "wrap",
           padding: "13px clamp(16px,4vw,30px)",
-          background: "rgba(14,15,19,.92)",
+          background: SQ.navBg,
           backdropFilter: "blur(12px)",
           borderBottom: `1px solid ${SQ.hairline}`,
         }}
@@ -129,63 +147,137 @@ export function LeagueShell({
               </Link>
             );
           })}
+          {isAuthenticated && user && user.role !== "ADMIN" ? (
+            <Link
+              href="/my/registrations"
+              style={{
+                fontFamily: FONT.mono,
+                fontSize: 11.5,
+                letterSpacing: ".16em",
+                textTransform: "uppercase",
+                color: cur === "my" ? SQ.ink : SQ.mute,
+                textDecoration: "none",
+                paddingBottom: 4,
+                borderBottom: `2px solid ${cur === "my" ? SQ.red : "transparent"}`,
+                whiteSpace: "nowrap",
+              }}
+            >
+              My Team
+            </Link>
+          ) : null}
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <Link
-            href="/register"
-            style={{
-              fontFamily: FONT.mono,
-              fontSize: 11,
-              letterSpacing: ".14em",
-              textTransform: "uppercase",
-              color: SQ.league,
-              background: SQ.red,
-              padding: "9px 15px",
-              borderRadius: 4,
-              fontWeight: 700,
-              textDecoration: "none",
-              whiteSpace: "nowrap",
-            }}
-          >
-            Register ▸
-          </Link>
-          <Link
-            href="/player"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 9,
-              cursor: "pointer",
-              borderLeft: "1px solid rgba(255,255,255,.12)",
-              paddingLeft: 14,
-              textDecoration: "none",
-              color: SQ.ink,
-            }}
-          >
+          <NotificationBell />
+          <ThemeToggle />
+          {isAuthenticated && user ? (
             <div
               style={{
-                width: 30,
-                height: 30,
-                borderRadius: "50%",
-                background: "linear-gradient(135deg,#3a3d46,#1c1e24)",
-                border: `1px solid ${SQ.inputBorder}`,
+                display: "flex",
+                alignItems: "center",
+                gap: 9,
+                borderLeft: `1px solid ${SQ.avatarBorder}`,
+                paddingLeft: 14,
               }}
-            />
-            <div style={{ lineHeight: 1.2 }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>Raghavan</div>
-              <div
+            >
+              <Link
+                href={user.role === "ADMIN" ? "/admin" : playerId ? `/player/${playerId}` : "/player"}
                 style={{
-                  fontFamily: FONT.mono,
-                  fontSize: 9.5,
-                  letterSpacing: ".1em",
-                  color: SQ.label,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 9,
+                  cursor: "pointer",
+                  textDecoration: "none",
+                  color: SQ.ink,
                 }}
               >
-                RXG · IGL
-              </div>
+                <div
+                  style={{
+                    width: 30,
+                    height: 30,
+                    borderRadius: "50%",
+                    background: SQ.avatarGrad,
+                    border: `1px solid ${SQ.inputBorder}`,
+                  }}
+                />
+                <div style={{ lineHeight: 1.2 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{user.name}</div>
+                  <div
+                    style={{
+                      fontFamily: FONT.mono,
+                      fontSize: 9.5,
+                      letterSpacing: ".1em",
+                      color: SQ.label,
+                    }}
+                  >
+                    {user.role}
+                  </div>
+                </div>
+              </Link>
+              <button
+                type="button"
+                onClick={onLogout}
+                title="Sign out"
+                style={{
+                  fontFamily: FONT.mono,
+                  fontSize: 10,
+                  letterSpacing: ".12em",
+                  textTransform: "uppercase",
+                  color: SQ.mute,
+                  background: "transparent",
+                  border: `1px solid ${SQ.inputBorder}`,
+                  padding: "7px 10px",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                }}
+              >
+                Sign out
+              </button>
             </div>
-          </Link>
+          ) : (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                borderLeft: `1px solid ${SQ.avatarBorder}`,
+                paddingLeft: 14,
+              }}
+            >
+              <Link
+                href="/login"
+                style={{
+                  fontFamily: FONT.mono,
+                  fontSize: 11,
+                  letterSpacing: ".14em",
+                  textTransform: "uppercase",
+                  color: SQ.faint,
+                  textDecoration: "none",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Sign in
+              </Link>
+              <Link
+                href="/signup"
+                style={{
+                  fontFamily: FONT.mono,
+                  fontSize: 11,
+                  letterSpacing: ".14em",
+                  textTransform: "uppercase",
+                  color: SQ.league,
+                  background: SQ.red,
+                  padding: "9px 15px",
+                  borderRadius: 4,
+                  fontWeight: 700,
+                  textDecoration: "none",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Create account ▸
+              </Link>
+            </div>
+          )}
         </div>
       </nav>
 

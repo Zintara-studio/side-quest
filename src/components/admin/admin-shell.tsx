@@ -1,15 +1,18 @@
 "use client";
 
-import type { ReactNode, CSSProperties } from "react";
+import { useEffect, type ReactNode, type CSSProperties } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { ThemeToggle } from "@/lib/theme";
+import { useAuth } from "@/lib/auth/context";
+import { useCurrentSeason, useRegistrations } from "@/lib/query/hooks";
 import { SQ, FONT } from "./tokens";
 
 interface NavItem {
   href: string;
   label: string;
-  badge?: string;
+  badgeKey?: "registrations";
 }
 interface NavGroup {
   label: string;
@@ -22,7 +25,8 @@ const navGroups: NavGroup[] = [
     items: [
       { href: "/admin", label: "Overview" },
       { href: "/admin/matches", label: "Matches" },
-      { href: "/admin/registrations", label: "Registrations", badge: "14" },
+      { href: "/admin/registrations", label: "Registrations", badgeKey: "registrations" },
+      { href: "/admin/disputes", label: "Disputes" },
     ],
   },
   {
@@ -34,7 +38,13 @@ const navGroups: NavGroup[] = [
     ],
   },
   { label: "COMMS", items: [{ href: "/admin/announcements", label: "Announcements" }] },
-  { label: "SYSTEM", items: [{ href: "/admin/settings", label: "Settings" }] },
+  {
+    label: "SYSTEM",
+    items: [
+      { href: "/admin/history", label: "History" },
+      { href: "/admin/settings", label: "Settings" },
+    ],
+  },
 ];
 
 const monoTiny: CSSProperties = {
@@ -43,18 +53,54 @@ const monoTiny: CSSProperties = {
   letterSpacing: ".14em",
 };
 
-export function AdminShell({
-  children,
-  fontClass,
-}: {
-  children: ReactNode;
-  fontClass: string;
-}) {
+function FullScreen({ children }: { children: ReactNode }) {
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        background: SQ.bg,
+        color: SQ.mute,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontFamily: FONT.mono,
+        fontSize: 13,
+        letterSpacing: ".14em",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+export function AdminShell({ children, fontClass }: { children: ReactNode; fontClass: string }) {
   const pathname = usePathname() ?? "/admin";
+  const router = useRouter();
+  const { user, isAdmin, hydrated, logout } = useAuth();
+
+  // Protect every /admin route: non-admins are bounced to sign-in.
+  useEffect(() => {
+    if (hydrated && !isAdmin) {
+      router.replace(`/login?next=${encodeURIComponent(pathname)}`);
+    }
+  }, [hydrated, isAdmin, router, pathname]);
+
+  const seasonQ = useCurrentSeason();
+  const pendingQ = useRegistrations({ status: "PENDING", limit: 100 });
+  const pendingCount = isAdmin ? pendingQ.data?.items.length ?? 0 : 0;
+
+  if (!hydrated) return <FullScreen>Checking access…</FullScreen>;
+  if (!isAdmin) return <FullScreen>Redirecting to sign in…</FullScreen>;
+
   const isActive = (href: string) =>
-    href === "/admin"
-      ? pathname === "/admin"
-      : pathname === href || pathname.startsWith(href + "/");
+    href === "/admin" ? pathname === "/admin" : pathname === href || pathname.startsWith(href + "/");
+
+  const onLogout = async () => {
+    await logout();
+    router.push("/login");
+  };
+
+  const seasonLabel = seasonQ.data ? seasonQ.data.name.toUpperCase() : "BETWEEN SEASONS";
 
   return (
     <div
@@ -132,6 +178,7 @@ export function AdminShell({
               </div>
               {grp.items.map((it) => {
                 const active = isActive(it.href);
+                const badge = it.badgeKey === "registrations" && pendingCount > 0 ? pendingCount : null;
                 return (
                   <Link
                     key={it.href}
@@ -143,7 +190,7 @@ export function AdminShell({
                       padding: "9px 12px",
                       borderRadius: 6,
                       textDecoration: "none",
-                      background: active ? "rgba(255,61,46,.12)" : "transparent",
+                      background: active ? "rgba(232,96,44,.14)" : "transparent",
                       marginBottom: 2,
                     }}
                   >
@@ -152,7 +199,7 @@ export function AdminShell({
                         width: 7,
                         height: 7,
                         borderRadius: 2,
-                        background: active ? SQ.red : "#3a3d46",
+                        background: active ? SQ.red : SQ.toggleOff,
                         flex: "0 0 auto",
                       }}
                     />
@@ -166,7 +213,7 @@ export function AdminShell({
                     >
                       {it.label}
                     </span>
-                    {it.badge ? (
+                    {badge ? (
                       <span
                         style={{
                           fontFamily: FONT.mono,
@@ -178,7 +225,7 @@ export function AdminShell({
                           fontWeight: 700,
                         }}
                       >
-                        {it.badge}
+                        {badge}
                       </span>
                     ) : null}
                   </Link>
@@ -188,37 +235,62 @@ export function AdminShell({
           ))}
         </div>
 
+        {/* real admin identity + sign out */}
         <div
           style={{
-            padding: "16px 18px",
+            padding: "14px 16px",
             borderTop: `1px solid ${SQ.hairline}`,
             display: "flex",
-            alignItems: "center",
+            flexDirection: "column",
             gap: 10,
           }}
         >
-          <div
+          <Link
+            href="/admin/profile"
             style={{
-              width: 30,
-              height: 30,
-              borderRadius: "50%",
-              background: "linear-gradient(135deg,#3a3d46,#1c1e24)",
-              border: `1px solid ${SQ.inputBorder}`,
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              textDecoration: "none",
+              color: SQ.ink,
             }}
-          />
-          <div style={{ lineHeight: 1.2, flex: 1 }}>
-            <div style={{ fontSize: 12.5, fontWeight: 600 }}>Dev Mehta</div>
+          >
             <div
               style={{
-                fontFamily: FONT.mono,
-                fontSize: 9,
-                letterSpacing: ".1em",
-                color: SQ.label,
+                width: 30,
+                height: 30,
+                borderRadius: "50%",
+                background: SQ.avatarGrad,
+                border: `1px solid ${SQ.inputBorder}`,
               }}
-            >
-              LEAGUE ADMIN
+            />
+            <div style={{ lineHeight: 1.2, flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {user?.name ?? "Admin"}
+              </div>
+              <div style={{ fontFamily: FONT.mono, fontSize: 9, letterSpacing: ".1em", color: SQ.label }}>
+                LEAGUE ADMIN
+              </div>
             </div>
-          </div>
+          </Link>
+          <button
+            type="button"
+            onClick={onLogout}
+            style={{
+              fontFamily: FONT.mono,
+              fontSize: 10,
+              letterSpacing: ".12em",
+              textTransform: "uppercase",
+              color: SQ.mute,
+              background: "transparent",
+              border: `1px solid ${SQ.inputBorder}`,
+              padding: "8px 10px",
+              borderRadius: 5,
+              cursor: "pointer",
+            }}
+          >
+            Sign out
+          </button>
         </div>
       </aside>
 
@@ -236,58 +308,33 @@ export function AdminShell({
             gap: 14,
             flexWrap: "wrap",
             padding: "13px clamp(16px,3vw,28px)",
-            background: "rgba(11,12,15,.92)",
+            background: SQ.navBgAdmin,
             backdropFilter: "blur(12px)",
             borderBottom: `1px solid ${SQ.hairline}`,
           }}
         >
+          <div style={{ ...monoTiny, color: SQ.mute }}>{seasonLabel}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div style={{ ...monoTiny, color: SQ.mute }}>SEASON 04 — SPRING</div>
-            <span style={{ color: "#3a3d46" }}>/</span>
-            <div style={{ ...monoTiny, color: SQ.ember, display: "flex", alignItems: "center", gap: 7 }}>
-              <span
-                style={{
-                  width: 7,
-                  height: 7,
-                  borderRadius: "50%",
-                  background: SQ.red,
-                  animation: "sqpulse 1.4s infinite",
-                }}
-              />
-              REGISTRATION OPEN
-            </div>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div
+            <ThemeToggle />
+            <Link
+              href="/admin/profile"
               style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 9,
+                textDecoration: "none",
+                color: SQ.sidebar,
+                background: SQ.red,
+                padding: "8px 14px",
+                borderRadius: 5,
                 fontFamily: FONT.mono,
                 fontSize: 11,
                 letterSpacing: ".1em",
-                color: SQ.mute,
-                border: `1px solid ${SQ.inputBorder}`,
-                padding: "8px 13px",
-                borderRadius: 5,
-                whiteSpace: "nowrap",
-              }}
-            >
-              SEARCH ⌘K
-            </div>
-            <Link
-              href="/admin/matches"
-              style={{
-                fontFamily: FONT.mono,
-                fontSize: 11,
-                letterSpacing: ".12em",
                 textTransform: "uppercase",
-                color: SQ.sidebar,
-                background: SQ.red,
-                padding: "9px 15px",
-                borderRadius: 5,
                 fontWeight: 700,
-                textDecoration: "none",
               }}
             >
-              + Create
+              {user?.name ?? "League Admin"}
             </Link>
           </div>
         </div>

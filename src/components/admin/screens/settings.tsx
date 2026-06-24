@@ -1,7 +1,11 @@
+"use client";
+
 import type { ReactNode } from "react";
 import { SQ, FONT } from "../tokens";
 import { ScreenHeader } from "../screen-header";
 import { Toggle } from "../toggle";
+import { StateNote } from "@/components/sidequest/state-note";
+import { useSettings } from "@/lib/query/hooks";
 
 const cardHeader = {
   fontFamily: FONT.mono,
@@ -11,24 +15,14 @@ const cardHeader = {
   color: SQ.ink,
 } as const;
 
-const adminChip = {
-  fontFamily: FONT.mono,
-  fontSize: 11,
-  color: SQ.faint,
-  border: `1px solid ${SQ.inputBorder}`,
-  padding: "7px 11px",
-  borderRadius: 5,
+const cardStyle = {
+  background: SQ.panel,
+  border: `1px solid ${SQ.hairline}`,
+  borderRadius: 9,
+  padding: 22,
 } as const;
 
-function Row({
-  label,
-  children,
-  center,
-}: {
-  label: string;
-  children: ReactNode;
-  center?: boolean;
-}) {
+function Row({ label, children, center }: { label: string; children: ReactNode; center?: boolean }) {
   return (
     <div
       style={{
@@ -36,7 +30,7 @@ function Row({
         alignItems: center ? "center" : undefined,
         justifyContent: "space-between",
         padding: "12px 0",
-        borderTop: "1px solid rgba(255,255,255,.07)",
+        borderTop: `1px solid ${SQ.hairlineFaint}`,
       }}
     >
       <div style={{ fontSize: 13.5 }}>{label}</div>
@@ -50,60 +44,50 @@ function Row({
 }
 
 export function SettingsScreen() {
+  const { data: s, isLoading, isError } = useSettings();
+
   return (
     <div>
       <ScreenHeader eyebrow="League configuration" title="SETTINGS" />
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))",
-          gap: 24,
-          marginTop: 24,
-          alignItems: "start",
-        }}
-      >
-        {/* Season */}
-        <div
-          style={{
-            background: SQ.panel,
-            border: `1px solid ${SQ.hairline}`,
-            borderRadius: 9,
-            padding: 22,
-          }}
-        >
-          <div style={{ ...cardHeader, marginBottom: 16 }}>Season</div>
-          <Row label="Current season">S04 — Spring</Row>
-          <Row label="Registration window">01–30 APR</Row>
-          <Row label="Registration open" center>
-            <Toggle on />
-          </Row>
-          <Row label="Public leaderboard" center>
-            <Toggle on />
-          </Row>
+      {isLoading ? (
+        <div style={{ marginTop: 24 }}>
+          <StateNote>Loading settings…</StateNote>
         </div>
-
-        {/* Scoring + Admin team */}
+      ) : !s ? (
+        <div style={{ marginTop: 24 }}>
+          <StateNote tone={isError ? "error" : "muted"}>
+            {isError ? "Couldn't load settings (admin sign-in required)." : "No settings found."}
+          </StateNote>
+        </div>
+      ) : (
         <div
           style={{
-            background: SQ.panel,
-            border: `1px solid ${SQ.hairline}`,
-            borderRadius: 9,
-            padding: 22,
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))",
+            gap: 24,
+            marginTop: 24,
+            alignItems: "start",
           }}
         >
-          <div style={{ ...cardHeader, marginBottom: 16 }}>Scoring</div>
-          <Row label="Points per kill">1</Row>
-          <Row label="1st place bonus">15</Row>
-          <Row label="Tiebreaker">Total kills</Row>
+          <div style={cardStyle}>
+            <div style={{ ...cardHeader, marginBottom: 16 }}>Season</div>
+            <Row label="Current season">{s.seasonName || s.seasonId || "—"}</Row>
+            <Row label="Registration open" center>
+              <Toggle on={s.registrationOpen} />
+            </Row>
+          </div>
 
-          <div style={{ ...cardHeader, margin: "24px 0 16px" }}>Admin team</div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <span style={adminChip}>Dev Mehta · OWNER</span>
-            <span style={adminChip}>Nisha · MOD</span>
+          <div style={cardStyle}>
+            <div style={{ ...cardHeader, marginBottom: 16 }}>Scoring</div>
+            <Row label="Points per kill">{String(s.pointsPerKill)}</Row>
+            <Row label="Placement points">{s.placementPoints || "—"}</Row>
+            <Row label="Last updated">
+              {s.updatedAt ? new Date(s.updatedAt).toLocaleDateString() : "—"}
+            </Row>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

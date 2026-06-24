@@ -20,6 +20,10 @@ public record AnnouncementView(
         String body,
         String matchId,
         String author,
-        Instant publishedAt
+        Instant publishedAt,
+        boolean registrationOpen,
+        String gameId,
+        String gameName,
+        String registrationType
 ) {
 }

@@ -8,8 +8,9 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 /**
- * A supported title (Valorant, BGMI, CS2, ...). {@code enabled} toggles visibility; {@code regOpen}
- * controls whether the registration window is open. {@code popularity} backs the popularity bars.
+ * A supported title (Valorant, BGMI, CS2, ...). {@code enabled} toggles visibility; {@code popularity}
+ * backs the popularity bars. Registration windows are no longer a per-game switch — they are opened
+ * per announcement (see {@link Announcement#isRegistrationOpen()}).
  */
 @Entity
 @Table(name = "games")
@@ -30,9 +31,6 @@ public class Game extends BaseEntity {
 
     @Column(nullable = false)
     private boolean enabled = true;
-
-    @Column(name = "reg_open", nullable = false)
-    private boolean regOpen = true;
 
     /** 0–100 popularity used for the games-grid bars. */
     @Column(nullable = false)

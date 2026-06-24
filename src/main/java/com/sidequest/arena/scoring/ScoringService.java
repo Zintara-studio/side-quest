@@ -10,10 +10,13 @@ import com.sidequest.arena.repo.PlayerRepository;
 import com.sidequest.arena.repo.ResultRowRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.sidequest.arena.config.CacheConfig;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -50,6 +53,8 @@ public class ScoringService {
      * Triggered after an admin publishes results for a match. Emits the per-match result table, then
      * recomputes and broadcasts the league standings.
      */
+    @CacheEvict(cacheNames = {CacheConfig.STANDINGS, CacheConfig.LEADERBOARD_PLAYERS,
+            CacheConfig.GAME_RANKINGS, CacheConfig.FRANCHISES, CacheConfig.PLAYERS}, allEntries = true)
     @Transactional
     public void onResultsPublished(Match match) {
         List<ResultRow> rows = resultRowRepo.findByMatchIdOrderByRankAsc(match.getId());
@@ -62,18 +67,36 @@ public class ScoringService {
     }
 
     /**
-     * Full recompute: franchise points = sum of its result-row totals; players inherit their
-     * franchise's standing; ranks are assigned by points (desc). Idempotent.
+     * Full recompute: franchise points = sum of its result-row totals from matches in the franchise's
+     * <em>current</em> season; players inherit their franchise's standing; ranks are assigned by points
+     * (desc). Scoping to the franchise's season keeps points season-scoped, so a new season starts from a
+     * clean slate even though prior-season result rows are retained for history. Idempotent.
      */
+    @CacheEvict(cacheNames = {CacheConfig.STANDINGS, CacheConfig.LEADERBOARD_PLAYERS,
+            CacheConfig.GAME_RANKINGS, CacheConfig.FRANCHISES, CacheConfig.PLAYERS}, allEntries = true)
     @Transactional
     public void recomputeStandings() {
-        List<ResultRow> allRows = resultRowRepo.findAll();
-        Map<UUID, Integer> pointsByFranchise = allRows.stream()
-                .filter(r -> r.getFranchise() != null)
-                .collect(Collectors.groupingBy(r -> r.getFranchise().getId(),
-                        Collectors.summingInt(ResultRow::getTotal)));
-
         List<Franchise> franchises = franchiseRepo.findAll();
+        Map<UUID, String> seasonByFranchise = franchises.stream()
+                .collect(Collectors.toMap(Franchise::getId,
+                        f -> f.getSeasonId() == null ? "" : f.getSeasonId()));
+
+        // Only count result rows whose match is in the franchise's current season.
+        Map<UUID, Integer> pointsByFranchise = new HashMap<>();
+        for (ResultRow r : resultRowRepo.findAll()) {
+            Franchise fr = r.getFranchise();
+            if (fr == null) {
+                continue;
+            }
+            Match match = r.getMatch();
+            String matchSeason = match != null && match.getSeasonId() != null ? match.getSeasonId() : "";
+            String franchiseSeason = seasonByFranchise.getOrDefault(fr.getId(), "");
+            if (!franchiseSeason.equals(matchSeason)) {
+                continue;
+            }
+            pointsByFranchise.merge(fr.getId(), r.getTotal(), Integer::sum);
+        }
+
         for (Franchise f : franchises) {
             f.setPoints(pointsByFranchise.getOrDefault(f.getId(), 0));
         }

@@ -17,6 +17,10 @@ import java.util.List;
  * @param reviewedBy display name of the reviewing admin, or {@code null} if not yet reviewed
  * @param reason     rejection reason or approval note, nullable
  * @param createdAt  when the application was submitted
+ * @param members    the squad roster (captain + invited players with their invite status); empty for
+ *                   solo (PLAYER) registrations
+ * @param acceptedCount number of confirmed members (captain + accepted invites), so admins can verify
+ *                   team size and choose to approve undersized squads
  */
 public record RegistrationView(
         String id,
@@ -28,10 +32,25 @@ public record RegistrationView(
         String status,
         String reviewedBy,
         String reason,
-        Instant createdAt
+        Instant createdAt,
+        String matchId,
+        List<MemberView> members,
+        int acceptedCount
 ) {
 
     /** Minimal applicant-player reference. */
     public record PlayerMini(String id, String gamerTag) {
+    }
+
+    /**
+     * A squad member row: the captain (always {@code ACCEPTED}) or an invited player with their
+     * current {@link com.sidequest.arena.model.InviteStatus}.
+     */
+    public record MemberView(
+            String playerId,
+            String gamerTag,
+            String status,
+            boolean isCaptain
+    ) {
     }
 }

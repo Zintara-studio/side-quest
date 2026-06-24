@@ -1,5 +1,6 @@
 package com.sidequest.arena.matches.dto;
 
+import com.sidequest.arena.model.MatchType;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
@@ -12,6 +13,7 @@ import java.util.List;
  *
  * @param gameId                  the game the fixture belongs to (required)
  * @param scheduledAt             when the fixture is scheduled (required)
+ * @param matchType               FRANCHISE or FFA (optional; defaults to FRANCHISE)
  * @param arena                   the venue, optional
  * @param format                  the played format, optional
  * @param seasonId                the season this fixture belongs to, optional
@@ -20,6 +22,7 @@ import java.util.List;
 public record CreateMatchRequest(
         @NotBlank String gameId,
         @NotNull Instant scheduledAt,
+        MatchType matchType,
         String arena,
         String format,
         String seasonId,

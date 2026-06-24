@@ -2,6 +2,7 @@ package com.sidequest.arena.franchises;
 
 import com.sidequest.arena.common.PageResponse;
 import com.sidequest.arena.franchises.dto.AssignPlayerRequest;
+import com.sidequest.arena.franchises.dto.AssignRoleRequest;
 import com.sidequest.arena.franchises.dto.CreateFranchiseRequest;
 import com.sidequest.arena.franchises.dto.FranchiseDetail;
 import com.sidequest.arena.franchises.dto.FranchiseMatchView;
@@ -84,5 +85,26 @@ public class FranchiseController {
     @PreAuthorize("hasRole('ADMIN')")
     public List<RosterMember> assignPlayer(@PathVariable String id, @Valid @RequestBody AssignPlayerRequest request) {
         return franchiseService.assignPlayer(id, request);
+    }
+
+    /** Elevate a player to franchise owner (admin only). */
+    @PostMapping("/{id}/owner")
+    @PreAuthorize("hasRole('ADMIN')")
+    public FranchiseDetail setOwner(@PathVariable String id, @Valid @RequestBody AssignRoleRequest request) {
+        return franchiseService.setOwner(id, request);
+    }
+
+    /** Set the franchise manager (admin or the franchise owner; ownership enforced in the service). */
+    @PostMapping("/{id}/manager")
+    @PreAuthorize("hasAnyRole('ADMIN','FRANCHISE_OWNER')")
+    public FranchiseDetail setManager(@PathVariable String id, @Valid @RequestBody AssignRoleRequest request) {
+        return franchiseService.setManager(id, request);
+    }
+
+    /** Discard (deactivate) a franchise (admin only). */
+    @PostMapping("/{id}/discard")
+    @PreAuthorize("hasRole('ADMIN')")
+    public FranchiseDetail discard(@PathVariable String id) {
+        return franchiseService.discard(id);
     }
 }

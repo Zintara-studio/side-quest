@@ -8,8 +8,11 @@ import com.sidequest.arena.games.dto.GameSummary;
 import com.sidequest.arena.games.dto.UpdateGameRequest;
 import com.sidequest.arena.model.Game;
 import com.sidequest.arena.model.Match;
+import com.sidequest.arena.config.CacheConfig;
 import com.sidequest.arena.repo.GameRepository;
 import com.sidequest.arena.repo.MatchRepository;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -41,6 +44,7 @@ public class GameService {
      * enabled titles are returned; otherwise all titles are returned. This catalogue is small, so no
      * pagination is applied.
      */
+    @Cacheable(CacheConfig.GAMES)
     @Transactional(readOnly = true)
     public List<GameSummary> list(Boolean enabled) {
         List<Game> games = Boolean.TRUE.equals(enabled)
@@ -61,6 +65,7 @@ public class GameService {
      * Applies the non-null fields of {@code request} to the game, persists the change, records an
      * audit entry summarising what changed, and returns the refreshed detail. 404 if not found.
      */
+    @CacheEvict(value = CacheConfig.GAMES, allEntries = true)
     @Transactional
     public GameDetail update(UUID id, UpdateGameRequest request) {
         Game game = gameRepository.findById(id)
@@ -70,10 +75,6 @@ public class GameService {
         if (request.enabled() != null) {
             game.setEnabled(request.enabled());
             changes.add("enabled=" + request.enabled());
-        }
-        if (request.regOpen() != null) {
-            game.setRegOpen(request.regOpen());
-            changes.add("regOpen=" + request.regOpen());
         }
         if (request.popularity() != null) {
             game.setPopularity(request.popularity());
@@ -105,7 +106,6 @@ public class GameService {
                 game.getFormat(),
                 game.getIconUrl(),
                 game.isEnabled(),
-                game.isRegOpen(),
                 game.getPopularity()
         );
     }
@@ -122,7 +122,6 @@ public class GameService {
                 game.getFormat(),
                 game.getIconUrl(),
                 game.isEnabled(),
-                game.isRegOpen(),
                 game.getPopularity(),
                 matches
         );

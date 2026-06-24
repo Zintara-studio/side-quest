@@ -6,10 +6,16 @@ import com.sidequest.arena.model.Dispute;
 import com.sidequest.arena.model.DisputeStatus;
 import com.sidequest.arena.model.Franchise;
 import com.sidequest.arena.model.Game;
+import com.sidequest.arena.model.InviteStatus;
 import com.sidequest.arena.model.LeagueSettings;
 import com.sidequest.arena.model.Match;
 import com.sidequest.arena.model.MatchParticipant;
+import com.sidequest.arena.model.MatchRound;
+import com.sidequest.arena.model.MatchRoundPlayerResult;
+import com.sidequest.arena.model.MatchRoundResult;
 import com.sidequest.arena.model.MatchStatus;
+import com.sidequest.arena.model.Notification;
+import com.sidequest.arena.model.NotificationType;
 import com.sidequest.arena.model.Player;
 import com.sidequest.arena.model.PlayerGameProficiency;
 import com.sidequest.arena.model.PlayerGameUsername;
@@ -19,6 +25,10 @@ import com.sidequest.arena.model.RegistrationStatus;
 import com.sidequest.arena.model.RegistrationType;
 import com.sidequest.arena.model.ResultRow;
 import com.sidequest.arena.model.Role;
+import com.sidequest.arena.model.Season;
+import com.sidequest.arena.model.SeasonStanding;
+import com.sidequest.arena.model.SeasonStatus;
+import com.sidequest.arena.model.TeamInvite;
 import com.sidequest.arena.model.User;
 import com.sidequest.arena.repo.AnnouncementRepository;
 import com.sidequest.arena.repo.DisputeRepository;
@@ -27,11 +37,18 @@ import com.sidequest.arena.repo.GameRepository;
 import com.sidequest.arena.repo.LeagueSettingsRepository;
 import com.sidequest.arena.repo.MatchParticipantRepository;
 import com.sidequest.arena.repo.MatchRepository;
+import com.sidequest.arena.repo.MatchRoundPlayerResultRepository;
+import com.sidequest.arena.repo.MatchRoundRepository;
+import com.sidequest.arena.repo.MatchRoundResultRepository;
+import com.sidequest.arena.repo.NotificationRepository;
 import com.sidequest.arena.repo.PlayerGameProficiencyRepository;
 import com.sidequest.arena.repo.PlayerGameUsernameRepository;
 import com.sidequest.arena.repo.PlayerRepository;
 import com.sidequest.arena.repo.RegistrationRepository;
 import com.sidequest.arena.repo.ResultRowRepository;
+import com.sidequest.arena.repo.SeasonRepository;
+import com.sidequest.arena.repo.SeasonStandingRepository;
+import com.sidequest.arena.repo.TeamInviteRepository;
 import com.sidequest.arena.repo.UserRepository;
 import com.sidequest.arena.scoring.ScoringService;
 import org.slf4j.Logger;
@@ -74,12 +91,19 @@ public class DataSeeder {
                                MatchRepository matches,
                                MatchParticipantRepository participants,
                                ResultRowRepository resultRows,
+                               MatchRoundRepository matchRounds,
+                               MatchRoundResultRepository matchRoundResults,
+                               MatchRoundPlayerResultRepository matchRoundPlayerResults,
                                RegistrationRepository registrations,
+                               TeamInviteRepository teamInvites,
                                AnnouncementRepository announcements,
+                               NotificationRepository notifs,
                                DisputeRepository disputes,
                                PlayerGameUsernameRepository usernames,
                                PlayerGameProficiencyRepository proficiencies,
                                LeagueSettingsRepository settings,
+                               SeasonRepository seasons,
+                               SeasonStandingRepository seasonStandings,
                                ScoringService scoring,
                                PasswordEncoder encoder) {
         return args -> {
@@ -95,6 +119,13 @@ public class DataSeeder {
                 settings.save(new LeagueSettings());
             }
 
+            // ---- seasons (a finished S03 with frozen history + the active S04) ----
+            Instant seedNow = Instant.now();
+            seasons.save(season("S03", "Season 03 — Winter", SeasonStatus.FINISHED,
+                    seedNow.minus(150, ChronoUnit.DAYS), seedNow.minus(40, ChronoUnit.DAYS)));
+            seasons.save(season("S04", "Season 04 — Spring", SeasonStatus.ACTIVE,
+                    seedNow.minus(30, ChronoUnit.DAYS), null));
+
             // ---- games ----
             Game valorant = games.save(game("Valorant", "5v5 Tactical", 96));
             Game bgmi = games.save(game("BGMI", "Battle Royale · Squads", 91));
@@ -102,7 +133,6 @@ public class DataSeeder {
             Game smash = games.save(game("Smashkarts", "Free-for-all · 1v1", 67));
             Game r6 = game("Rainbow Six", "5v5 Tactical", 40);
             r6.setEnabled(false);
-            r6.setRegOpen(false);
             games.save(r6);
 
             // ---- admin + manager ----
@@ -133,12 +163,40 @@ public class DataSeeder {
             franchises.save(titans);
             Player rookie = player(users, players, "Rookie", "rookie@sidequest.gg", pw, null, PlayerStatus.PENDING);
 
+            // ---- frozen S03 history (final standings, with real franchise ids) ----
+            seasonStandings.save(seasonStanding("S03", night.getId().toString(), "Nightfall", "NGT", 1, 412));
+            seasonStandings.save(seasonStanding("S03", rxg.getId().toString(), "RXG", "RXG", 2, 388));
+            seasonStandings.save(seasonStanding("S03", titans.getId().toString(), "Apex Titans", "APX", 3, 351));
+            seasonStandings.save(seasonStanding("S03", moti.getId().toString(), "Motichoor Esports", "MOTI", 4, 309));
+
+            // ---- fuller rosters (≈4–5 players per franchise) ----
+            Player ace = player(users, players, "Ace", "ace@sidequest.gg", pw, rxg, PlayerStatus.VERIFIED);
+            Player kiran = player(users, players, "Kiran", "kiran@sidequest.gg", pw, rxg, PlayerStatus.VERIFIED);
+            Player echo = player(users, players, "Echo", "echo@sidequest.gg", pw, moti, PlayerStatus.VERIFIED);
+            player(users, players, "Riot", "riot@sidequest.gg", pw, moti, PlayerStatus.VERIFIED);
+            player(users, players, "Frost", "frost@sidequest.gg", pw, moti, PlayerStatus.VERIFIED);
+            player(users, players, "Zen", "zen@sidequest.gg", pw, night, PlayerStatus.VERIFIED);
+            player(users, players, "Kai", "kai@sidequest.gg", pw, night, PlayerStatus.VERIFIED);
+            player(users, players, "Onyx", "onyx@sidequest.gg", pw, titans, PlayerStatus.VERIFIED);
+            player(users, players, "Sable", "sable@sidequest.gg", pw, titans, PlayerStatus.VERIFIED);
+            Player drift = player(users, players, "Drift", "drift@sidequest.gg", pw, null, PlayerStatus.PENDING);
+
             // ---- game handles + proficiency for Raghavan ----
             usernames.save(handle(raghavan, valorant, "RXG_Raghavan", true));
             usernames.save(handle(raghavan, bgmi, "RXGxRagha", true));
             usernames.save(handle(raghavan, cs2, "ragha_private", false));
             proficiencies.save(prof(raghavan, valorant, 92));
             proficiencies.save(prof(raghavan, bgmi, 88));
+
+            // ---- handles + proficiency for other franchise leaders ----
+            usernames.save(handle(blaze, valorant, "MOTI_Blaze", true));
+            usernames.save(handle(blaze, cs2, "blaze_priv", false));
+            usernames.save(handle(specter, bgmi, "NGT_Specter", true));
+            usernames.save(handle(nova, cs2, "APX_Nova", true));
+            proficiencies.save(prof(blaze, valorant, 89));
+            proficiencies.save(prof(specter, valorant, 85));
+            proficiencies.save(prof(specter, bgmi, 80));
+            proficiencies.save(prof(nova, cs2, 83));
 
             // ---- matches ----
             Instant now = Instant.now();
@@ -165,6 +223,77 @@ public class DataSeeder {
             completed.setResultsPublishedAt(now.minus(2, ChronoUnit.DAYS));
             matches.save(completed);
 
+            // ---- more completed matches across titles for richer standings/history ----
+            Match valoMd3 = matches.save(match(valorant, now.minus(6, ChronoUnit.DAYS),
+                    MatchStatus.COMPLETED, "Arena A", "Bo3"));
+            participants.save(participant(valoMd3, rxg));
+            participants.save(participant(valoMd3, moti));
+            participants.save(participant(valoMd3, night));
+            participants.save(participant(valoMd3, titans));
+            resultRows.save(result(valoMd3, moti, 28, 16, 1));
+            resultRows.save(result(valoMd3, rxg, 22, 12, 2));
+            resultRows.save(result(valoMd3, titans, 17, 10, 3));
+            resultRows.save(result(valoMd3, night, 12, 8, 4));
+            valoMd3.setResultsPublishedAt(now.minus(6, ChronoUnit.DAYS));
+            matches.save(valoMd3);
+
+            Match cs2Md2 = matches.save(match(cs2, now.minus(4, ChronoUnit.DAYS),
+                    MatchStatus.COMPLETED, "Arena B", "Bo1"));
+            participants.save(participant(cs2Md2, rxg));
+            participants.save(participant(cs2Md2, night));
+            participants.save(participant(cs2Md2, titans));
+            participants.save(participant(cs2Md2, moti));
+            resultRows.save(result(cs2Md2, night, 20, 14, 1));
+            resultRows.save(result(cs2Md2, titans, 18, 12, 2));
+            resultRows.save(result(cs2Md2, rxg, 15, 10, 3));
+            resultRows.save(result(cs2Md2, moti, 11, 8, 4));
+            cs2Md2.setResultsPublishedAt(now.minus(4, ChronoUnit.DAYS));
+            matches.save(cs2Md2);
+
+            // ---- a multi-round BGMI match (per-round, game-specific stat tables) ----
+            Match bgmiMd2 = matches.save(match(bgmi, now.minus(5, ChronoUnit.DAYS),
+                    MatchStatus.COMPLETED, "Main Stage", "3 rounds"));
+            participants.save(participant(bgmiMd2, rxg));
+            participants.save(participant(bgmiMd2, night));
+            participants.save(participant(bgmiMd2, moti));
+            participants.save(participant(bgmiMd2, titans));
+
+            MatchRound r1 = matchRounds.save(round(bgmiMd2, 1, "Erangel", "TPP"));
+            matchRoundResults.save(roundResult(r1, rxg, 1, 8, 1800, 15));
+            matchRoundResults.save(roundResult(r1, night, 2, 6, 1500, 12));
+            matchRoundResults.save(roundResult(r1, moti, 3, 5, 1200, 10));
+            matchRoundResults.save(roundResult(r1, titans, 4, 3, 900, 8));
+            MatchRound r2 = matchRounds.save(round(bgmiMd2, 2, "Miramar", "TPP"));
+            matchRoundResults.save(roundResult(r2, night, 1, 9, 1850, 15));
+            matchRoundResults.save(roundResult(r2, rxg, 2, 7, 1600, 12));
+            matchRoundResults.save(roundResult(r2, titans, 3, 6, 1300, 10));
+            matchRoundResults.save(roundResult(r2, moti, 4, 4, 1000, 8));
+            MatchRound r3 = matchRounds.save(round(bgmiMd2, 3, "Sanhok", "TPP"));
+            matchRoundResults.save(roundResult(r3, rxg, 1, 10, 1700, 15));
+            matchRoundResults.save(roundResult(r3, moti, 2, 8, 1400, 12));
+            matchRoundResults.save(roundResult(r3, night, 3, 5, 1100, 10));
+            matchRoundResults.save(roundResult(r3, titans, 4, 4, 950, 8));
+            // per-player breakdown for RXG (kills sum to the team's per-round kills: 8 / 7 / 10)
+            matchRoundPlayerResults.save(playerResult(r1, rxg, raghavan, 3, 1800));
+            matchRoundPlayerResults.save(playerResult(r1, rxg, vortex, 2, 1500));
+            matchRoundPlayerResults.save(playerResult(r1, rxg, ace, 2, 1200));
+            matchRoundPlayerResults.save(playerResult(r1, rxg, kiran, 1, 900));
+            matchRoundPlayerResults.save(playerResult(r2, rxg, raghavan, 2, 1600));
+            matchRoundPlayerResults.save(playerResult(r2, rxg, vortex, 2, 1400));
+            matchRoundPlayerResults.save(playerResult(r2, rxg, ace, 2, 1100));
+            matchRoundPlayerResults.save(playerResult(r2, rxg, kiran, 1, 800));
+            matchRoundPlayerResults.save(playerResult(r3, rxg, raghavan, 4, 1700));
+            matchRoundPlayerResults.save(playerResult(r3, rxg, vortex, 3, 1500));
+            matchRoundPlayerResults.save(playerResult(r3, rxg, ace, 2, 1300));
+            matchRoundPlayerResults.save(playerResult(r3, rxg, kiran, 1, 1000));
+            // aggregated overall result rows (sum of kills + placement points)
+            resultRows.save(result(bgmiMd2, rxg, 25, 42, 1));
+            resultRows.save(result(bgmiMd2, night, 20, 37, 2));
+            resultRows.save(result(bgmiMd2, moti, 17, 30, 3));
+            resultRows.save(result(bgmiMd2, titans, 13, 26, 4));
+            bgmiMd2.setResultsPublishedAt(now.minus(5, ChronoUnit.DAYS));
+            matches.save(bgmiMd2);
+
             // ---- registrations ----
             Registration squadReg = new Registration();
             squadReg.setType(RegistrationType.SQUAD);
@@ -173,7 +302,12 @@ public class DataSeeder {
             squadReg.setGames(new ArrayList<>(List.of("Valorant", "CS2")));
             squadReg.setContact("discord: phantom#0001");
             squadReg.setStatus(RegistrationStatus.PENDING);
-            registrations.save(squadReg);
+            Registration savedSquad = registrations.save(squadReg);
+
+            // ---- squad invites (captain rookie builds the Phantom Five roster) ----
+            teamInvites.save(teamInvite(savedSquad, vortex, rookie, InviteStatus.ACCEPTED));
+            teamInvites.save(teamInvite(savedSquad, drift, rookie, InviteStatus.PENDING));
+            teamInvites.save(teamInvite(savedSquad, echo, rookie, InviteStatus.REJECTED));
 
             Registration ffaReg = new Registration();
             ffaReg.setType(RegistrationType.PLAYER);
@@ -187,12 +321,51 @@ public class DataSeeder {
             announcements.save(announcement(AnnouncementCategory.RESULT,
                     "RXG storm Match Day 4", "RXG top the table after a dominant Valorant series.",
                     completed, now.minus(2, ChronoUnit.DAYS)));
-            announcements.save(announcement(AnnouncementCategory.GENERAL,
+            Announcement seasonReg = announcement(AnnouncementCategory.GENERAL,
                     "Season 04 registrations are live", "Franchise season and free-for-all flows are open.",
-                    null, now.minus(5, ChronoUnit.DAYS)));
+                    null, now.minus(5, ChronoUnit.DAYS));
+            seasonReg.setRegistrationOpen(true);
+            seasonReg.setRegistrationType(RegistrationType.PLAYER); // season = always solo
+            announcements.save(seasonReg);
+
+            Announcement bgmiReg = announcement(AnnouncementCategory.MATCH,
+                    "Register for BGMI — Match Day 5", "Squad sign-ups are open for the BGMI lobby on 22 Aug.",
+                    null, now.minus(3, ChronoUnit.HOURS));
+            bgmiReg.setRegistrationOpen(true);
+            bgmiReg.setGame(bgmi);
+            bgmiReg.setRegistrationType(RegistrationType.SQUAD); // FFA team-based call
+            announcements.save(bgmiReg);
+
+            Announcement valoFfa = announcement(AnnouncementCategory.MATCH,
+                    "Valorant Showmatch — solo sign-up", "Open free-for-all Valorant showmatch, register solo.",
+                    null, now.minus(2, ChronoUnit.HOURS));
+            valoFfa.setRegistrationOpen(true);
+            valoFfa.setGame(valorant);
+            valoFfa.setRegistrationType(RegistrationType.PLAYER); // FFA solo call
+            announcements.save(valoFfa);
+
             announcements.save(announcement(AnnouncementCategory.RECAP,
                     "Week 1 recap", "Highlights, upsets and the players to watch.",
                     null, now.minus(1, ChronoUnit.DAYS)));
+
+            // ---- a few in-app notifications for demo users ----
+            notifs.save(notification(raghavan.getUser(), NotificationType.RESULT,
+                    "Match result published", "RXG topped Match Day 4 — see the leaderboard.", "/match"));
+            notifs.save(notification(raghavan.getUser(), NotificationType.ANNOUNCEMENT,
+                    "Season 04 registrations are live", "Franchise season and free-for-all flows are open.",
+                    "/announcements"));
+            notifs.save(notification(rookie.getUser(), NotificationType.REGISTRATION,
+                    "Registration received", "Your squad 'Phantom Five' is pending review.", "/notifications"));
+            Notification welcome = notification(rookie.getUser(), NotificationType.GENERAL,
+                    "Welcome to Side Quest", "Complete your profile to get noticed by franchises.", "/player");
+            welcome.setRead(true);
+            notifs.save(welcome);
+            notifs.save(notification(blaze.getUser(), NotificationType.RESULT,
+                    "You won Match Day 3", "Motichoor took the Valorant series — see the leaderboard.", "/match"));
+            notifs.save(notification(specter.getUser(), NotificationType.RESULT,
+                    "Nightfall win CS2 MD2", "Nightfall top the CS2 lobby.", "/match"));
+            notifs.save(notification(nova.getUser(), NotificationType.ANNOUNCEMENT,
+                    "Registrations open", "Season 04 and free-for-all sign-ups are live.", "/announcements"));
 
             // ---- an open result dispute for the admin control room ----
             Dispute dispute = new Dispute();
@@ -211,13 +384,35 @@ public class DataSeeder {
 
     // ---- small builders ----
 
+    private static Season season(String code, String name, SeasonStatus status,
+                                 Instant startedAt, Instant endedAt) {
+        Season s = new Season();
+        s.setCode(code);
+        s.setName(name);
+        s.setStatus(status);
+        s.setStartedAt(startedAt);
+        s.setEndedAt(endedAt);
+        return s;
+    }
+
+    private static SeasonStanding seasonStanding(String code, String franchiseId, String name,
+                                                 String tag, int rank, int points) {
+        SeasonStanding s = new SeasonStanding();
+        s.setSeasonCode(code);
+        s.setFranchiseId(franchiseId);
+        s.setFranchiseName(name);
+        s.setFranchiseTag(tag);
+        s.setRank(rank);
+        s.setPoints(points);
+        return s;
+    }
+
     private static Game game(String name, String format, int popularity) {
         Game g = new Game();
         g.setName(name);
         g.setFormat(format);
         g.setPopularity(popularity);
         g.setEnabled(true);
-        g.setRegOpen(true);
         return g;
     }
 
@@ -298,6 +493,48 @@ public class DataSeeder {
         return r;
     }
 
+    private static MatchRound round(Match m, int number, String map, String mode) {
+        MatchRound r = new MatchRound();
+        r.setMatch(m);
+        r.setRoundNumber(number);
+        r.setMapName(map);
+        r.setMode(mode);
+        return r;
+    }
+
+    private static MatchRoundResult roundResult(MatchRound round, Franchise f, int rank, int kills,
+                                                int survivalSeconds, int placePts) {
+        MatchRoundResult rr = new MatchRoundResult();
+        rr.setMatchRound(round);
+        rr.setFranchise(f);
+        rr.setRank(rank);
+        rr.setKills(kills);
+        rr.setSurvivalSeconds(survivalSeconds);
+        rr.setPlacePts(placePts);
+        return rr;
+    }
+
+    private static MatchRoundPlayerResult playerResult(MatchRound round, Franchise f, Player p,
+                                                       int kills, int survivalSeconds) {
+        MatchRoundPlayerResult pr = new MatchRoundPlayerResult();
+        pr.setMatchRound(round);
+        pr.setFranchise(f);
+        pr.setPlayer(p);
+        pr.setKills(kills);
+        pr.setSurvivalSeconds(survivalSeconds);
+        return pr;
+    }
+
+    private static TeamInvite teamInvite(Registration registration, Player invited, Player captain,
+                                         InviteStatus status) {
+        TeamInvite t = new TeamInvite();
+        t.setRegistration(registration);
+        t.setInvitedPlayer(invited);
+        t.setInvitedBy(captain);
+        t.setStatus(status);
+        return t;
+    }
+
     private static Announcement announcement(AnnouncementCategory cat, String title, String body,
                                              Match match, Instant publishedAt) {
         Announcement a = new Announcement();
@@ -307,5 +544,16 @@ public class DataSeeder {
         a.setMatch(match);
         a.setPublishedAt(publishedAt);
         return a;
+    }
+
+    private static Notification notification(User user, NotificationType type, String title,
+                                             String body, String linkUrl) {
+        Notification n = new Notification();
+        n.setUser(user);
+        n.setType(type);
+        n.setTitle(title);
+        n.setBody(body);
+        n.setLinkUrl(linkUrl);
+        return n;
     }
 }

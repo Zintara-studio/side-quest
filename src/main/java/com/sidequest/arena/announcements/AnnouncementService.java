@@ -9,8 +9,11 @@ import com.sidequest.arena.common.Cursors;
 import com.sidequest.arena.common.PageResponse;
 import com.sidequest.arena.model.Announcement;
 import com.sidequest.arena.model.AnnouncementCategory;
+import com.sidequest.arena.model.RegistrationType;
 import com.sidequest.arena.model.User;
 import com.sidequest.arena.repo.AnnouncementRepository;
+import com.sidequest.arena.repo.GameRepository;
+import com.sidequest.arena.repo.MatchRepository;
 import com.sidequest.arena.repo.UserRepository;
 import com.sidequest.arena.security.SecurityUtils;
 import org.springframework.stereotype.Service;
@@ -30,13 +33,19 @@ public class AnnouncementService {
 
     private final AnnouncementRepository announcementRepository;
     private final UserRepository userRepository;
+    private final GameRepository gameRepository;
+    private final MatchRepository matchRepository;
     private final AuditService auditService;
 
     public AnnouncementService(AnnouncementRepository announcementRepository,
                                UserRepository userRepository,
+                               GameRepository gameRepository,
+                               MatchRepository matchRepository,
                                AuditService auditService) {
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
+        this.gameRepository = gameRepository;
+        this.matchRepository = matchRepository;
         this.auditService = auditService;
     }
 
@@ -73,8 +82,25 @@ public class AnnouncementService {
         announcement.setCategory(req.category());
         announcement.setTitle(req.title());
         announcement.setBody(req.body());
-        // matchId is accepted but not linked to avoid cross-domain coupling; leave match null.
+        // Link the match when one is supplied (e.g. a registration call tied to a scheduled fixture).
+        if (req.matchId() != null && !req.matchId().isBlank()) {
+            try {
+                matchRepository.findById(UUID.fromString(req.matchId())).ifPresent(announcement::setMatch);
+            } catch (IllegalArgumentException ignored) {
+                // unparseable match id → leave match unlinked
+            }
+        }
         announcement.setPublishedAt(req.publishedAt() != null ? req.publishedAt() : Instant.now());
+        announcement.setRegistrationOpen(req.registrationOpen());
+        announcement.setRegistrationType(
+                req.registrationType() != null ? req.registrationType() : RegistrationType.PLAYER);
+        if (req.gameId() != null && !req.gameId().isBlank()) {
+            try {
+                gameRepository.findById(UUID.fromString(req.gameId())).ifPresent(announcement::setGame);
+            } catch (IllegalArgumentException ignored) {
+                // unparseable game id → leave game unlinked
+            }
+        }
 
         User author = userRepository.findById(SecurityUtils.currentUserId()).orElse(null);
         announcement.setAuthor(author);
@@ -132,6 +158,8 @@ public class AnnouncementService {
     private static AnnouncementView toView(Announcement a) {
         String matchId = a.getMatch() != null ? a.getMatch().getId().toString() : null;
         String author = a.getAuthor() != null ? a.getAuthor().getName() : null;
+        String gameId = a.getGame() != null ? a.getGame().getId().toString() : null;
+        String gameName = a.getGame() != null ? a.getGame().getName() : null;
         return new AnnouncementView(
                 a.getId().toString(),
                 a.getCategory() != null ? a.getCategory().name() : null,
@@ -139,6 +167,10 @@ public class AnnouncementService {
                 a.getBody(),
                 matchId,
                 author,
-                a.getPublishedAt());
+                a.getPublishedAt(),
+                a.isRegistrationOpen(),
+                gameId,
+                gameName,
+                a.getRegistrationType() != null ? a.getRegistrationType().name() : null);
     }
 }

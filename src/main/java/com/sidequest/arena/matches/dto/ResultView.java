@@ -7,9 +7,9 @@ package com.sidequest.arena.matches.dto;
  * @param franchiseId   the franchise id
  * @param franchiseName the franchise name
  * @param franchiseTag  the franchise short tag
- * @param kills         kill points scored
+ * @param kills         raw kill count
  * @param placePts      placement points scored
- * @param total         total points (kills + placePts)
+ * @param total         total points (kills × pointsPerKill + placePts)
  */
 public record ResultView(
         int rank,

@@ -10,8 +10,10 @@ import com.sidequest.arena.model.MatchParticipant;
 import com.sidequest.arena.model.Player;
 import com.sidequest.arena.model.PlayerGameProficiency;
 import com.sidequest.arena.model.PlayerGameUsername;
+import com.sidequest.arena.model.NotificationType;
 import com.sidequest.arena.model.PlayerStatus;
 import com.sidequest.arena.model.ResultRow;
+import com.sidequest.arena.notifications.NotificationService;
 import com.sidequest.arena.players.dto.PlayerDetail;
 import com.sidequest.arena.players.dto.PlayerMatchView;
 import com.sidequest.arena.players.dto.PlayerSummary;
@@ -24,7 +26,10 @@ import com.sidequest.arena.repo.PlayerGameProficiencyRepository;
 import com.sidequest.arena.repo.PlayerGameUsernameRepository;
 import com.sidequest.arena.repo.PlayerRepository;
 import com.sidequest.arena.repo.ResultRowRepository;
+import com.sidequest.arena.config.CacheConfig;
 import com.sidequest.arena.security.SecurityUtils;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -49,6 +54,7 @@ public class PlayerService {
     private final PlayerGameUsernameRepository playerGameUsernameRepository;
     private final PlayerGameProficiencyRepository playerGameProficiencyRepository;
     private final AuditService auditService;
+    private final NotificationService notificationService;
 
     public PlayerService(PlayerRepository playerRepository,
                          FranchiseRepository franchiseRepository,
@@ -56,7 +62,8 @@ public class PlayerService {
                          ResultRowRepository resultRowRepository,
                          PlayerGameUsernameRepository playerGameUsernameRepository,
                          PlayerGameProficiencyRepository playerGameProficiencyRepository,
-                         AuditService auditService) {
+                         AuditService auditService,
+                         NotificationService notificationService) {
         this.playerRepository = playerRepository;
         this.franchiseRepository = franchiseRepository;
         this.matchParticipantRepository = matchParticipantRepository;
@@ -64,12 +71,14 @@ public class PlayerService {
         this.playerGameUsernameRepository = playerGameUsernameRepository;
         this.playerGameProficiencyRepository = playerGameProficiencyRepository;
         this.auditService = auditService;
+        this.notificationService = notificationService;
     }
 
     /**
      * List players ordered by points desc, optionally filtered by franchise, game proficiency and
      * status, then paginated.
      */
+    @Cacheable(CacheConfig.PLAYERS)
     @Transactional(readOnly = true)
     public PageResponse<PlayerSummary> list(UUID franchiseId, UUID gameId, PlayerStatus status,
                                             Integer limit, String cursor) {
@@ -160,6 +169,7 @@ public class PlayerService {
     }
 
     /** Owner/admin partial update of a player's profile fields. Returns the updated profile. */
+    @CacheEvict(value = CacheConfig.PLAYERS, allEntries = true)
     @Transactional
     public PlayerDetail update(UUID id, UpdatePlayerRequest request) {
         Player player = playerRepository.findById(id)
@@ -186,16 +196,30 @@ public class PlayerService {
         return toDetail(saved);
     }
 
-    /** Admin-only change of a player's account standing; records an audit entry. */
+    /**
+     * Admin-only change of a player's account standing. Records an audit entry and notifies the
+     * affected player in-app so they learn their account was verified / flagged / suspended.
+     */
+    @CacheEvict(value = CacheConfig.PLAYERS, allEntries = true)
     @Transactional
     public PlayerDetail updateStatus(UUID id, UpdateStatusRequest request) {
         Player player = playerRepository.findById(id)
                 .orElseThrow(() -> ApiException.notFound("Player", id));
 
+        PlayerStatus previous = player.getStatus();
         player.setStatus(request.status());
         Player saved = playerRepository.save(player);
 
-        auditService.record("player.status", "Player", id.toString(), "→ " + request.status());
+        auditService.record("player.status", "Player", id.toString(),
+                "Set " + saved.getGamerTag() + " to " + request.status());
+
+        // Notify the player whose standing changed (skip no-op updates).
+        if (previous != request.status() && saved.getUser() != null) {
+            notificationService.create(saved.getUser(), NotificationType.GENERAL,
+                    "Account status updated",
+                    "Your player account is now " + request.status() + ".",
+                    "/player/" + saved.getId());
+        }
         return toDetail(saved);
     }
 

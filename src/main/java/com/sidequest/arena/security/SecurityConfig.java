@@ -63,7 +63,8 @@ public class SecurityConfig {
                         // --- public catalog reads (player app browses these unauthenticated) ---
                         .requestMatchers(HttpMethod.GET,
                                 "/players/**", "/franchises/**", "/games/**", "/matches/**",
-                                "/standings/**", "/leaderboard/**", "/announcements/**").permitAll()
+                                "/standings/**", "/leaderboard/**", "/announcements/**",
+                                "/seasons/**").permitAll()
                         // --- realtime handshake is authenticated at the WS layer ---
                         .requestMatchers("/ws/**", "/live/**").permitAll()
                         // --- everything else requires a valid token ---

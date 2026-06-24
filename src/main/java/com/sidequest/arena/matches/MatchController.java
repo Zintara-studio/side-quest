@@ -3,7 +3,10 @@ package com.sidequest.arena.matches;
 import com.sidequest.arena.common.PageResponse;
 import com.sidequest.arena.matches.dto.CreateMatchRequest;
 import com.sidequest.arena.matches.dto.EnterResultsRequest;
+import com.sidequest.arena.matches.dto.EnterRoundsRequest;
 import com.sidequest.arena.matches.dto.MatchDetail;
+import com.sidequest.arena.matches.dto.MatchPlayerView;
+import com.sidequest.arena.matches.dto.MatchRoundView;
 import com.sidequest.arena.matches.dto.MatchSummary;
 import com.sidequest.arena.matches.dto.ResultView;
 import com.sidequest.arena.matches.dto.UpdateMatchRequest;
@@ -61,6 +64,18 @@ public class MatchController {
         return matchService.leaderboard(id);
     }
 
+    /** Returns the per-round result tables for a match (empty for single-result games). 404 if missing. */
+    @GetMapping("/{id}/rounds")
+    public List<MatchRoundView> rounds(@PathVariable String id) {
+        return matchService.rounds(id);
+    }
+
+    /** Returns the players taking part (franchise rosters, or FFA registrations). 404 if missing. */
+    @GetMapping("/{id}/players")
+    public List<MatchPlayerView> players(@PathVariable String id) {
+        return matchService.players(id);
+    }
+
     /** Admin: schedules a new fixture and seeds its roster. Returns 201 with the new detail. */
     @PostMapping
     @PreAuthorize("hasRole('ADMIN')")
@@ -80,5 +95,12 @@ public class MatchController {
     @PreAuthorize("hasRole('ADMIN')")
     public List<ResultView> enterResults(@PathVariable String id, @Valid @RequestBody EnterResultsRequest request) {
         return matchService.enterResults(id, request);
+    }
+
+    /** Admin: enters per-round results for a multi-round match; aggregates and returns the leaderboard. */
+    @PostMapping("/{id}/rounds")
+    @PreAuthorize("hasRole('ADMIN')")
+    public List<ResultView> enterRounds(@PathVariable String id, @Valid @RequestBody EnterRoundsRequest request) {
+        return matchService.enterRounds(id, request);
     }
 }

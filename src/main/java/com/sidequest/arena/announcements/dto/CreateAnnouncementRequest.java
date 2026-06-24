@@ -1,6 +1,7 @@
 package com.sidequest.arena.announcements.dto;
 
 import com.sidequest.arena.model.AnnouncementCategory;
+import com.sidequest.arena.model.RegistrationType;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
@@ -21,6 +22,9 @@ public record CreateAnnouncementRequest(
         @NotBlank String title,
         @NotBlank String body,
         String matchId,
-        Instant publishedAt
+        Instant publishedAt,
+        boolean registrationOpen,
+        String gameId,
+        RegistrationType registrationType
 ) {
 }

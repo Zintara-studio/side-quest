@@ -20,5 +20,7 @@ public interface RegistrationRepository extends JpaRepository<Registration, UUID
 
     List<Registration> findByPlayerId(UUID playerId);
 
+    List<Registration> findByMatchIdAndStatus(UUID matchId, RegistrationStatus status);
+
     long countByStatus(RegistrationStatus status);
 }

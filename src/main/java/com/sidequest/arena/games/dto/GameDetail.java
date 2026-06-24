@@ -11,7 +11,6 @@ public record GameDetail(
         String format,
         String iconUrl,
         boolean enabled,
-        boolean regOpen,
         int popularity,
         List<GameMatchView> matches
 ) {

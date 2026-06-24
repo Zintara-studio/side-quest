@@ -37,9 +37,14 @@ public class Registration extends BaseEntity {
     @JoinColumn(name = "player_id")
     private Player player;
 
-    /** Proposed squad/team name for SQUAD registrations. */
+    /** Proposed squad/team name for SQUAD registrations (or franchise name for FRANCHISE bids). */
     @Column(name = "squad_name")
     private String squadName;
+
+    /** The FFA match this registration is entering, when the call was tied to a match. Optional. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "match_id")
+    private Match match;
 
     /** Game titles the applicant is registering for. */
     @ElementCollection(fetch = FetchType.EAGER)

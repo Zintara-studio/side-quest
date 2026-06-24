@@ -143,6 +143,7 @@ public class AdminService {
                 log.getAction(),
                 log.getEntityType(),
                 log.getEntityId(),
+                log.getDetail(),
                 log.getActorEmail(),
                 log.getCreatedAt());
     }

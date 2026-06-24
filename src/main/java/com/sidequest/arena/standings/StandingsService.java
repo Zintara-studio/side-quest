@@ -14,6 +14,8 @@ import com.sidequest.arena.standings.dto.GameRankRow;
 import com.sidequest.arena.standings.dto.PlayerRankRow;
 import com.sidequest.arena.standings.dto.StandingRow;
 import com.sidequest.arena.standings.dto.StandingsResponse;
+import com.sidequest.arena.config.CacheConfig;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -53,6 +55,7 @@ public class StandingsService {
      * from the leading franchise's {@code seasonId}, falling back to {@value #DEFAULT_SEASON} when
      * there are no franchises.
      */
+    @Cacheable(CacheConfig.STANDINGS)
     @Transactional(readOnly = true)
     public StandingsResponse standings() {
         List<Franchise> franchises = franchiseRepository.findAllByOrderByPointsDescNameAsc();
@@ -81,6 +84,7 @@ public class StandingsService {
      * {@code limit} is clamped to the standard pagination bounds; a player's franchise tag is
      * {@code null} when they are unassigned.
      */
+    @Cacheable(CacheConfig.LEADERBOARD_PLAYERS)
     @Transactional(readOnly = true)
     public List<PlayerRankRow> topPlayers(Integer limit) {
         int cap = Cursors.clampLimit(limit);
@@ -108,6 +112,7 @@ public class StandingsService {
      * Per-title rankings for a game, ordered by self-rated proficiency (desc). 404 if the game does
      * not exist (an unparseable id can never match).
      */
+    @Cacheable(value = CacheConfig.GAME_RANKINGS, key = "#gameId")
     @Transactional(readOnly = true)
     public List<GameRankRow> gameRankings(String gameId) {
         Game game = gameRepository.findById(parseId(gameId, "Game"))

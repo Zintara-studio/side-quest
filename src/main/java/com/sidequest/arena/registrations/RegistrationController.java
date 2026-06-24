@@ -4,6 +4,8 @@ import com.sidequest.arena.common.PageResponse;
 import com.sidequest.arena.model.RegistrationStatus;
 import com.sidequest.arena.model.RegistrationType;
 import com.sidequest.arena.registrations.dto.ApplyRequest;
+import com.sidequest.arena.registrations.dto.InviteRequest;
+import com.sidequest.arena.registrations.dto.InviteView;
 import com.sidequest.arena.registrations.dto.RegistrationView;
 import com.sidequest.arena.registrations.dto.ReviewRequest;
 import jakarta.validation.Valid;
@@ -18,9 +20,12 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 /**
- * League registration endpoints: applying as a player or squad, plus the admin approval queue
- * (list / detail) and review actions (approve / reject).
+ * League registration endpoints: applying as a player or squad, the player's own registrations and
+ * squad-invite flow, plus the admin approval queue (list / detail) and review actions (approve /
+ * reject).
  */
 @RestController
 @RequestMapping("/registrations")
@@ -36,6 +41,36 @@ public class RegistrationController {
     @PostMapping
     public ResponseEntity<RegistrationView> apply(@Valid @RequestBody ApplyRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(registrationService.apply(request));
+    }
+
+    /** The current player's own registrations, each with its squad roster (authenticated). */
+    @GetMapping("/mine")
+    public List<RegistrationView> mine() {
+        return registrationService.mine();
+    }
+
+    /** Squad invitations addressed to the current player (authenticated). */
+    @GetMapping("/invites/mine")
+    public List<InviteView> myInvites() {
+        return registrationService.myInvites();
+    }
+
+    /** Captain invites a teammate to a squad registration (authenticated; captain-only in service). */
+    @PostMapping("/{id}/invite")
+    public RegistrationView invite(@PathVariable String id, @RequestBody InviteRequest request) {
+        return registrationService.invite(id, request);
+    }
+
+    /** The invited player accepts a squad invite (authenticated; invitee-only in service). */
+    @PostMapping("/invites/{inviteId}/accept")
+    public InviteView acceptInvite(@PathVariable String inviteId) {
+        return registrationService.respondToInvite(inviteId, true);
+    }
+
+    /** The invited player declines a squad invite (authenticated; invitee-only in service). */
+    @PostMapping("/invites/{inviteId}/reject")
+    public InviteView rejectInvite(@PathVariable String inviteId) {
+        return registrationService.respondToInvite(inviteId, false);
     }
 
     /** Admin approval queue, newest first, optionally filtered by status and type. */

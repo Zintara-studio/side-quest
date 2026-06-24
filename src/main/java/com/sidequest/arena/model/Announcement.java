@@ -45,4 +45,21 @@ public class Announcement extends BaseEntity {
 
     @Column(name = "published_at", nullable = false)
     private Instant publishedAt;
+
+    /** When true this announcement is a registration call (sign-ups open from it). */
+    @Column(name = "registration_open", nullable = false)
+    private boolean registrationOpen = false;
+
+    /** Optional game this registration call is for (null = season/general registration). */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "game_id")
+    private Game game;
+
+    /**
+     * Registration mode for this call. Season registrations are always {@code PLAYER} (solo);
+     * free-for-all match calls may be {@code PLAYER} or {@code SQUAD}, chosen by the organizer.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "registration_type", length = 16)
+    private RegistrationType registrationType = RegistrationType.PLAYER;
 }

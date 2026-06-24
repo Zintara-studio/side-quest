@@ -14,6 +14,7 @@ import java.util.List;
  * @param arena           the venue, when set
  * @param format          the played format, when set
  * @param seasonId        the season this fixture belongs to, when set
+ * @param matchType       FRANCHISE or FFA
  * @param participantTags the tags of the participating franchises
  */
 public record MatchSummary(
@@ -24,6 +25,7 @@ public record MatchSummary(
         String arena,
         String format,
         String seasonId,
+        String matchType,
         List<String> participantTags
 ) {
 }

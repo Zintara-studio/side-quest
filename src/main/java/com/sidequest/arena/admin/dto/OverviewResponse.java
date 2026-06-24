@@ -44,6 +44,7 @@ public record OverviewResponse(
      * @param action     the action performed
      * @param entityType the type of entity affected
      * @param entityId   the id of the entity affected
+     * @param detail     human-readable description of exactly what happened (nullable)
      * @param actorEmail the email of the actor
      * @param at         when the action occurred
      */
@@ -51,6 +52,7 @@ public record OverviewResponse(
             String action,
             String entityType,
             String entityId,
+            String detail,
             String actorEmail,
             Instant at
     ) {

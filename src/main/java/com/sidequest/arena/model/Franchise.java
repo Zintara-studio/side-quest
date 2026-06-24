@@ -32,6 +32,16 @@ public class Franchise extends BaseEntity {
     @JoinColumn(name = "igl_player_id")
     private Player iglPlayer;
 
+    /** Franchise owner (elevated by an admin). Holds owner + manager permissions. Optional. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "owner_player_id")
+    private Player ownerPlayer;
+
+    /** Franchise manager (chosen by the owner). At most one per franchise. Optional. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "manager_player_id")
+    private Player managerPlayer;
+
     @Column(name = "season_id")
     private String seasonId;
 

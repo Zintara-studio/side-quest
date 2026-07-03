@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   adminApi,
   announcementsApi,
+  disputesApi,
   franchisesApi,
   gamesApi,
   matchesApi,
@@ -21,6 +22,7 @@ import {
 import type {
   ApplyRequest,
   CreateAnnouncementRequest,
+  CreateDisputeRequest,
   CreateFranchiseRequest,
   CreateMatchRequest,
   EnterResultsRequest,
@@ -189,6 +191,27 @@ export const useSetFranchiseManager = () => {
   });
 };
 
+/** Verified players eligible to fill this franchise's owner/manager slot. */
+export const useEligibleOwners = (franchiseId?: string) =>
+  useQuery({
+    queryKey: ["franchises", franchiseId ?? "", "eligible-owners"],
+    queryFn: () => franchisesApi.eligibleOwners(franchiseId!),
+    enabled: !!franchiseId,
+  });
+
+/** Promote a FRANCHISE-type registration proposal into a real franchise. */
+export const useCreateFranchiseFromProposal = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (registrationId: string) =>
+      franchisesApi.createFromProposal(registrationId),
+    onSuccess: () => {
+      invalidateFranchises(qc);
+      qc.invalidateQueries({ queryKey: ["registrations"] });
+    },
+  });
+};
+
 // ---- matches ---------------------------------------------------------------
 
 export const useMatches = (params?: MatchListParams) =>
@@ -235,6 +258,8 @@ export const useEnterResults = () => {
       qc.invalidateQueries({ queryKey: qk.matchLeaderboard(v.id) });
       qc.invalidateQueries({ queryKey: ["standings"] });
       qc.invalidateQueries({ queryKey: ["matches"] });
+      // Publishing changes franchise points, which feed per-season + all-time standings.
+      qc.invalidateQueries({ queryKey: ["seasons"] });
     },
   });
 };
@@ -250,6 +275,8 @@ export const useEnterRounds = () => {
       qc.invalidateQueries({ queryKey: qk.match(v.id) });
       qc.invalidateQueries({ queryKey: ["standings"] });
       qc.invalidateQueries({ queryKey: ["matches"] });
+      // Publishing changes franchise points, which feed per-season + all-time standings.
+      qc.invalidateQueries({ queryKey: ["seasons"] });
     },
   });
 };
@@ -359,6 +386,38 @@ export const useReviewRegistration = () => {
   });
 };
 
+/** Reject / discard a registration (also used to discard a FRANCHISE proposal). */
+export const useRejectRegistration = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
+      registrationsApi.reject(id, reason),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["registrations"] }),
+  });
+};
+
+// ---- disputes (any logged-in user) ----------------------------------------
+
+/** File a dispute: result challenge (pass matchId), status appeal, or general issue. */
+export const useCreateDispute = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateDisputeRequest) => disputesApi.create(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["disputes"] });
+      qc.invalidateQueries({ queryKey: ["disputes", "mine"] });
+    },
+  });
+};
+
+/** The signed-in user's own disputes, newest-first. */
+export const useMyDisputes = (enabled = true) =>
+  useQuery({
+    queryKey: ["disputes", "mine"],
+    queryFn: () => disputesApi.mine(),
+    enabled,
+  });
+
 // ---- admin -----------------------------------------------------------------
 
 export const useAdminOverview = () =>
@@ -405,11 +464,23 @@ export const useSeasonStandings = (code: string | undefined) =>
     enabled: !!code,
   });
 
+/** Cumulative points per franchise across all seasons + live play, ranked. */
+export const useAllTimeStandings = () =>
+  useQuery({
+    queryKey: ["seasons", "all-time"],
+    queryFn: () => seasonsApi.allTimeStandings(),
+  });
+
+// A season transition clears all rosters and repoints the current season, so
+// franchises, players, standings/leaderboard and matches all change — invalidate them.
 const invalidateSeasonWorld = (qc: ReturnType<typeof useQueryClient>) => {
   qc.invalidateQueries({ queryKey: ["seasons"] });
+  qc.invalidateQueries({ queryKey: ["seasons", "current"] });
   qc.invalidateQueries({ queryKey: ["franchises"] });
   qc.invalidateQueries({ queryKey: ["standings"] });
+  qc.invalidateQueries({ queryKey: ["leaderboard"] });
   qc.invalidateQueries({ queryKey: ["players"] });
+  qc.invalidateQueries({ queryKey: ["matches"] });
   qc.invalidateQueries({ queryKey: qk.settings() });
 };
 

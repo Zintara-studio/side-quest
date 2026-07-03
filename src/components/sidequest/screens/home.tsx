@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import Link from "next/link";
 import { SQ, FONT, rankAccent } from "../tokens";
 import { StateNote } from "../state-note";
-import { useStandings, useMatches, usePlayers } from "@/lib/query/hooks";
+import { useStandings, useMatches, usePlayers, useCurrentSeason } from "@/lib/query/hooks";
 import { adaptUpcoming } from "@/lib/adapters/league";
 
 const sectionLabel = {
@@ -25,6 +25,7 @@ export function HomeScreen() {
   const standingsQ = useStandings();
   const matchesQ = useMatches({ status: "SCHEDULED", limit: 6 });
   const playersQ = usePlayers({ limit: 100 });
+  const season = useCurrentSeason().data;
 
   const upcoming = matchesQ.data ? adaptUpcoming(matchesQ.data.items) : [];
   const rows = standingsQ.data?.standings ?? [];
@@ -62,7 +63,7 @@ export function HomeScreen() {
             color: SQ.red,
           }}
         >
-          Season 04 — Spring Series
+          {season ? `${season.code} — ${season.name}` : "Community Esports League"}
         </div>
         <div
           style={{

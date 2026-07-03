@@ -63,6 +63,26 @@ export function MyRegistrationsScreen() {
   const invites = invitesQ.data ?? [];
   const pendingInvites = invites.filter((i) => i.status === "PENDING");
 
+  // Group registrations by the match/announcement they're for; non-match "general" sign-ups
+  // (season bids, franchise proposals, etc.) get their own section. Backend order is newest-first.
+  const matchGroups: { matchId: string; gameName?: string; regs: RegistrationView[] }[] = [];
+  const generalRegs: RegistrationView[] = [];
+  const groupIndex = new Map<string, number>();
+  for (const r of regs) {
+    if (r.matchId) {
+      let idx = groupIndex.get(r.matchId);
+      if (idx === undefined) {
+        idx = matchGroups.length;
+        groupIndex.set(r.matchId, idx);
+        matchGroups.push({ matchId: r.matchId, gameName: r.gameName, regs: [] });
+      }
+      if (!matchGroups[idx].gameName && r.gameName) matchGroups[idx].gameName = r.gameName;
+      matchGroups[idx].regs.push(r);
+    } else {
+      generalRegs.push(r);
+    }
+  }
+
   return (
     <div>
       <Header />
@@ -140,10 +160,27 @@ export function MyRegistrationsScreen() {
             page.
           </StateNote>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            {regs.map((r) => (
-              <RegistrationCard key={r.id} r={r} />
+          <div style={{ display: "flex", flexDirection: "column", gap: 30 }}>
+            {matchGroups.map((g) => (
+              <div key={g.matchId}>
+                <GroupHeader eyebrow="Match" title={g.gameName || "Match sign-up"} hint={`#${g.matchId.slice(0, 8)}`} />
+                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                  {g.regs.map((r) => (
+                    <RegistrationCard key={r.id} r={r} />
+                  ))}
+                </div>
+              </div>
             ))}
+            {generalRegs.length > 0 ? (
+              <div>
+                <GroupHeader eyebrow="General" title="Season & general sign-ups" />
+                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                  {generalRegs.map((r) => (
+                    <RegistrationCard key={r.id} r={r} />
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         )}
       </section>
@@ -185,11 +222,17 @@ function RegistrationCard({ r }: { r: RegistrationView }) {
         </span>
       </div>
 
-      <div style={{ display: "flex", gap: 7, flexWrap: "wrap", margin: "12px 0" }}>
-        {(r.games ?? []).map((g) => (
-          <span key={g} style={chip}>{g}</span>
-        ))}
-      </div>
+      {(() => {
+        // Prefer the derived game for the match; fall back to the picked games list (general calls).
+        const games = r.gameName ? [r.gameName] : r.games ?? [];
+        return games.length > 0 ? (
+          <div style={{ display: "flex", gap: 7, flexWrap: "wrap", margin: "12px 0" }}>
+            {games.map((g) => (
+              <span key={g} style={chip}>{g}</span>
+            ))}
+          </div>
+        ) : null;
+      })()}
 
       {r.reason ? (
         <div style={{ fontSize: 12.5, color: SQ.faint, marginBottom: 12 }}>
@@ -273,6 +316,30 @@ function Header() {
       <div style={{ fontSize: 13.5, color: SQ.mute, marginTop: 12, lineHeight: 1.5, maxWidth: 560 }}>
         Manage the squads you registered, build your roster by inviting teammates, and respond to invitations from other captains.
       </div>
+    </div>
+  );
+}
+
+function GroupHeader({ eyebrow, title, hint }: { eyebrow: string; title: string; hint?: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", margin: "0 0 14px" }}>
+      <span
+        style={{
+          fontFamily: FONT.mono,
+          fontSize: 10,
+          letterSpacing: ".18em",
+          textTransform: "uppercase",
+          color: SQ.label,
+        }}
+      >
+        {eyebrow}
+      </span>
+      <span style={{ fontSize: 15.5, fontWeight: 700, color: SQ.ink }}>{title}</span>
+      {hint ? (
+        <span style={{ fontFamily: FONT.mono, fontSize: 10.5, letterSpacing: ".06em", color: SQ.mute }}>
+          {hint}
+        </span>
+      ) : null}
     </div>
   );
 }

@@ -1,11 +1,140 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import { SQ, FONT, announcementTagColors } from "../tokens";
 import { LeagueTitle } from "../league-title";
 import { StateNote } from "../state-note";
+import { MarkdownView } from "../markdown";
 import { useAnnouncements } from "@/lib/query/hooks";
 import { announcementTagFor, shortDate } from "@/lib/adapters/league";
+import type { AnnouncementView } from "@/lib/api/types";
+
+// Roughly how much body text counts as "long enough to collapse".
+const PREVIEW_LIMIT = 200;
+
+// Strip common markdown syntax for a clean single-block collapsed preview
+// (truncating the raw markdown source could cut mid-link/mid-image).
+function plainPreview(md: string, limit = PREVIEW_LIMIT) {
+  const text = md
+    .replace(/```[\s\S]*?```/g, " ") // fenced code
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ") // images
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1") // links -> text
+    .replace(/^\s{0,3}#{1,6}\s+/gm, "") // headings
+    .replace(/^\s{0,3}>\s?/gm, "") // blockquote markers
+    .replace(/^\s{0,3}([-*+]|\d+\.)\s+/gm, "") // list markers
+    .replace(/(\*\*|__|\*|_|~~|`)/g, "") // emphasis / inline code
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > limit ? `${text.slice(0, limit).trimEnd()}…` : text;
+}
+
+function AnnouncementRow({ a }: { a: AnnouncementView }) {
+  const [expanded, setExpanded] = useState(false);
+  const tag = announcementTagFor(a.category);
+  const [tagColor, tagBorder] = announcementTagColors(tag);
+  const isLong = a.body.trim().length > PREVIEW_LIMIT;
+
+  const toggleStyle = {
+    fontFamily: FONT.mono,
+    fontSize: 11,
+    letterSpacing: ".1em",
+    textTransform: "uppercase" as const,
+    color: SQ.ember,
+    background: "transparent",
+    border: "none",
+    padding: 0,
+    marginTop: 8,
+    cursor: "pointer",
+  };
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 14,
+        alignItems: "flex-start",
+        padding: "20px 22px",
+        borderBottom: `1px solid ${SQ.hairlineCell}`,
+        color: SQ.ink,
+      }}
+    >
+      <div
+        style={{
+          fontFamily: FONT.mono,
+          fontSize: 10,
+          letterSpacing: ".14em",
+          color: a.registrationOpen ? SQ.ember : tagColor,
+          border: `1px solid ${a.registrationOpen ? "rgba(232,96,44,.45)" : tagBorder}`,
+          padding: "5px 9px",
+          borderRadius: 4,
+          width: 96,
+          textAlign: "center",
+          marginTop: 2,
+        }}
+      >
+        {a.registrationOpen ? "REGISTER" : tag}
+      </div>
+      <div style={{ flex: 1, minWidth: 200 }}>
+        <div style={{ fontSize: 17, fontWeight: 600 }}>{a.title}</div>
+        {a.body ? (
+          isLong && !expanded ? (
+            <>
+              <div style={{ fontSize: 13, color: SQ.faint, marginTop: 4, lineHeight: 1.5 }}>
+                {plainPreview(a.body)}
+              </div>
+              <button type="button" onClick={() => setExpanded(true)} style={toggleStyle}>
+                Read more ▾
+              </button>
+            </>
+          ) : (
+            <div style={{ marginTop: 6 }}>
+              <MarkdownView content={a.body} />
+              {isLong ? (
+                <button type="button" onClick={() => setExpanded(false)} style={toggleStyle}>
+                  Show less ▴
+                </button>
+              ) : null}
+            </div>
+          )
+        ) : null}
+      </div>
+      <div
+        style={{
+          fontFamily: FONT.mono,
+          fontSize: 11,
+          letterSpacing: ".1em",
+          color: SQ.mute,
+          whiteSpace: "nowrap",
+          marginTop: 2,
+        }}
+      >
+        {shortDate(a.publishedAt)}
+      </div>
+      {a.registrationOpen ? (
+        <Link
+          href={`/register?announcement=${a.id}`}
+          style={{
+            fontFamily: FONT.mono,
+            fontSize: 11,
+            letterSpacing: ".14em",
+            textTransform: "uppercase",
+            color: SQ.league,
+            background: SQ.red,
+            padding: "9px 15px",
+            borderRadius: 5,
+            fontWeight: 700,
+            textDecoration: "none",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {a.gameName ? `Register · ${a.gameName} ▸` : "Register ▸"}
+        </Link>
+      ) : null}
+    </div>
+  );
+}
 
 export function AnnouncementsScreen() {
   const { data, isLoading, isError } = useAnnouncements({ limit: 20 });
@@ -36,79 +165,9 @@ export function AnnouncementsScreen() {
         </StateNote>
       ) : (
         <div style={{ border: `1px solid ${SQ.hairline}`, borderRadius: 8, overflow: "hidden" }}>
-          {items.map((a) => {
-            const tag = announcementTagFor(a.category);
-            const [tagColor, tagBorder] = announcementTagColors(tag);
-            return (
-              <div
-                key={a.id}
-                style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: 14,
-                  alignItems: "center",
-                  padding: "20px 22px",
-                  borderBottom: `1px solid ${SQ.hairlineCell}`,
-                  color: SQ.ink,
-                }}
-              >
-                <div
-                  style={{
-                    fontFamily: FONT.mono,
-                    fontSize: 10,
-                    letterSpacing: ".14em",
-                    color: a.registrationOpen ? SQ.ember : tagColor,
-                    border: `1px solid ${a.registrationOpen ? "rgba(232,96,44,.45)" : tagBorder}`,
-                    padding: "5px 9px",
-                    borderRadius: 4,
-                    width: 96,
-                    textAlign: "center",
-                  }}
-                >
-                  {a.registrationOpen ? "REGISTER" : tag}
-                </div>
-                <div style={{ flex: 1, minWidth: 200 }}>
-                  <div style={{ fontSize: 17, fontWeight: 600 }}>{a.title}</div>
-                  {a.body ? (
-                    <div style={{ fontSize: 13, color: SQ.faint, marginTop: 4, lineHeight: 1.5 }}>
-                      {a.body}
-                    </div>
-                  ) : null}
-                </div>
-                <div
-                  style={{
-                    fontFamily: FONT.mono,
-                    fontSize: 11,
-                    letterSpacing: ".1em",
-                    color: SQ.mute,
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {shortDate(a.publishedAt)}
-                </div>
-                {a.registrationOpen ? (
-                  <Link
-                    href={`/register?announcement=${a.id}`}
-                    style={{
-                      fontFamily: FONT.mono,
-                      fontSize: 11,
-                      letterSpacing: ".14em",
-                      textTransform: "uppercase",
-                      color: SQ.league,
-                      background: SQ.red,
-                      padding: "9px 15px",
-                      borderRadius: 5,
-                      fontWeight: 700,
-                      textDecoration: "none",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {a.gameName ? `Register · ${a.gameName} ▸` : "Register ▸"}
-                  </Link>
-                ) : null}
-              </div>
-            );
-          })}
+          {items.map((a) => (
+            <AnnouncementRow key={a.id} a={a} />
+          ))}
         </div>
       )}
     </div>

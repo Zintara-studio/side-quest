@@ -12,7 +12,7 @@ import { SQ, FONT } from "./tokens";
 interface NavItem {
   href: string;
   label: string;
-  badgeKey?: "registrations";
+  badgeKey?: "registrations" | "franchiseProposals";
 }
 interface NavGroup {
   label: string;
@@ -32,7 +32,7 @@ const navGroups: NavGroup[] = [
   {
     label: "ENTITIES",
     items: [
-      { href: "/admin/franchises", label: "Franchises" },
+      { href: "/admin/franchises", label: "Franchises", badgeKey: "franchiseProposals" },
       { href: "/admin/players", label: "Players" },
       { href: "/admin/games", label: "Games" },
     ],
@@ -87,7 +87,11 @@ export function AdminShell({ children, fontClass }: { children: ReactNode; fontC
 
   const seasonQ = useCurrentSeason();
   const pendingQ = useRegistrations({ status: "PENDING", limit: 100 });
-  const pendingCount = isAdmin ? pendingQ.data?.items.length ?? 0 : 0;
+  const pendingItems = isAdmin ? pendingQ.data?.items ?? [] : [];
+  // Registrations badge = solo + squad only; FRANCHISE proposals are surfaced
+  // separately on the Franchises nav item.
+  const pendingCount = pendingItems.filter((r) => r.type !== "FRANCHISE").length;
+  const franchiseProposalCount = pendingItems.filter((r) => r.type === "FRANCHISE").length;
 
   if (!hydrated) return <FullScreen>Checking access…</FullScreen>;
   if (!isAdmin) return <FullScreen>Redirecting to sign in…</FullScreen>;
@@ -178,7 +182,15 @@ export function AdminShell({ children, fontClass }: { children: ReactNode; fontC
               </div>
               {grp.items.map((it) => {
                 const active = isActive(it.href);
-                const badge = it.badgeKey === "registrations" && pendingCount > 0 ? pendingCount : null;
+                const badgeCount =
+                  it.badgeKey === "registrations"
+                    ? pendingCount
+                    : it.badgeKey === "franchiseProposals"
+                      ? franchiseProposalCount
+                      : 0;
+                const badge = badgeCount > 0 ? badgeCount : null;
+                // Franchise proposals are a softer, amber-toned signal vs the primary red queue badge.
+                const isSoftBadge = it.badgeKey === "franchiseProposals";
                 return (
                   <Link
                     key={it.href}
@@ -215,15 +227,28 @@ export function AdminShell({ children, fontClass }: { children: ReactNode; fontC
                     </span>
                     {badge ? (
                       <span
-                        style={{
-                          fontFamily: FONT.mono,
-                          fontSize: 10,
-                          color: SQ.sidebar,
-                          background: SQ.red,
-                          padding: "2px 6px",
-                          borderRadius: 9,
-                          fontWeight: 700,
-                        }}
+                        style={
+                          isSoftBadge
+                            ? {
+                                fontFamily: FONT.mono,
+                                fontSize: 10,
+                                color: SQ.amber,
+                                background: "transparent",
+                                border: "1px solid rgba(181,131,26,.5)",
+                                padding: "1px 5px",
+                                borderRadius: 9,
+                                fontWeight: 700,
+                              }
+                            : {
+                                fontFamily: FONT.mono,
+                                fontSize: 10,
+                                color: SQ.sidebar,
+                                background: SQ.red,
+                                padding: "2px 6px",
+                                borderRadius: 9,
+                                fontWeight: 700,
+                              }
+                        }
                       >
                         {badge}
                       </span>

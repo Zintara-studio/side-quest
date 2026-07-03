@@ -6,7 +6,7 @@ import { SQ, FONT } from "../tokens";
 import { LeagueTitle } from "../league-title";
 import { StateNote } from "../state-note";
 import { sortChips } from "@/lib/mock/league";
-import { usePlayers } from "@/lib/query/hooks";
+import { usePlayers, useCurrentSeason } from "@/lib/query/hooks";
 import { adaptPlayers } from "@/lib/adapters/league";
 
 const headCell = {
@@ -19,12 +19,33 @@ const headCell = {
 export function PlayersScreen() {
   const { data, isLoading, isError } = usePlayers({ limit: 50 });
   const players = data ? adaptPlayers(data.items) : [];
+  const season = useCurrentSeason().data;
 
   const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<string>(
+    sortChips.find((c) => c.selected)?.label ?? sortChips[0]?.label ?? "Franchise",
+  );
   const q = query.trim().toLowerCase();
   const filtered = q
     ? players.filter((p) => `${p.name} ${p.fr}`.toLowerCase().includes(q))
     : players;
+  // Client-side sort keyed off the active chip. Normalise the label (strip the
+  // en-dash etc.) so "A–Z"/"Z–A" match regardless of the dash character.
+  const visible = [...filtered].sort((a, b) => {
+    switch (sort.replace(/[^A-Za-z]/g, "").toUpperCase()) {
+      case "AZ":
+        return a.name.localeCompare(b.name);
+      case "ZA":
+        return b.name.localeCompare(a.name);
+      case "POINTS":
+        return b.pts - a.pts || a.name.localeCompare(b.name);
+      case "GAMES":
+        return b.gp - a.gp || a.name.localeCompare(b.name);
+      case "FRANCHISE":
+      default:
+        return a.fr.localeCompare(b.fr) || a.name.localeCompare(b.name);
+    }
+  });
 
   return (
     <div>
@@ -43,7 +64,7 @@ export function PlayersScreen() {
         }}
       >
         <div style={{ fontFamily: FONT.mono, fontSize: 12, letterSpacing: ".1em", color: SQ.mute }}>
-          {players.length} REGISTERED · SEASON 04
+          {players.length} REGISTERED · SEASON {season?.code ?? "—"}
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <input
@@ -75,24 +96,29 @@ export function PlayersScreen() {
           >
             SORT
           </span>
-          {sortChips.map((c) => (
-            <div
-              key={c.label}
-              style={{
-                fontFamily: FONT.mono,
-                fontSize: 11,
-                letterSpacing: ".06em",
-                padding: "8px 12px",
-                borderRadius: 5,
-                border: `1px solid ${c.selected ? SQ.red : SQ.inputBorder}`,
-                color: c.selected ? SQ.league : SQ.faint,
-                background: c.selected ? SQ.red : "transparent",
-                cursor: "pointer",
-              }}
-            >
-              {c.label}
-            </div>
-          ))}
+          {sortChips.map((c) => {
+            const active = c.label === sort;
+            return (
+              <button
+                key={c.label}
+                type="button"
+                onClick={() => setSort(c.label)}
+                style={{
+                  fontFamily: FONT.mono,
+                  fontSize: 11,
+                  letterSpacing: ".06em",
+                  padding: "8px 12px",
+                  borderRadius: 5,
+                  border: `1px solid ${active ? SQ.red : SQ.inputBorder}`,
+                  color: active ? SQ.league : SQ.faint,
+                  background: active ? SQ.red : "transparent",
+                  cursor: "pointer",
+                }}
+              >
+                {c.label}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -102,7 +128,7 @@ export function PlayersScreen() {
         <StateNote tone={isError ? "error" : "muted"}>
           {isError ? "Couldn't reach the league API." : "No players registered yet."}
         </StateNote>
-      ) : filtered.length === 0 ? (
+      ) : visible.length === 0 ? (
         <StateNote>No players match “{query}”.</StateNote>
       ) : (
         <div style={{ overflowX: "auto", border: `1px solid ${SQ.hairline}`, borderRadius: 8 }}>
@@ -121,7 +147,7 @@ export function PlayersScreen() {
               <div style={{ width: 80, textAlign: "right" }}>POINTS</div>
               <div style={{ width: 120, textAlign: "right" }}>REGION</div>
             </div>
-            {filtered.map((p, i) => (
+            {visible.map((p, i) => (
               <Link
                 key={p.id}
                 href={`/player/${p.id}`}

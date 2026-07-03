@@ -6,17 +6,22 @@ import { SQ, FONT } from "../tokens";
 import { ScreenHeader } from "../screen-header";
 import { TableScroll } from "../table-scroll";
 import { StateNote } from "@/components/sidequest/state-note";
+import { SearchableSelect } from "@/components/sidequest/searchable-select";
 import {
   useFranchises,
   useFranchise,
-  useFranchiseRoster,
   useCreateFranchise,
   useDiscardFranchise,
   useSetFranchiseOwner,
   useSetFranchiseManager,
   useRegistrations,
+  useEligibleOwners,
+  useCreateFranchiseFromProposal,
+  useRejectRegistration,
 } from "@/lib/query/hooks";
+import type { RegistrationView } from "@/lib/api/types";
 import { apiErrorMessage } from "@/lib/api/client";
+import { shortDate } from "@/lib/adapters/league";
 
 const headCell = {
   fontFamily: FONT.mono,
@@ -45,11 +50,33 @@ const smallBtn = {
   cursor: "pointer",
 } as const;
 
+const chip = {
+  fontFamily: FONT.mono,
+  fontSize: 10,
+  letterSpacing: ".04em",
+  color: SQ.faint,
+  border: `1px solid ${SQ.field}`,
+  padding: "5px 9px",
+  borderRadius: 5,
+} as const;
+
+const cardBtn = {
+  flex: 1,
+  textAlign: "center",
+  fontFamily: FONT.mono,
+  fontSize: 10.5,
+  letterSpacing: ".12em",
+  textTransform: "uppercase",
+  fontWeight: 700,
+  padding: 10,
+  borderRadius: 5,
+  cursor: "pointer",
+} as const;
+
 export function FranchisesScreen() {
   const { data, isLoading, isError } = useFranchises({});
   const franchises = data?.items ?? [];
   const create = useCreateFranchise();
-  const pendingFranchiseRegs = useRegistrations({ status: "PENDING", type: "FRANCHISE", limit: 50 });
 
   const [name, setName] = useState("");
   const [tag, setTag] = useState("");
@@ -75,7 +102,7 @@ export function FranchisesScreen() {
     <div>
       <ScreenHeader eyebrow="Teams & rosters" title="FRANCHISES" />
 
-      {/* create + form-from-registration */}
+      {/* create a franchise directly */}
       <div
         style={{
           background: SQ.panel,
@@ -107,31 +134,10 @@ export function FranchisesScreen() {
           </button>
         </div>
         {err ? <div style={{ fontFamily: FONT.mono, fontSize: 12, color: SQ.ember, marginTop: 8 }}>{err}</div> : null}
-
-        {(pendingFranchiseRegs.data?.items ?? []).length > 0 ? (
-          <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${SQ.hairlineSoft}` }}>
-            <div style={{ ...headCell, marginBottom: 8 }}>FRANCHISE REGISTRATIONS · CLICK TO PREFILL</div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {(pendingFranchiseRegs.data?.items ?? []).map((r) => (
-                <button
-                  key={r.id}
-                  type="button"
-                  onClick={() => {
-                    setName(r.squadName ?? "");
-                    setTag((r.squadName ?? "").replace(/[^a-zA-Z]/g, "").slice(0, 4).toUpperCase());
-                  }}
-                  style={{ ...smallBtn, color: SQ.faint, background: "transparent", border: `1px solid ${SQ.inputBorder}` }}
-                >
-                  {r.squadName ?? r.player?.gamerTag ?? "Franchise"} ▸
-                </button>
-              ))}
-            </div>
-            <div style={{ fontSize: 11.5, color: SQ.mute, marginTop: 8 }}>
-              Approve the registration in Registrations once the franchise is formed.
-            </div>
-          </div>
-        ) : null}
       </div>
+
+      {/* pending FRANCHISE proposals — keep (create franchise) / discard (reject) */}
+      <ProposalsPanel />
 
       {isLoading ? (
         <StateNote>Loading franchises…</StateNote>
@@ -196,70 +202,255 @@ export function FranchisesScreen() {
   );
 }
 
+/** Pending FRANCHISE-type registrations, each promotable into a real franchise or discardable. */
+function ProposalsPanel() {
+  const { data, isLoading } = useRegistrations({ status: "PENDING", type: "FRANCHISE", limit: 50 });
+  const items = data?.items ?? [];
+
+  // Nothing to show once the queue is empty — keep the screen quiet.
+  if (!isLoading && items.length === 0) return null;
+
+  return (
+    <div
+      style={{
+        background: SQ.panel,
+        border: `1px solid ${SQ.hairline}`,
+        borderRadius: 9,
+        padding: 18,
+        margin: "0 0 24px",
+      }}
+    >
+      <div style={{ ...headCell, marginBottom: 4 }}>FRANCHISE PROPOSALS · {items.length} PENDING</div>
+      <div style={{ fontSize: 11.5, color: SQ.mute, marginBottom: 14 }}>
+        Keep a proposal to create the franchise (the applicant becomes its owner), or discard it to reject the registration.
+      </div>
+      {isLoading ? (
+        <StateNote>Loading proposals…</StateNote>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(320px,1fr))", gap: 16 }}>
+          {items.map((r) => (
+            <ProposalCard key={r.id} r={r} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProposalCard({ r }: { r: RegistrationView }) {
+  const keep = useCreateFranchiseFromProposal();
+  const discard = useRejectRegistration();
+  const [msg, setMsg] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
+
+  const busy = keep.isPending || discard.isPending;
+
+  const onKeep = async () => {
+    setMsg(null);
+    try {
+      const fr = await keep.mutateAsync(r.id);
+      setMsg({ tone: "ok", text: `Created “${fr.name}”. ${r.player?.gamerTag ?? "The applicant"} is now owner.` });
+    } catch (e) {
+      setMsg({ tone: "err", text: apiErrorMessage(e, "Couldn't create the franchise from this proposal.") });
+    }
+  };
+
+  const onDiscard = async () => {
+    if (!window.confirm("Discard this franchise proposal? The registration will be rejected.")) return;
+    setMsg(null);
+    try {
+      await discard.mutateAsync({ id: r.id, reason: "Franchise proposal discarded." });
+    } catch (e) {
+      setMsg({ tone: "err", text: apiErrorMessage(e, "Couldn't discard this proposal.") });
+    }
+  };
+
+  const title = r.squadName?.trim() || "Franchise proposal";
+  const meta = [r.contact, shortDate(r.createdAt)].filter(Boolean).join(" · ");
+
+  return (
+    <div style={{ background: SQ.inset, border: `1px solid ${SQ.hairline}`, borderRadius: 9, padding: 16 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 15, fontWeight: 700 }}>{title}</div>
+          <div style={{ fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".08em", color: SQ.mute, marginTop: 3 }}>
+            PROPOSED BY {(r.player?.gamerTag ?? "—").toUpperCase()}
+          </div>
+        </div>
+        <span
+          style={{
+            fontFamily: FONT.mono,
+            fontSize: 9.5,
+            letterSpacing: ".1em",
+            color: SQ.amber,
+            border: "1px solid rgba(181,131,26,.5)",
+            padding: "4px 8px",
+            borderRadius: 9,
+            flex: "0 0 auto",
+          }}
+        >
+          {r.status}
+        </span>
+      </div>
+
+      {(r.games ?? []).length > 0 ? (
+        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", margin: "13px 0" }}>
+          {r.games.map((g) => (
+            <span key={g} style={chip}>
+              {g}
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      {r.reason?.trim() ? (
+        <div style={{ margin: "0 0 13px" }}>
+          <div style={{ fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".1em", color: SQ.label, marginBottom: 6 }}>NOTE</div>
+          <div style={{ fontSize: 13, color: SQ.faint, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{r.reason}</div>
+        </div>
+      ) : null}
+
+      {meta ? (
+        <div style={{ fontFamily: FONT.mono, fontSize: 10.5, letterSpacing: ".06em", color: SQ.mute, marginBottom: 13 }}>{meta}</div>
+      ) : null}
+
+      <div style={{ display: "flex", gap: 10 }}>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onKeep}
+          style={{ ...cardBtn, color: SQ.sidebar, background: SQ.green, border: "none", opacity: busy ? 0.6 : 1 }}
+        >
+          {keep.isPending ? "Creating…" : "Keep ▸"}
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onDiscard}
+          style={{ ...cardBtn, color: SQ.ember, background: "transparent", border: "1px solid rgba(232,96,44,.45)", opacity: busy ? 0.6 : 1 }}
+        >
+          {discard.isPending ? "Discarding…" : "Discard"}
+        </button>
+      </div>
+
+      {msg ? (
+        <div
+          style={{
+            fontFamily: FONT.mono,
+            fontSize: 11.5,
+            lineHeight: 1.5,
+            marginTop: 10,
+            color: msg.tone === "ok" ? SQ.green : SQ.ember,
+          }}
+        >
+          {msg.text}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ManagePanel({ franchiseId }: { franchiseId: string }) {
   const detailQ = useFranchise(franchiseId);
-  const rosterQ = useFranchiseRoster(franchiseId);
+  const eligibleQ = useEligibleOwners(franchiseId);
   const setOwner = useSetFranchiseOwner();
   const setManager = useSetFranchiseManager();
   const discard = useDiscardFranchise();
-  const roster = rosterQ.data ?? [];
   const d = detailQ.data;
+  const eligible = eligibleQ.data ?? [];
+
+  const [ownerMsg, setOwnerMsg] = useState<string | null>(null);
+  const [managerMsg, setManagerMsg] = useState<string | null>(null);
 
   const rowLabel = { fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".12em", color: SQ.label } as const;
-  const sel = {
-    ...formInput,
-    fontFamily: FONT.mono,
-    fontSize: 12,
-    cursor: "pointer",
-    minWidth: 180,
-  } as const;
+
+  const baseOptions = eligible.map((p) => ({ value: p.playerId, label: p.gamerTag }));
+  // Keep the currently-seated person selectable even if the eligible list is still loading.
+  const withCurrent = (person: { playerId: string; gamerTag: string } | null | undefined) =>
+    person && !baseOptions.some((o) => o.value === person.playerId)
+      ? [{ value: person.playerId, label: person.gamerTag }, ...baseOptions]
+      : baseOptions;
+
+  const ownerOptions = withCurrent(d?.owner);
+  const managerOptions = withCurrent(d?.manager);
+
+  const changeOwner = async (playerId: string) => {
+    if (!playerId || playerId === d?.owner?.playerId) return;
+    setOwnerMsg(null);
+    try {
+      await setOwner.mutateAsync({ id: franchiseId, playerId });
+    } catch (e) {
+      setOwnerMsg(apiErrorMessage(e, "Couldn't set the owner."));
+    }
+  };
+
+  const changeManager = async (playerId: string) => {
+    if (!playerId || playerId === d?.manager?.playerId) return;
+    setManagerMsg(null);
+    try {
+      await setManager.mutateAsync({ id: franchiseId, playerId });
+    } catch (e) {
+      setManagerMsg(apiErrorMessage(e, "Couldn't set the manager."));
+    }
+  };
+
+  const noEligible = !eligibleQ.isLoading && ownerOptions.length === 0;
 
   return (
-    <div style={{ padding: "0 18px 18px 62px", display: "flex", flexWrap: "wrap", gap: 22, alignItems: "flex-end" }}>
-      <label>
-        <div style={{ ...rowLabel, marginBottom: 6 }}>OWNER</div>
-        <select
-          value={d?.owner?.playerId ?? ""}
-          disabled={setOwner.isPending || roster.length === 0}
-          onChange={(e) => e.target.value && setOwner.mutate({ id: franchiseId, playerId: e.target.value })}
-          style={sel}
-        >
-          <option value="">{d?.owner ? d.owner.gamerTag : "Set owner…"}</option>
-          {roster.map((m) => (
-            <option key={m.playerId} value={m.playerId}>{m.gamerTag}</option>
-          ))}
-        </select>
-      </label>
-      <label>
-        <div style={{ ...rowLabel, marginBottom: 6 }}>MANAGER</div>
-        <select
-          value={d?.manager?.playerId ?? ""}
-          disabled={setManager.isPending || roster.length === 0}
-          onChange={(e) => e.target.value && setManager.mutate({ id: franchiseId, playerId: e.target.value })}
-          style={sel}
-        >
-          <option value="">{d?.manager ? d.manager.gamerTag : "Set manager…"}</option>
-          {roster.map((m) => (
-            <option key={m.playerId} value={m.playerId}>{m.gamerTag}</option>
-          ))}
-        </select>
-      </label>
-      {roster.length === 0 ? (
-        <div style={{ fontSize: 12, color: SQ.mute, paddingBottom: 8 }}>Assign players to the roster first.</div>
-      ) : null}
-      {d?.active !== false ? (
-        <button
-          type="button"
-          disabled={discard.isPending}
-          onClick={() => {
-            if (window.confirm("Discard this franchise? It will stop competing (history is kept).")) {
-              discard.mutate(franchiseId);
-            }
-          }}
-          style={{ ...smallBtn, color: SQ.ember, background: "transparent", border: "1px solid rgba(232,96,44,.45)" }}
-        >
-          {discard.isPending ? "Discarding…" : "Discard franchise"}
-        </button>
+    <div style={{ padding: "0 18px 18px 62px" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 22, alignItems: "flex-start" }}>
+        <div style={{ width: 240 }}>
+          <div style={{ ...rowLabel, marginBottom: 6 }}>OWNER</div>
+          <SearchableSelect
+            value={d?.owner?.playerId ?? ""}
+            onChange={changeOwner}
+            options={ownerOptions}
+            placeholder={eligibleQ.isLoading ? "Loading…" : "Set owner…"}
+            searchPlaceholder="Search players…"
+            disabled={setOwner.isPending || ownerOptions.length === 0}
+          />
+          {ownerMsg ? (
+            <div style={{ fontFamily: FONT.mono, fontSize: 11, lineHeight: 1.5, color: SQ.ember, marginTop: 6 }}>{ownerMsg}</div>
+          ) : null}
+        </div>
+
+        <div style={{ width: 240 }}>
+          <div style={{ ...rowLabel, marginBottom: 6 }}>MANAGER</div>
+          <SearchableSelect
+            value={d?.manager?.playerId ?? ""}
+            onChange={changeManager}
+            options={managerOptions}
+            placeholder={eligibleQ.isLoading ? "Loading…" : "Set manager…"}
+            searchPlaceholder="Search players…"
+            disabled={setManager.isPending || managerOptions.length === 0}
+          />
+          {managerMsg ? (
+            <div style={{ fontFamily: FONT.mono, fontSize: 11, lineHeight: 1.5, color: SQ.ember, marginTop: 6 }}>{managerMsg}</div>
+          ) : null}
+        </div>
+
+        {d?.active !== false ? (
+          <div style={{ alignSelf: "flex-start" }}>
+            <div style={{ ...rowLabel, marginBottom: 6, visibility: "hidden" }}>—</div>
+            <button
+              type="button"
+              disabled={discard.isPending}
+              onClick={() => {
+                if (window.confirm("Discard this franchise? It will stop competing (history is kept).")) {
+                  discard.mutate(franchiseId);
+                }
+              }}
+              style={{ ...smallBtn, color: SQ.ember, background: "transparent", border: "1px solid rgba(232,96,44,.45)" }}
+            >
+              {discard.isPending ? "Discarding…" : "Discard franchise"}
+            </button>
+          </div>
+        ) : null}
+      </div>
+
+      {noEligible ? (
+        <div style={{ fontSize: 12, color: SQ.mute, marginTop: 12 }}>
+          No eligible players to assign — only verified players who are unassigned or already on this franchise can be an owner or manager.
+        </div>
       ) : null}
     </div>
   );

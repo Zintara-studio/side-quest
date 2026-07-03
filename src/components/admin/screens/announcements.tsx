@@ -4,6 +4,8 @@ import { useState } from "react";
 import { SQ, FONT, announcementTagColors } from "../tokens";
 import { ScreenHeader } from "../screen-header";
 import { StateNote } from "@/components/sidequest/state-note";
+import { SearchableSelect, type SearchableSelectOption } from "@/components/sidequest/searchable-select";
+import { MarkdownView } from "@/components/sidequest/markdown";
 import {
   useAnnouncements,
   useCreateAnnouncement,
@@ -39,11 +41,14 @@ export function AnnouncementsScreen() {
   const create = useCreateAnnouncement();
   const remove = useDeleteAnnouncement();
   const gamesQ = useGames(true);
-  const scheduledQ = useMatches({ status: "SCHEDULED", limit: 50 });
+  // All matches (not just SCHEDULED) so result / recap posts can point at a
+  // LIVE, AWAITING_RESULT or COMPLETED fixture too.
+  const matchesQ = useMatches({ limit: 50 });
 
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState("GENERAL");
   const [body, setBody] = useState("");
+  const [showPreview, setShowPreview] = useState(false);
   const [matchId, setMatchId] = useState("");
   const [registrationOpen, setRegistrationOpen] = useState(false);
   const [gameId, setGameId] = useState("");
@@ -51,15 +56,23 @@ export function AnnouncementsScreen() {
   const [err, setErr] = useState<string | null>(null);
 
   const items = list.data?.items ?? [];
-  const scheduled = scheduledQ.data?.items ?? [];
-  const selectedMatch = scheduled.find((m) => m.id === matchId);
+  const matches = matchesQ.data?.items ?? [];
+  const selectedMatch = matches.find((m) => m.id === matchId);
+  const matchOptions: SearchableSelectOption[] = [
+    { value: "", label: "No linked match" },
+    ...matches.map((m) => ({
+      value: m.id,
+      label: `${m.game?.name ?? "Match"} · ${shortDate(m.scheduledAt)} · ${m.matchType ?? "FRANCHISE"}`,
+      hint: m.status,
+    })),
+  ];
 
   const onPublish = async () => {
     setErr(null);
     if (!title.trim() || !body.trim()) return;
-    // A match announcement must point at a scheduled fixture.
+    // A match announcement must point at a fixture (any status).
     if (category === "MATCH" && !matchId) {
-      setErr("Pick the scheduled match this post is for.");
+      setErr("Pick the match this post is for.");
       return;
     }
     await create.mutateAsync({
@@ -73,6 +86,7 @@ export function AnnouncementsScreen() {
     });
     setTitle("");
     setBody("");
+    setShowPreview(false);
     setMatchId("");
     setRegistrationOpen(false);
     setGameId("");
@@ -130,31 +144,65 @@ export function AnnouncementsScreen() {
             ))}
           </div>
 
-          <div style={{ ...fieldLabel, margin: "18px 0 8px" }}>BODY</div>
-          <textarea
-            className="sq-field"
-            style={{ ...inputBox, minHeight: 90, lineHeight: 1.5, resize: "vertical" }}
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            placeholder="Write the announcement copy…"
-          />
-
-          {/* tie to a scheduled match */}
-          <div style={{ ...fieldLabel, margin: "18px 0 8px" }}>
-            SCHEDULED MATCH{category === "MATCH" ? " (REQUIRED)" : " (OPTIONAL)"}
-          </div>
-          <select
-            value={matchId}
-            onChange={(e) => setMatchId(e.target.value)}
-            style={{ ...inputBox, cursor: "pointer" }}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              justifyContent: "space-between",
+              margin: "18px 0 8px",
+            }}
           >
-            <option value="">No linked match</option>
-            {scheduled.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.game?.name ?? "Match"} · {shortDate(m.scheduledAt)} · {m.matchType ?? "FRANCHISE"}
-              </option>
-            ))}
-          </select>
+            <div style={fieldLabel}>BODY</div>
+            <button
+              type="button"
+              onClick={() => setShowPreview((p) => !p)}
+              disabled={!body.trim()}
+              style={{
+                fontFamily: FONT.mono,
+                fontSize: 10,
+                letterSpacing: ".1em",
+                textTransform: "uppercase",
+                color: body.trim() ? SQ.ember : SQ.mute,
+                background: "transparent",
+                border: "none",
+                cursor: body.trim() ? "pointer" : "not-allowed",
+              }}
+            >
+              {showPreview ? "Edit" : "Preview"}
+            </button>
+          </div>
+          {showPreview ? (
+            <div style={{ ...inputBox, minHeight: 90, padding: "10px 14px" }}>
+              {body.trim() ? (
+                <MarkdownView content={body} />
+              ) : (
+                <span style={{ fontSize: 13, color: SQ.mute }}>Nothing to preview yet.</span>
+              )}
+            </div>
+          ) : (
+            <textarea
+              className="sq-field"
+              style={{ ...inputBox, minHeight: 90, lineHeight: 1.5, resize: "vertical" }}
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              placeholder="Write the announcement copy…  (Markdown supported)"
+            />
+          )}
+          <div style={{ fontFamily: FONT.mono, fontSize: 10.5, color: SQ.mute, marginTop: 6 }}>
+            Markdown supported — headings, **bold**, lists, links.
+          </div>
+
+          {/* tie to a match (any status) */}
+          <div style={{ ...fieldLabel, margin: "18px 0 8px" }}>
+            LINKED MATCH{category === "MATCH" ? " (REQUIRED)" : " (OPTIONAL)"}
+          </div>
+          <SearchableSelect
+            value={matchId}
+            onChange={setMatchId}
+            options={matchOptions}
+            placeholder="No linked match"
+            searchPlaceholder="Search matches…"
+          />
           {selectedMatch ? (
             <div style={{ fontFamily: FONT.mono, fontSize: 11, color: SQ.mute, marginTop: 8 }}>
               {selectedMatch.matchType === "FFA"

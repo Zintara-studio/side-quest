@@ -27,7 +27,7 @@ export const metadata: Metadata = {
     template: "%s · Side Quest",
   },
   description:
-    "Side Quest Season 04 — franchise standings, matchdays, supported games, players, and registration.",
+    "Side Quest — franchise standings, matchdays, supported games, players, and registration.",
 };
 
 export default function LeagueLayout({ children }: { children: React.ReactNode }) {

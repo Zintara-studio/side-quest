@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { SQ } from "../tokens";
 import { useAuth, apiErrorMessage } from "@/lib/auth/context";
+import { useCurrentSeason } from "@/lib/query/hooks";
 import {
   AuthCard,
   AuthField,
@@ -19,6 +20,7 @@ import {
 export function SignupForm() {
   const router = useRouter();
   const { signup } = useAuth();
+  const season = useCurrentSeason().data;
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -47,7 +49,7 @@ export function SignupForm() {
 
   return (
     <AuthCard
-      eyebrow="Season 04"
+      eyebrow={season?.name ?? "Community League"}
       title="CREATE ACCOUNT"
       subtitle="Join the league — claim your handle, then register for a title."
     >

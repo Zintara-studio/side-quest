@@ -6,9 +6,11 @@ import type {
   ApplyRequest,
   AuthResponse,
   CreateAnnouncementRequest,
+  CreateDisputeRequest,
   CreateFranchiseRequest,
   CreateMatchRequest,
   DisputeView,
+  EligiblePlayer,
   EnterResultsRequest,
   FranchiseDetail,
   FranchiseMatchView,
@@ -138,6 +140,12 @@ export const franchisesApi = {
     api.post<FranchiseDetail>(`/franchises/${id}/manager`, { playerId }).then((r) => r.data),
   discard: (id: string) =>
     api.post<FranchiseDetail>(`/franchises/${id}/discard`).then((r) => r.data),
+  eligibleOwners: (id: string) =>
+    api.get<EligiblePlayer[]>(`/franchises/${id}/eligible-owners`).then((r) => r.data),
+  createFromProposal: (registrationId: string) =>
+    api
+      .post<FranchiseDetail>(`/franchises/from-proposal/${registrationId}`)
+      .then((r) => r.data),
 };
 
 // ---- matches ---------------------------------------------------------------
@@ -242,6 +250,14 @@ export const adminApi = {
     api.post<DisputeView>(`/admin/disputes/${id}/resolve`, body).then((r) => r.data),
 };
 
+// ---- disputes (any logged-in user) ----------------------------------------
+
+export const disputesApi = {
+  create: (body: CreateDisputeRequest) =>
+    api.post<DisputeView>("/disputes", body).then((r) => r.data),
+  mine: () => api.get<DisputeView[]>("/disputes/mine").then((r) => r.data),
+};
+
 // ---- seasons ---------------------------------------------------------------
 
 export const seasonsApi = {
@@ -249,6 +265,8 @@ export const seasonsApi = {
   current: () => api.get<SeasonView | "">("/seasons/current").then((r) => r.data || null),
   standings: (code: string) =>
     api.get<SeasonStandingView[]>(`/seasons/${code}/standings`).then((r) => r.data),
+  allTimeStandings: () =>
+    api.get<SeasonStandingView[]>("/seasons/all-time/standings").then((r) => r.data),
   start: (body: StartSeasonRequest) =>
     api.post<SeasonView>("/seasons/start", body).then((r) => r.data),
   finish: () => api.post<SeasonView>("/seasons/finish").then((r) => r.data),

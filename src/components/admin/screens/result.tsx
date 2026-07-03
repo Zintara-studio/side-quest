@@ -11,8 +11,10 @@ import {
   useMatchRounds,
   useEnterRounds,
   useFranchiseRoster,
+  useMatchPlayers,
 } from "@/lib/query/hooks";
-import type { ParticipantView, RoundEntry } from "@/lib/api/types";
+import type { MatchPlayerView, ParticipantView, RoundEntry } from "@/lib/api/types";
+import { apiErrorMessage } from "@/lib/auth/context";
 
 const headCell = {
   fontFamily: FONT.mono,
@@ -45,8 +47,11 @@ const textInput = {
 
 type PlayerDraft = { kills: number };
 type TeamDraft = { rank: number; kills: number; survivalMin: number; players: Record<string, PlayerDraft> };
+// FFA scores each entrant individually — a per-player rank + kills line (no team wrapper).
+type FfaPlayerDraft = { rank: number; kills: number };
 
 const emptyTeam = (): TeamDraft => ({ rank: 0, kills: 0, survivalMin: 0, players: {} });
+const emptyFfa = (): FfaPlayerDraft => ({ rank: 0, kills: 0 });
 
 function parseLadder(csv: string): number[] {
   return csv
@@ -64,6 +69,10 @@ export function ResultScreen() {
   const [matchId, setMatchId] = useState("");
   const matchQ = useMatch(matchId || undefined);
   const roundsQ = useMatchRounds(matchId || undefined);
+  // FFA player pool = the approved registrations for this match; only fetched for FFA fixtures.
+  const matchPlayersQ = useMatchPlayers(
+    matchQ.data?.matchType === "FFA" ? matchId || undefined : undefined,
+  );
   const enterRounds = useEnterRounds();
 
   // Scoring weights (prefilled from the match; editable per match).
@@ -75,11 +84,15 @@ export function ResultScreen() {
   const [draftMap, setDraftMap] = useState("");
   const [draftMode, setDraftMode] = useState("");
   const [draft, setDraft] = useState<Record<string, TeamDraft>>({});
+  const [ffaDraft, setFfaDraft] = useState<Record<string, FfaPlayerDraft>>({});
   const [seededFor, setSeededFor] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
 
   const matches = matchesQ.data?.items ?? [];
   const participants = matchQ.data?.participants ?? [];
+  const isFfa = matchQ.data?.matchType === "FFA";
+  const ffaPlayers = matchPlayersQ.data ?? [];
   const ladder = parseLadder(placementCsv);
 
   // When a match is selected, prefill its weights and pre-stage any existing rounds so previous
@@ -92,18 +105,22 @@ export function ResultScreen() {
     if (matchQ.isFetching || roundsQ.isFetching) return;
     setPointsPerKill(matchQ.data.pointsPerKill ?? 1);
     setPlacementCsv(matchQ.data.placementPoints ?? "15,12,10,8,6,4,2,1");
+    // For FFA rounds the round view carries the entrant's PLAYER id in the franchiseId slot (the row
+    // has no franchise), so re-stage it as playerId; franchise rounds keep franchiseId.
+    const seedFfa = matchQ.data.matchType === "FFA";
     setRounds(
       (roundsQ.data ?? []).map((rd) => ({
         roundNumber: rd.roundNumber,
         mapName: rd.mapName,
         mode: rd.mode,
         rows: rd.rows.map((r) => ({
-          franchiseId: r.franchiseId,
+          franchiseId: seedFfa ? undefined : r.franchiseId,
+          playerId: seedFfa ? r.franchiseId : undefined,
           rank: r.rank,
           kills: r.kills,
           survivalSeconds: r.survivalSeconds,
           players:
-            r.players && r.players.length
+            !seedFfa && r.players && r.players.length
               ? r.players.map((p) => ({
                   playerId: p.playerId,
                   kills: p.kills,
@@ -127,6 +144,11 @@ export function ResultScreen() {
       const cur = d[fid] ?? emptyTeam();
       return { ...d, [fid]: { ...cur, players: { ...cur.players, [pid]: { kills: v } } } };
     });
+
+  const setFfaRank = (pid: string, v: number) =>
+    setFfaDraft((d) => ({ ...d, [pid]: { ...(d[pid] ?? emptyFfa()), rank: v } }));
+  const setFfaKills = (pid: string, v: number) =>
+    setFfaDraft((d) => ({ ...d, [pid]: { ...(d[pid] ?? emptyFfa()), kills: v } }));
 
   const teamKills = (fid: string): number => {
     const t = draft[fid] ?? emptyTeam();
@@ -175,6 +197,7 @@ export function ResultScreen() {
     setDraftMode(r.mode ?? "");
     const next: Record<string, TeamDraft> = {};
     for (const row of r.rows) {
+      if (!row.franchiseId) continue;
       const players: Record<string, PlayerDraft> = {};
       for (const pl of row.players ?? []) players[pl.playerId] = { kills: pl.kills };
       next[row.franchiseId] = {
@@ -191,14 +214,60 @@ export function ResultScreen() {
     setMsg(null);
   };
 
+  // FFA round: every approved entrant becomes one result row identified by its playerId (FFA rows have
+  // no franchise — the backend scores each entrant individually). Kills/rank are carried on the row.
+  const addFfaRound = () => {
+    const rows = ffaPlayers.map((m) => {
+      const cur = ffaDraft[m.playerId] ?? emptyFfa();
+      return {
+        playerId: m.playerId,
+        rank: cur.rank || 0,
+        kills: cur.kills || 0,
+        survivalSeconds: 0,
+      };
+    });
+    setRounds((r) => [...r, { roundNumber: r.length + 1, mapName: draftMap, mode: draftMode, rows }]);
+    setFfaDraft({});
+    setDraftMap("");
+    setDraftMode("");
+    setMsg(null);
+  };
+
+  // Pull a staged FFA round back into the editable per-player draft (keyed by the row's player id).
+  const editFfaRound = (r: RoundEntry) => {
+    setDraftMap(r.mapName ?? "");
+    setDraftMode(r.mode ?? "");
+    const next: Record<string, FfaPlayerDraft> = {};
+    for (const row of r.rows) {
+      const pid = row.playerId ?? row.players?.[0]?.playerId ?? row.franchiseId;
+      if (!pid) continue;
+      next[pid] = { rank: row.rank, kills: row.kills || row.players?.[0]?.kills || 0 };
+    }
+    setFfaDraft(next);
+    setRounds((rs) =>
+      rs.filter((x) => x.roundNumber !== r.roundNumber).map((x, i) => ({ ...x, roundNumber: i + 1 })),
+    );
+    setMsg(null);
+  };
+
+  const removeRound = (roundNumber: number) =>
+    setRounds((rs) =>
+      rs.filter((x) => x.roundNumber !== roundNumber).map((x, i) => ({ ...x, roundNumber: i + 1 })),
+    );
+
   const publish = async () => {
     setMsg(null);
-    await enterRounds.mutateAsync({
-      id: matchId,
-      body: { pointsPerKill, placementPoints: placementCsv, rounds },
-    });
-    setMsg(`Published ${rounds.length} round(s) — placement points applied and standings recomputed.`);
-    setSeededFor(""); // re-seed from the freshly published rounds
+    setErr(null);
+    try {
+      await enterRounds.mutateAsync({
+        id: matchId,
+        body: { pointsPerKill, placementPoints: placementCsv, rounds },
+      });
+      setMsg(`Published ${rounds.length} round(s) — placement points applied and standings recomputed.`);
+      setSeededFor(""); // re-seed from the freshly published rounds
+    } catch (e) {
+      setErr(apiErrorMessage(e, "Could not publish results."));
+    }
   };
 
   const pending = enterRounds.isPending;
@@ -214,6 +283,7 @@ export function ResultScreen() {
           onChange={(e) => {
             setMatchId(e.target.value);
             setDraft({});
+            setFfaDraft({});
             setRounds([]);
             setSeededFor("");
             setMsg(null);
@@ -235,6 +305,9 @@ export function ResultScreen() {
         ) : null}
       </div>
 
+      {err ? (
+        <div style={{ margin: "10px 0 0", fontFamily: FONT.mono, fontSize: 12, color: SQ.red }}>{err}</div>
+      ) : null}
       {msg ? (
         <div style={{ margin: "10px 0 0", fontFamily: FONT.mono, fontSize: 12, color: SQ.green }}>{msg}</div>
       ) : null}
@@ -245,6 +318,78 @@ export function ResultScreen() {
         <StateNote>Pick a match to enter its result.</StateNote>
       ) : matchQ.isLoading ? (
         <StateNote>Loading match…</StateNote>
+      ) : isFfa ? (
+        matchPlayersQ.isLoading ? (
+          <StateNote>Loading approved players…</StateNote>
+        ) : ffaPlayers.length === 0 ? (
+          <StateNote>This FFA match has no approved players yet.</StateNote>
+        ) : (
+          <>
+            {/* scoring weights (FFA is per-player — no team/player toggle) */}
+            <div
+              style={{
+                display: "flex",
+                gap: 18,
+                flexWrap: "wrap",
+                alignItems: "flex-end",
+                background: SQ.panel,
+                border: `1px solid ${SQ.hairline}`,
+                borderRadius: 9,
+                padding: "16px 18px",
+                marginBottom: 20,
+              }}
+            >
+              <label>
+                <div style={{ ...headCell, marginBottom: 6 }}>POINTS / KILL</div>
+                <input
+                  type="number"
+                  style={numInput}
+                  value={pointsPerKill}
+                  onChange={(e) => setPointsPerKill(Number(e.target.value) || 0)}
+                />
+              </label>
+              <label style={{ flex: 1, minWidth: 220 }}>
+                <div style={{ ...headCell, marginBottom: 6 }}>PLACEMENT POINTS (BY RANK, HIGHEST FIRST)</div>
+                <input
+                  style={{ ...textInput, width: "100%" }}
+                  value={placementCsv}
+                  onChange={(e) => setPlacementCsv(e.target.value)}
+                  placeholder="15,12,10,8,6,4,2,1"
+                />
+              </label>
+            </div>
+
+            <StagedRounds rounds={rounds} onEdit={editFfaRound} onRemove={removeRound} />
+
+            {/* draft round entry */}
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+              <input placeholder="Map (e.g. Ascent)" value={draftMap} onChange={(e) => setDraftMap(e.target.value)} style={{ ...textInput, flex: 1, minWidth: 160 }} />
+              <input placeholder="Mode (e.g. FFA)" value={draftMode} onChange={(e) => setDraftMode(e.target.value)} style={{ ...textInput, width: 160 }} />
+            </div>
+
+            <FfaPoolCard
+              players={ffaPlayers}
+              draft={ffaDraft}
+              pointsPerKill={pointsPerKill}
+              ladder={ladder}
+              onRank={setFfaRank}
+              onKills={setFfaKills}
+            />
+
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 18 }}>
+              <button
+                type="button"
+                onClick={addFfaRound}
+                style={{ fontFamily: FONT.mono, fontSize: 11, letterSpacing: ".12em", textTransform: "uppercase", fontWeight: 700, color: SQ.ink, background: "transparent", border: `1px solid ${SQ.inputBorder}`, padding: "13px 20px", borderRadius: 5, cursor: "pointer" }}
+              >
+                + Add round
+              </button>
+              <button type="button" onClick={publish} disabled={pending || rounds.length === 0} style={publishBtn(pending || rounds.length === 0)}>
+                {pending ? "Publishing…" : `Publish ${rounds.length || ""} round(s) ▸`}
+              </button>
+            </div>
+          </>
+        )
       ) : participants.length === 0 ? (
         <StateNote>This match has no participating franchises to score.</StateNote>
       ) : (
@@ -477,6 +622,119 @@ function DraftTeamCard({
           )}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+// Shared staged-rounds list (generic over franchise/FFA rows). The FRANCHISE branch keeps its own
+// inline copy unchanged; this is used by the FFA branch.
+function StagedRounds({
+  rounds,
+  onEdit,
+  onRemove,
+}: {
+  rounds: RoundEntry[];
+  onEdit: (r: RoundEntry) => void;
+  onRemove: (roundNumber: number) => void;
+}) {
+  if (rounds.length === 0) return null;
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ fontFamily: FONT.mono, fontSize: 11, letterSpacing: ".14em", color: SQ.mute, marginBottom: 10 }}>
+        {rounds.length} ROUND(S) STAGED
+      </div>
+      {rounds.map((r) => (
+        <div
+          key={r.roundNumber}
+          style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: SQ.panel, border: `1px solid ${SQ.hairline}`, borderRadius: 7, marginBottom: 8 }}
+        >
+          <span style={{ fontFamily: FONT.display, fontSize: 15, color: SQ.ember }}>R{r.roundNumber}</span>
+          <span style={{ fontSize: 13 }}>
+            {r.mapName || "—"} {r.mode ? `· ${r.mode}` : ""}
+          </span>
+          <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 11, color: SQ.mute }}>
+            {r.rows.length} entries
+            {r.rows.some((x) => x.players && x.players.length) ? " · per-player" : ""}
+          </span>
+          <button
+            type="button"
+            onClick={() => onEdit(r)}
+            style={{ background: "transparent", border: `1px solid ${SQ.inputBorder}`, color: SQ.faint, cursor: "pointer", fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".1em", padding: "5px 9px", borderRadius: 4 }}
+          >
+            EDIT
+          </button>
+          <button
+            type="button"
+            onClick={() => onRemove(r.roundNumber)}
+            style={{ background: "transparent", border: "none", color: SQ.mute, cursor: "pointer", fontSize: 14 }}
+            aria-label="Remove round"
+          >
+            ×
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// A single FFA pool card: every approved entrant gets a per-player rank + kills line, with live
+// place-points/total previews mirroring the franchise DraftTeamCard's column set (minus survival).
+function FfaPoolCard({
+  players,
+  draft,
+  pointsPerKill,
+  ladder,
+  onRank,
+  onKills,
+}: {
+  players: MatchPlayerView[];
+  draft: Record<string, FfaPlayerDraft>;
+  pointsPerKill: number;
+  ladder: number[];
+  onRank: (pid: string, v: number) => void;
+  onKills: (pid: string, v: number) => void;
+}) {
+  return (
+    <div style={{ background: SQ.panel, border: `1px solid ${SQ.hairline}`, borderRadius: 8, padding: "14px 16px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, paddingBottom: 10, borderBottom: `1px solid ${SQ.hairlineSoft}` }}>
+        <div style={{ ...headCell, flex: 1, minWidth: 140 }}>PLAYER</div>
+        <div style={{ ...headCell, width: 62, textAlign: "center" }}>RANK</div>
+        <div style={{ ...headCell, width: 62, textAlign: "center" }}>KILLS</div>
+        <div style={{ ...headCell, width: 62, textAlign: "center" }}>PLACE PTS</div>
+        <div style={{ ...headCell, width: 70, textAlign: "right" }}>TOTAL</div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>
+        {players.map((m) => {
+          const cur = draft[m.playerId] ?? emptyFfa();
+          const placePts = placementForRank(ladder, cur.rank || 0);
+          const total = (cur.kills || 0) * pointsPerKill + placePts;
+          const affiliation = m.franchiseTag ?? m.squadName;
+          return (
+            <div key={m.playerId} style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              <div style={{ flex: 1, minWidth: 140 }}>
+                <span style={{ fontWeight: 700, fontSize: 14 }}>{m.gamerTag}</span>{" "}
+                {affiliation ? (
+                  <span style={{ fontFamily: FONT.mono, fontSize: 10, color: SQ.mute }}>{affiliation}</span>
+                ) : null}
+              </div>
+              <input
+                type="number"
+                style={{ ...numInput, width: 62 }}
+                value={cur.rank}
+                onChange={(e) => onRank(m.playerId, Number(e.target.value) || 0)}
+              />
+              <input
+                type="number"
+                style={{ ...numInput, width: 62 }}
+                value={cur.kills}
+                onChange={(e) => onKills(m.playerId, Number(e.target.value) || 0)}
+              />
+              <div style={{ width: 62, textAlign: "center", fontFamily: FONT.mono, fontSize: 14, color: SQ.faint }}>+{placePts}</div>
+              <div style={{ width: 70, textAlign: "right", fontFamily: FONT.display, fontSize: 17 }}>{total}</div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

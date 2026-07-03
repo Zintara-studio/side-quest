@@ -1,10 +1,21 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { SQ, FONT } from "../tokens";
 import { StateNote } from "../state-note";
-import { usePlayer, usePlayerMatches, usePlayerUsernames } from "@/lib/query/hooks";
+import { Modal } from "../modal";
+import {
+  usePlayer,
+  usePlayerMatches,
+  usePlayerUsernames,
+  useCreateDispute,
+  useMyDisputes,
+} from "@/lib/query/hooks";
+import { useAuth } from "@/lib/auth/context";
+import { apiErrorMessage } from "@/lib/api/client";
 import { shortDate } from "@/lib/adapters/league";
+import type { DisputeCategory } from "@/lib/api/types";
 
 const sectionLabel = {
   fontFamily: FONT.mono,
@@ -22,11 +33,141 @@ const tile = {
 const tileLabel = { fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".12em", color: SQ.label } as const;
 const tileValue = { fontFamily: FONT.display, fontSize: 30, letterSpacing: "-.02em", marginTop: 5 } as const;
 
+// Discreet owner-only "report / appeal" affordances.
+const ghostAction = {
+  fontFamily: FONT.mono,
+  fontSize: 10.5,
+  letterSpacing: ".12em",
+  textTransform: "uppercase",
+  fontWeight: 700,
+  padding: "8px 12px",
+  borderRadius: 5,
+  cursor: "pointer",
+  color: SQ.mute,
+  background: "transparent",
+  border: `1px solid ${SQ.inputBorder}`,
+} as const;
+
+const modalBtn = {
+  fontFamily: FONT.mono,
+  fontSize: 10.5,
+  letterSpacing: ".12em",
+  textTransform: "uppercase",
+  fontWeight: 700,
+  padding: "9px 14px",
+  borderRadius: 5,
+  cursor: "pointer",
+} as const;
+
+const modalLabel = {
+  fontFamily: FONT.mono,
+  fontSize: 11,
+  letterSpacing: ".1em",
+  textTransform: "uppercase",
+  color: SQ.label,
+  marginBottom: 10,
+} as const;
+
+const disputeChip = {
+  fontFamily: FONT.mono,
+  fontSize: 9.5,
+  letterSpacing: ".1em",
+  padding: "4px 8px",
+  borderRadius: 9,
+} as const;
+
+/** [text color, border color] for a dispute category chip. */
+function categoryColors(c: DisputeCategory): [string, string] {
+  switch (c) {
+    case "APPEAL":
+      return [SQ.blue, "rgba(59,111,212,.45)"];
+    case "GENERAL":
+      return [SQ.slate, SQ.inputBorder];
+    default: // RESULT
+      return [SQ.ember, "rgba(232,96,44,.45)"];
+  }
+}
+
+function disputeStatusColor(s: string): string {
+  const u = s.toUpperCase();
+  if (u === "RESOLVED" || u === "APPROVED" || u === "ACCEPTED") return SQ.green;
+  if (u === "DISMISSED" || u === "REJECTED") return SQ.ember;
+  return SQ.amber; // OPEN / pending
+}
+
+function segBtn(selected: boolean) {
+  return {
+    fontFamily: FONT.mono,
+    fontSize: 10,
+    letterSpacing: ".1em",
+    textTransform: "uppercase" as const,
+    fontWeight: 700,
+    padding: "7px 12px",
+    borderRadius: 5,
+    cursor: "pointer",
+    color: selected ? SQ.ember : SQ.mute,
+    background: "transparent",
+    border: `1px solid ${selected ? "rgba(232,96,44,.45)" : SQ.inputBorder}`,
+  };
+}
+
 export function PlayerScreen({ id, base = "" }: { id?: string; base?: string }) {
   const pq = usePlayer(id);
   const matchesQ = usePlayerMatches(id);
   const usernamesQ = usePlayerUsernames(id);
   const p = pq.data;
+
+  // Own-profile detection: only the signed-in owner sees the discreet report/appeal tools.
+  const { playerId } = useAuth();
+  const isOwner = !!id && !!playerId && playerId === id;
+  const myDisputesQ = useMyDisputes(isOwner);
+  const createDispute = useCreateDispute();
+
+  const statusUpper = (p?.status ?? "").toUpperCase();
+  const canAppeal = isOwner && (statusUpper === "FLAGGED" || statusUpper === "SUSPENDED");
+
+  const [modalOpen, setModalOpen] = useState(false);
+  const [appealMode, setAppealMode] = useState(false);
+  const [reason, setReason] = useState("");
+  const [category, setCategory] = useState<DisputeCategory>("GENERAL");
+  const [err, setErr] = useState<string | null>(null);
+
+  const openReport = () => {
+    setAppealMode(false);
+    setCategory("GENERAL");
+    setReason("");
+    setErr(null);
+    setModalOpen(true);
+  };
+  const openAppeal = () => {
+    setAppealMode(true);
+    setCategory("APPEAL");
+    setReason("");
+    setErr(null);
+    setModalOpen(true);
+  };
+  const closeModal = () => {
+    if (createDispute.isPending) return;
+    setModalOpen(false);
+    setReason("");
+    setErr(null);
+  };
+  const submitDispute = async () => {
+    const r = reason.trim();
+    if (!r) {
+      setErr("Please describe the issue.");
+      return;
+    }
+    try {
+      // matchId omitted → a match-less appeal / general report (backend stores null).
+      await createDispute.mutateAsync({ reason: r, category });
+      setModalOpen(false);
+      setReason("");
+      setErr(null);
+    } catch (e) {
+      setErr(apiErrorMessage(e, "Couldn't submit. Please try again."));
+    }
+  };
 
   return (
     <div>
@@ -118,6 +259,23 @@ export function PlayerScreen({ id, base = "" }: { id?: string; base?: string }) 
               </Link>
             ) : null}
           </div>
+
+          {isOwner ? (
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16 }}>
+              <button type="button" onClick={openReport} style={ghostAction}>
+                Report an issue
+              </button>
+              {canAppeal ? (
+                <button
+                  type="button"
+                  onClick={openAppeal}
+                  style={{ ...ghostAction, color: SQ.ember, border: "1px solid rgba(232,96,44,.45)" }}
+                >
+                  Appeal account status
+                </button>
+              ) : null}
+            </div>
+          ) : null}
 
           <div
             style={{
@@ -273,6 +431,151 @@ export function PlayerScreen({ id, base = "" }: { id?: string; base?: string }) 
               )}
             </div>
           </div>
+
+          {isOwner ? (
+            <div style={{ marginTop: 34, paddingTop: 26, borderTop: `1px solid ${SQ.hairline}` }}>
+              <div style={sectionLabel}>My disputes &amp; appeals</div>
+              {myDisputesQ.isLoading ? (
+                <div style={{ fontFamily: FONT.mono, fontSize: 11.5, color: SQ.mute }}>Loading…</div>
+              ) : (myDisputesQ.data ?? []).length === 0 ? (
+                <div style={{ fontFamily: FONT.mono, fontSize: 11.5, color: SQ.mute }}>
+                  You haven&rsquo;t raised anything yet.
+                </div>
+              ) : (
+                <div>
+                  {(myDisputesQ.data ?? []).map((d) => {
+                    const [catColor, catBorder] = categoryColors(d.category);
+                    return (
+                      <div
+                        key={d.id}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 10,
+                          flexWrap: "wrap",
+                          padding: "12px 0",
+                          borderTop: `1px solid ${SQ.hairlineCell}`,
+                        }}
+                      >
+                        <span style={{ ...disputeChip, color: catColor, border: `1px solid ${catBorder}` }}>
+                          {d.category}
+                        </span>
+                        <span
+                          style={{
+                            fontFamily: FONT.mono,
+                            fontSize: 10,
+                            letterSpacing: ".1em",
+                            color: disputeStatusColor(d.status),
+                          }}
+                        >
+                          {d.status}
+                        </span>
+                        <span
+                          style={{
+                            fontFamily: FONT.mono,
+                            fontSize: 10.5,
+                            color: SQ.mute,
+                            marginLeft: "auto",
+                          }}
+                        >
+                          {shortDate(d.createdAt)}
+                        </span>
+                        {d.reason ? (
+                          <div style={{ flexBasis: "100%", fontSize: 12.5, color: SQ.faint, lineHeight: 1.5 }}>
+                            {d.reason}
+                          </div>
+                        ) : null}
+                        {d.resolution ? (
+                          <div style={{ flexBasis: "100%", fontSize: 12, color: SQ.mute, marginTop: 2 }}>
+                            Resolution: {d.resolution}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : null}
+
+          <Modal
+            open={modalOpen}
+            title={appealMode ? "Appeal account status" : "Report an issue"}
+            onClose={closeModal}
+          >
+            {appealMode ? (
+              <div style={{ fontSize: 13, color: SQ.faint, marginBottom: 14, lineHeight: 1.6 }}>
+                Tell the organisers why your <strong>{p?.status}</strong> status should be reviewed. They&rsquo;ll
+                follow up on your account.
+              </div>
+            ) : (
+              <>
+                <div style={modalLabel}>Category</div>
+                <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+                  {(["GENERAL", "APPEAL"] as DisputeCategory[]).map((c) => (
+                    <button key={c} type="button" onClick={() => setCategory(c)} style={segBtn(category === c)}>
+                      {c}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+
+            <div style={modalLabel}>{appealMode ? "Your appeal" : "What's going on?"}</div>
+            <textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              rows={4}
+              autoFocus
+              placeholder={appealMode ? "Explain your case…" : "Describe the issue…"}
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                background: SQ.inset,
+                border: `1px solid ${SQ.inputBorder}`,
+                borderRadius: 5,
+                padding: "11px 12px",
+                fontSize: 13.5,
+                lineHeight: 1.5,
+                color: SQ.ink,
+                fontFamily: FONT.sans,
+                resize: "vertical",
+              }}
+            />
+            {err ? (
+              <div style={{ fontFamily: FONT.mono, fontSize: 11.5, color: SQ.ember, marginTop: 10 }}>{err}</div>
+            ) : null}
+            <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+              <button
+                type="button"
+                disabled={createDispute.isPending || !reason.trim()}
+                onClick={submitDispute}
+                style={{
+                  ...modalBtn,
+                  color: SQ.league,
+                  background: SQ.red,
+                  border: "none",
+                  opacity: createDispute.isPending || !reason.trim() ? 0.6 : 1,
+                }}
+              >
+                {createDispute.isPending ? "Submitting…" : appealMode ? "Submit appeal" : "Submit report"}
+              </button>
+              <button
+                type="button"
+                disabled={createDispute.isPending}
+                onClick={closeModal}
+                style={{
+                  ...modalBtn,
+                  color: SQ.faint,
+                  background: "transparent",
+                  border: `1px solid ${SQ.inputBorder}`,
+                  opacity: createDispute.isPending ? 0.6 : 1,
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </Modal>
         </>
       )}
     </div>

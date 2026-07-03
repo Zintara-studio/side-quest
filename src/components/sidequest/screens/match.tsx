@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { SQ, FONT, rankAccent } from "../tokens";
+import { LeagueTitle } from "../league-title";
 import { StateNote } from "../state-note";
-import { useMatch, useMatchLeaderboard, useMatchRounds } from "@/lib/query/hooks";
+import { useMatch, useMatchLeaderboard, useMatchRounds, useMatches } from "@/lib/query/hooks";
 import { shortDate } from "@/lib/adapters/league";
 
 const headCell = {
@@ -13,7 +14,146 @@ const headCell = {
   color: SQ.dim,
 } as const;
 
+/** ISO → epoch ms, coercing invalid dates to 0 so they sink to the bottom of the sort. */
+function ts(iso?: string): number {
+  const t = new Date(iso ?? "").getTime();
+  return Number.isNaN(t) ? 0 : t;
+}
+
+/** [text color, border color] for a backend match status (uppercase). */
+function matchStatusTone(status: string): { color: string; border: string; live: boolean; final: boolean } {
+  const s = (status ?? "").toUpperCase();
+  if (s === "LIVE") return { color: SQ.ember, border: "rgba(232,96,44,.45)", live: true, final: false };
+  if (s === "SCHEDULED") return { color: SQ.blue, border: "rgba(59,111,212,.45)", live: false, final: false };
+  if (s === "COMPLETED") return { color: SQ.green, border: "rgba(31,157,99,.45)", live: false, final: true };
+  return { color: SQ.mute, border: SQ.inputBorder, live: false, final: false };
+}
+
+/** History route (/match with no id): the full match archive, newest first. */
+function MatchHistory({ base }: { base: string }) {
+  const mq = useMatches({ limit: 100 });
+  const matches = [...(mq.data?.items ?? [])].sort((a, b) => ts(b.scheduledAt) - ts(a.scheduledAt));
+  const finals = matches.filter((m) => (m.status ?? "").toUpperCase() === "COMPLETED").length;
+
+  return (
+    <div>
+      <LeagueTitle eyebrow="Match archive" title="HISTORY" />
+
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 14,
+          alignItems: "center",
+          justifyContent: "space-between",
+          margin: "18px 0 22px",
+          paddingBottom: 22,
+          borderBottom: `1px solid ${SQ.hairline}`,
+        }}
+      >
+        <div style={{ fontFamily: FONT.mono, fontSize: 12, letterSpacing: ".1em", color: SQ.mute }}>
+          {matches.length} MATCHES · {finals} COMPLETED
+        </div>
+      </div>
+
+      {mq.isLoading ? (
+        <StateNote>Loading matches…</StateNote>
+      ) : matches.length === 0 ? (
+        <StateNote tone={mq.isError ? "error" : "muted"}>
+          {mq.isError ? "Couldn't reach the league API." : "No matches yet."}
+        </StateNote>
+      ) : (
+        <div style={{ overflowX: "auto", border: `1px solid ${SQ.hairline}`, borderRadius: 8 }}>
+          <div style={{ minWidth: 620 }}>
+            <div
+              style={{
+                display: "flex",
+                padding: "14px 18px",
+                borderBottom: `1px solid ${SQ.hairline}`,
+                ...headCell,
+              }}
+            >
+              <div style={{ width: 96 }}>DATE</div>
+              <div style={{ flex: 1 }}>MATCH</div>
+              <div style={{ width: 150, textAlign: "right" }}>STATUS</div>
+            </div>
+            {matches.map((m) => {
+              const tone = matchStatusTone(m.status);
+              const rowBg = tone.live
+                ? "linear-gradient(90deg,rgba(232,96,44,.12),transparent)"
+                : tone.final
+                  ? "linear-gradient(90deg,rgba(31,157,99,.10),transparent)"
+                  : "transparent";
+              const title = m.participantTags.length
+                ? m.participantTags.join(" vs ")
+                : m.arena ?? m.game.name;
+              const sub = [m.game.name.toUpperCase(), m.format].filter(Boolean).join(" · ");
+              return (
+                <Link
+                  key={m.id}
+                  href={`${base}/match/${m.id}`}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    padding: "14px 18px",
+                    borderBottom: `1px solid ${SQ.hairlineSoft}`,
+                    background: rowBg,
+                    textDecoration: "none",
+                    color: SQ.ink,
+                  }}
+                >
+                  <div style={{ width: 96, fontFamily: FONT.mono, fontSize: 12, color: SQ.faint }}>
+                    {shortDate(m.scheduledAt)}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 15 }}>{title}</div>
+                    {sub ? (
+                      <div
+                        style={{
+                          fontFamily: FONT.mono,
+                          fontSize: 10.5,
+                          letterSpacing: ".08em",
+                          color: SQ.mute,
+                          marginTop: 4,
+                        }}
+                      >
+                        {sub}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div style={{ width: 150, textAlign: "right" }}>
+                    <span
+                      style={{
+                        fontFamily: FONT.mono,
+                        fontSize: 10.5,
+                        letterSpacing: ".14em",
+                        color: tone.color,
+                        border: `1px solid ${tone.border}`,
+                        padding: "6px 10px",
+                        borderRadius: 4,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {(m.status ?? "").toUpperCase()}
+                      {tone.final ? " ▸" : ""}
+                    </span>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function MatchScreen({ id, base = "" }: { id?: string; base?: string }) {
+  if (!id) return <MatchHistory base={base} />;
+  return <MatchDetail id={id} base={base} />;
+}
+
+function MatchDetail({ id, base }: { id: string; base: string }) {
   const mq = useMatch(id);
   const lbQ = useMatchLeaderboard(id);
   const roundsQ = useMatchRounds(id);
@@ -29,11 +169,7 @@ export function MatchScreen({ id, base = "" }: { id?: string; base?: string }) {
         ◂ {base ? "MATCHES" : "MATCHDAY"}
       </Link>
 
-      {!id ? (
-        <div style={{ marginTop: 20 }}>
-          <StateNote>Select a match from the schedule or a franchise/player page.</StateNote>
-        </div>
-      ) : mq.isLoading ? (
+      {mq.isLoading ? (
         <div style={{ marginTop: 20 }}>
           <StateNote>Loading match…</StateNote>
         </div>
@@ -162,22 +298,19 @@ export function MatchScreen({ id, base = "" }: { id?: string; base?: string }) {
                   <div style={{ width: 90, textAlign: "right" }}>PLACE PTS</div>
                   <div style={{ width: 80, textAlign: "right" }}>TOTAL</div>
                 </div>
-                {(lbQ.data ?? []).map((r) => {
+                {(lbQ.data ?? []).map((r, i) => {
                   const accent = rankAccent(r.rank === 1);
-                  return (
-                    <Link
-                      key={r.franchiseId}
-                      href={`${base}/franchise/${r.franchiseId}`}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        padding: "14px 18px",
-                        borderBottom: `1px solid ${SQ.hairlineSoft}`,
-                        background: accent.rowBg,
-                        textDecoration: "none",
-                        color: SQ.ink,
-                      }}
-                    >
+                  const rowStyle = {
+                    display: "flex",
+                    alignItems: "center",
+                    padding: "14px 18px",
+                    borderBottom: `1px solid ${SQ.hairlineSoft}`,
+                    background: accent.rowBg,
+                    textDecoration: "none",
+                    color: SQ.ink,
+                  } as const;
+                  const inner = (
+                    <>
                       <div style={{ width: 44, fontFamily: FONT.display, fontSize: 17, color: accent.color }}>
                         {String(r.rank).padStart(2, "0")}
                       </div>
@@ -206,7 +339,17 @@ export function MatchScreen({ id, base = "" }: { id?: string; base?: string }) {
                       <div style={{ width: 80, textAlign: "right", fontFamily: FONT.display, fontSize: 17 }}>
                         {r.total}
                       </div>
+                    </>
+                  );
+                  // FFA leaderboard rows have no franchise (franchiseId null) — render a plain row.
+                  return r.franchiseId ? (
+                    <Link key={r.franchiseId} href={`${base}/franchise/${r.franchiseId}`} style={rowStyle}>
+                      {inner}
                     </Link>
+                  ) : (
+                    <div key={r.franchiseName ?? `row-${i}`} style={rowStyle}>
+                      {inner}
+                    </div>
                   );
                 })}
               </div>

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { SQ, FONT } from "@/components/sidequest/tokens";
+import { SeasonCode } from "@/components/sidequest/season-code";
 
 export default function AuthLayout({ children }: { children: ReactNode }) {
   return (
@@ -44,7 +45,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
               borderRadius: 3,
             }}
           >
-            S04
+            <SeasonCode fallback="SQ" />
           </span>
         </Link>
         {children}

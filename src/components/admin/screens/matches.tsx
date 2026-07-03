@@ -6,8 +6,17 @@ import { SQ, FONT, matchStatusColors } from "../tokens";
 import { ScreenHeader } from "../screen-header";
 import { TableScroll } from "../table-scroll";
 import { StateNote } from "@/components/sidequest/state-note";
+import { SearchableSelect } from "@/components/sidequest/searchable-select";
 import { useMatches, useGames, useFranchises, useCreateMatch } from "@/lib/query/hooks";
 import { shortDate } from "@/lib/adapters/league";
+
+// datetime-local wants a local "YYYY-MM-DDTHH:mm" string (not a UTC ISO string).
+function localDateTimeValue(d: Date) {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+    d.getHours(),
+  )}:${pad(d.getMinutes())}`;
+}
 
 const fieldLabel = {
   fontFamily: FONT.mono,
@@ -44,12 +53,18 @@ function CreateMatchPanel({ onClose }: { onClose: () => void }) {
   const [picked, setPicked] = useState<Record<string, boolean>>({});
   const [err, setErr] = useState<string | null>(null);
 
+  const minDateTime = localDateTimeValue(new Date());
+
   const toggle = (id: string) => setPicked((p) => ({ ...p, [id]: !p[id] }));
 
   const submit = async () => {
     setErr(null);
     if (!gameId || !scheduledAt) {
       setErr("Pick a game and a date/time.");
+      return;
+    }
+    if (new Date(scheduledAt).getTime() < Date.now()) {
+      setErr("A match cannot be scheduled in the past");
       return;
     }
     try {
@@ -82,22 +97,35 @@ function CreateMatchPanel({ onClose }: { onClose: () => void }) {
         New fixture
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 14 }}>
-        <label>
+        <div>
           <span style={fieldLabel}>GAME</span>
-          <select value={gameId} onChange={(e) => setGameId(e.target.value)} style={{ ...formInput, cursor: "pointer" }}>
-            <option value="">Select…</option>
-            {games.map((g) => (
-              <option key={g.id} value={g.id}>{g.name}</option>
-            ))}
-          </select>
-        </label>
+          <SearchableSelect
+            value={gameId}
+            onChange={setGameId}
+            options={games.map((g) => ({ value: g.id, label: g.name }))}
+            placeholder="Select a game…"
+            searchPlaceholder="Search games…"
+          />
+        </div>
         <label>
           <span style={fieldLabel}>DATE &amp; TIME</span>
-          <input type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} style={formInput} />
+          <input
+            type="datetime-local"
+            min={minDateTime}
+            value={scheduledAt}
+            onChange={(e) => setScheduledAt(e.target.value)}
+            style={formInput}
+          />
+          <span style={{ ...fieldLabel, marginTop: 6, marginBottom: 0, color: SQ.mute, letterSpacing: ".04em" }}>
+            Must be in the future.
+          </span>
         </label>
         <label>
-          <span style={fieldLabel}>ARENA</span>
-          <input value={arena} onChange={(e) => setArena(e.target.value)} placeholder="e.g. Main Stage" style={formInput} />
+          <span style={fieldLabel}>MATCH LABEL / STAGE</span>
+          <input value={arena} onChange={(e) => setArena(e.target.value)} placeholder="e.g. Semifinal · Group A" style={formInput} />
+          <span style={{ ...fieldLabel, marginTop: 6, marginBottom: 0, color: SQ.mute, letterSpacing: ".04em" }}>
+            Optional matchup / stage label shown on the fixture.
+          </span>
         </label>
         <label>
           <span style={fieldLabel}>FORMAT</span>

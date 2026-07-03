@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import axios from "axios";
 import Link from "next/link";
 import { SQ, FONT } from "../tokens";
 import { LeagueTitle } from "../league-title";
@@ -9,11 +10,16 @@ import { useAuth, apiErrorMessage } from "@/lib/auth/context";
 import {
   useAnnouncement,
   useApplyRegistration,
+  useCurrentSeason,
   useGames,
   useInviteTeammate,
+  useMatch,
   usePlayers,
 } from "@/lib/query/hooks";
 import type { RegistrationType } from "@/lib/api/types";
+
+// Registration locks this long before the match starts (backend enforces the same window).
+const REG_LOCK_MS = 3 * 60 * 60 * 1000;
 
 const fieldLabel = {
   fontFamily: FONT.mono,
@@ -51,6 +57,7 @@ const inputStyle = {
 export function RegisterScreen({ announcementId }: { announcementId?: string }) {
   const { isAuthenticated, hydrated, user, playerId } = useAuth();
   const ann = useAnnouncement(announcementId);
+  const matchQ = useMatch(ann.data?.matchId);
   const gamesQ = useGames(true);
   const playersQ = usePlayers({ limit: 100 });
   const apply = useApplyRegistration();
@@ -60,6 +67,22 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
   // may be PLAYER or SQUAD, as the organizer chose. No user-facing toggle.
   const mode: RegistrationType = ann.data?.registrationType ?? "PLAYER";
 
+  const season = useCurrentSeason().data;
+
+  // An announcement-tied sign-up derives its game from the announcement (or its linked match) — no
+  // manual picker. When the announcement resolves no game (e.g. a general "registrations are live"
+  // post with no game and no match), we fall back to the manual picker so the sign-up still works.
+  const derivedGame = ann.data?.gameName ?? matchQ.data?.game?.name ?? null;
+  const showGamePicker = !derivedGame;
+
+  // Client-side mirror of the backend time-lock: submissions close 3h before the match starts.
+  const registrationLocked = useMemo(() => {
+    const at = matchQ.data?.scheduledAt;
+    if (!at) return false;
+    const t = new Date(at).getTime();
+    return !Number.isNaN(t) && Date.now() > t - REG_LOCK_MS;
+  }, [matchQ.data]);
+
   const [name, setName] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
   const [email, setEmail] = useState("");
@@ -68,16 +91,13 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
   const [teammates, setTeammates] = useState<string[]>([]);
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [alreadyRegistered, setAlreadyRegistered] = useState(false);
   const [done, setDone] = useState(false);
 
-  // Prefill name from the signed-in user and preselect the announcement's game.
+  // Prefill name from the signed-in user.
   useEffect(() => {
     if (user?.name) setName((n) => n || user.name);
   }, [user]);
-  useEffect(() => {
-    const g = ann.data?.gameName;
-    if (g) setSelectedGames((cur) => (cur.length ? cur : [g]));
-  }, [ann.data]);
 
   const allGames = (gamesQ.data ?? []).map((g) => g.name);
 
@@ -96,7 +116,9 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (selectedGames.length === 0) {
+    if (alreadyRegistered || registrationLocked) return;
+    // When the game is derived from the announcement/match we skip the picker; otherwise require a pick.
+    if (showGamePicker && selectedGames.length === 0) {
       setError("Select at least one game.");
       return;
     }
@@ -107,11 +129,14 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
     const contact = [whatsapp && `WhatsApp: ${whatsapp}`, email && `Email: ${email}`]
       .filter(Boolean)
       .join(" · ");
+    // Send the derived game when we have one (the backend still authoritatively derives it from the
+    // linked match); otherwise send the user's manual picks. Never send an empty games list.
+    const games = derivedGame ? [derivedGame] : selectedGames;
     try {
       const reg = await apply.mutateAsync({
         type: mode,
         squadName: mode !== "PLAYER" ? squadName || undefined : undefined,
-        games: selectedGames,
+        games,
         contact: contact || undefined,
         matchId: ann.data?.matchId || undefined,
       });
@@ -125,7 +150,18 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
       }
       setDone(true);
     } catch (err) {
-      setError(apiErrorMessage(err, "Could not submit registration."));
+      const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+      const msg = apiErrorMessage(err, "Could not submit registration.");
+      if (status === 409) {
+        // Duplicate guard — already have a live registration for this match.
+        setAlreadyRegistered(true);
+        setError(null);
+      } else if (status === 400 && /(clos|lock)/i.test(msg)) {
+        // Time-lock — locks 3 hours before match time.
+        setError("Registration closed — locks 3 hours before match time.");
+      } else {
+        setError(msg);
+      }
     }
   };
 
@@ -219,7 +255,7 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
 
   return (
     <div>
-      <LeagueTitle eyebrow="Season 04 registration" title="REGISTER TO PLAY" />
+      <LeagueTitle eyebrow={`${season?.name ?? "League"} registration`} title="REGISTER TO PLAY" />
 
       {/* what you're registering for */}
       <div
@@ -311,36 +347,104 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
               />
             </div>
 
-            <div style={{ ...fieldLabel, margin: "18px 0 8px" }}>YOUR GAMES</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 9 }}>
-              {allGames.length === 0 ? (
-                <span style={{ fontSize: 13, color: SQ.mute }}>Loading games…</span>
-              ) : (
-                allGames.map((g) => {
-                  const on = selectedGames.includes(g);
-                  return (
-                    <button
-                      key={g}
-                      type="button"
-                      onClick={() => toggleGame(g)}
-                      style={{
-                        fontFamily: FONT.mono,
-                        fontSize: 11,
-                        letterSpacing: ".06em",
-                        padding: "9px 13px",
-                        borderRadius: 5,
-                        border: `1px solid ${on ? SQ.red : SQ.inputBorder}`,
-                        color: on ? SQ.league : SQ.faint,
-                        background: on ? SQ.red : "transparent",
-                        cursor: "pointer",
-                      }}
-                    >
-                      {g}
-                    </button>
-                  );
-                })
-              )}
-            </div>
+            {!showGamePicker ? (
+              <>
+                <div style={{ ...fieldLabel, margin: "18px 0 8px" }}>GAME</div>
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    fontFamily: FONT.mono,
+                    fontSize: 11,
+                    letterSpacing: ".06em",
+                    padding: "9px 13px",
+                    borderRadius: 5,
+                    border: `1px solid ${SQ.field}`,
+                    background: SQ.inset,
+                    color: SQ.ink,
+                  }}
+                >
+                  {derivedGame}
+                </span>
+                <div style={{ marginTop: 8, fontSize: 12, color: SQ.mute, lineHeight: 1.5 }}>
+                  The game is fixed by the announcement you&rsquo;re registering for.
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ ...fieldLabel, margin: "18px 0 8px" }}>YOUR GAMES</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 9 }}>
+                  {allGames.length === 0 ? (
+                    <span style={{ fontSize: 13, color: SQ.mute }}>Loading games…</span>
+                  ) : (
+                    allGames.map((g) => {
+                      const on = selectedGames.includes(g);
+                      return (
+                        <button
+                          key={g}
+                          type="button"
+                          onClick={() => toggleGame(g)}
+                          style={{
+                            fontFamily: FONT.mono,
+                            fontSize: 11,
+                            letterSpacing: ".06em",
+                            padding: "9px 13px",
+                            borderRadius: 5,
+                            border: `1px solid ${on ? SQ.red : SQ.inputBorder}`,
+                            color: on ? SQ.league : SQ.faint,
+                            background: on ? SQ.red : "transparent",
+                            cursor: "pointer",
+                          }}
+                        >
+                          {g}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </>
+            )}
+
+            {alreadyRegistered ? (
+              <div
+                style={{
+                  margin: "18px 0 0",
+                  padding: "12px 14px",
+                  borderRadius: 5,
+                  background: SQ.inset,
+                  border: `1px solid ${SQ.amber}`,
+                  color: SQ.ink,
+                  fontSize: 12.5,
+                  lineHeight: 1.55,
+                }}
+              >
+                <span style={{ color: SQ.amber, fontWeight: 700 }}>
+                  You are already registered for this match.
+                </span>{" "}
+                <Link
+                  href="/my/registrations"
+                  style={{ color: SQ.ember, textDecoration: "none", fontWeight: 600 }}
+                >
+                  View your registrations ▸
+                </Link>
+              </div>
+            ) : registrationLocked ? (
+              <div
+                style={{
+                  margin: "18px 0 0",
+                  padding: "12px 14px",
+                  borderRadius: 5,
+                  background: SQ.inset,
+                  border: `1px solid ${SQ.amber}`,
+                  color: SQ.amber,
+                  fontSize: 12.5,
+                  lineHeight: 1.55,
+                }}
+              >
+                Registration closed — locks 3 hours before match time.
+              </div>
+            ) : null}
 
             {error ? (
               <div
@@ -358,28 +462,40 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
               </div>
             ) : null}
 
-            <button
-              type="submit"
-              disabled={apply.isPending}
-              style={{
-                cursor: apply.isPending ? "not-allowed" : "pointer",
-                marginTop: 22,
-                width: "100%",
-                fontFamily: FONT.mono,
-                fontSize: 12,
-                letterSpacing: ".16em",
-                textTransform: "uppercase",
-                fontWeight: 700,
-                color: SQ.league,
-                background: SQ.red,
-                padding: 14,
-                borderRadius: 5,
-                border: "none",
-                opacity: apply.isPending ? 0.6 : 1,
-              }}
-            >
-              {apply.isPending ? "Submitting…" : "Submit registration ▸"}
-            </button>
+            {(() => {
+              const disabled = apply.isPending || alreadyRegistered || registrationLocked;
+              const label = alreadyRegistered
+                ? "Already registered"
+                : registrationLocked
+                  ? "Registration closed"
+                  : apply.isPending
+                    ? "Submitting…"
+                    : "Submit registration ▸";
+              return (
+                <button
+                  type="submit"
+                  disabled={disabled}
+                  style={{
+                    cursor: disabled ? "not-allowed" : "pointer",
+                    marginTop: 22,
+                    width: "100%",
+                    fontFamily: FONT.mono,
+                    fontSize: 12,
+                    letterSpacing: ".16em",
+                    textTransform: "uppercase",
+                    fontWeight: 700,
+                    color: SQ.league,
+                    background: SQ.red,
+                    padding: 14,
+                    borderRadius: 5,
+                    border: "none",
+                    opacity: disabled ? 0.6 : 1,
+                  }}
+                >
+                  {label}
+                </button>
+              );
+            })()}
           </div>
 
           {/* right: squad building (FFA) or info */}

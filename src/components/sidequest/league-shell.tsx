@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth/context";
+import { useCurrentSeason } from "@/lib/query/hooks";
 import { ThemeToggle } from "@/lib/theme";
 import { NotificationBell } from "./notification-bell";
 import { SQ, FONT } from "./tokens";
@@ -40,6 +41,14 @@ export function LeagueShell({
   const cur = activeKey(pathname);
   const router = useRouter();
   const { user, playerId, isAuthenticated, isAdmin, hydrated, logout } = useAuth();
+
+  // Real current season drives the nav badge + footer tagline; falls back to a
+  // neutral off-season label when no season is active (or while it loads).
+  const season = useCurrentSeason().data ?? null;
+  const seasonCode = season?.code ?? "—";
+  const seasonTagline = season
+    ? `${season.name.toUpperCase()} · BUILT FOR THE FRANCHISES`
+    : "OFF-SEASON · BUILT FOR THE FRANCHISES";
 
   // Admins belong in the control room — bounce them out of the public site.
   useEffect(() => {
@@ -113,7 +122,7 @@ export function LeagueShell({
               borderRadius: 3,
             }}
           >
-            S04
+            {seasonCode}
           </span>
         </Link>
 
@@ -285,17 +294,31 @@ export function LeagueShell({
         style={{
           maxWidth: 1440,
           margin: "0 auto",
-          padding: "clamp(24px,4vw,40px) clamp(16px,4vw,30px) 80px",
+          // extra bottom padding so content is never hidden behind the pinned footer
+          padding: "clamp(24px,4vw,40px) clamp(16px,4vw,30px) clamp(96px,10vh,120px)",
         }}
       >
         {children}
+      </main>
 
-        {/* footer */}
+      {/* pinned footer — stays at the bottom of the viewport as content scrolls */}
+      <footer
+        style={{
+          position: "fixed",
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 40,
+          background: SQ.navBg,
+          backdropFilter: "blur(12px)",
+          borderTop: `1px solid ${SQ.hairline}`,
+        }}
+      >
         <div
           style={{
-            marginTop: 64,
-            paddingTop: 22,
-            borderTop: `1px solid ${SQ.hairline}`,
+            maxWidth: 1440,
+            margin: "0 auto",
+            padding: "14px clamp(16px,4vw,30px)",
             display: "flex",
             flexWrap: "wrap",
             gap: 12,
@@ -307,9 +330,9 @@ export function LeagueShell({
           }}
         >
           <div>SIDE QUEST · COMMUNITY ESPORTS LEAGUE</div>
-          <div>SEASON 04 — SPRING SERIES · BUILT FOR THE FRANCHISES</div>
+          <div>{seasonTagline}</div>
         </div>
-      </main>
+      </footer>
     </div>
   );
 }

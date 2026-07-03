@@ -206,6 +206,12 @@ export interface CreateFranchiseRequest {
   logoUrl?: string;
 }
 
+/** Verified player eligible to fill a franchise owner/manager slot (unassigned or already on it). */
+export interface EligiblePlayer {
+  playerId: string;
+  gamerTag: string;
+}
+
 // ---- matches ---------------------------------------------------------------
 
 export interface GameMini {
@@ -320,7 +326,10 @@ export interface PlayerStatEntry {
 }
 
 export interface RoundResultEntry {
-  franchiseId: string;
+  /** FRANCHISE matches: the franchise entrant. Omit for FFA (use playerId instead). */
+  franchiseId?: string;
+  /** FFA matches: the individual player entrant. Omit for FRANCHISE matches. */
+  playerId?: string;
   rank: number;
   kills: number;
   survivalSeconds: number;
@@ -410,6 +419,8 @@ export interface ApplyRequest {
   games: string[];
   contact?: string;
   matchId?: string;
+  /** Only needed for match-less / general sign-ups; match-tied calls derive the game from the match. */
+  gameId?: string;
 }
 
 export type InviteStatus = "PENDING" | "ACCEPTED" | "REJECTED";
@@ -433,6 +444,9 @@ export interface RegistrationView {
   reason?: string;
   createdAt: string;
   matchId?: string;
+  /** Game the sign-up is for — derived from the linked match, or supplied for general calls. */
+  gameId?: string;
+  gameName?: string;
   members: RegistrationMemberView[];
   acceptedCount: number;
 }
@@ -494,13 +508,28 @@ export interface UpdateSettingsRequest {
   registrationOpen?: boolean;
 }
 
+export type DisputeCategory = "RESULT" | "APPEAL" | "GENERAL";
+
 export interface DisputeView {
   id: string;
   matchId?: string;
+  /** Display label for the disputed match (the game name); null for match-less disputes. */
+  matchTitle?: string;
   reason: string;
+  category: DisputeCategory;
   status: string;
   resolution?: string;
   createdAt: string;
+}
+
+/**
+ * Body for POST /disputes. Pass matchId for result challenges; leave it null for
+ * status appeals / general issues. category defaults to RESULT on the backend.
+ */
+export interface CreateDisputeRequest {
+  matchId?: string;
+  reason: string;
+  category?: DisputeCategory;
 }
 
 export interface ResolveDisputeRequest {

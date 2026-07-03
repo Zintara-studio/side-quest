@@ -169,7 +169,6 @@ export const sortChips = [
   { label: "Franchise", selected: true },
   { label: "A–Z", selected: false },
   { label: "Z–A", selected: false },
-  { label: "Games", selected: false },
   { label: "Points", selected: false },
 ];
 

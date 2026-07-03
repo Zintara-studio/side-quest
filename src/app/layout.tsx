@@ -28,7 +28,7 @@ export const metadata: Metadata = {
     template: "%s · Side Quest",
   },
   description:
-    "Side Quest Season 04 — franchise standings, matchdays, supported games, players, registration, and the league control room.",
+    "Side Quest — franchise standings, matchdays, supported games, players, registration, and the league control room.",
   applicationName: "Side Quest",
   manifest: "/manifest.webmanifest",
 };

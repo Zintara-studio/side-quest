@@ -4,10 +4,12 @@ import com.sidequest.arena.common.ApiException;
 import com.sidequest.arena.common.Cursors;
 import com.sidequest.arena.model.Franchise;
 import com.sidequest.arena.model.Game;
+import com.sidequest.arena.model.LeagueSettings;
 import com.sidequest.arena.model.Player;
 import com.sidequest.arena.model.PlayerGameProficiency;
 import com.sidequest.arena.repo.FranchiseRepository;
 import com.sidequest.arena.repo.GameRepository;
+import com.sidequest.arena.repo.LeagueSettingsRepository;
 import com.sidequest.arena.repo.PlayerGameProficiencyRepository;
 import com.sidequest.arena.repo.PlayerRepository;
 import com.sidequest.arena.standings.dto.GameRankRow;
@@ -32,37 +34,37 @@ import java.util.UUID;
 @Service
 public class StandingsService {
 
-    /** Fallback season label used when there are no franchises to read a season from. */
-    private static final String DEFAULT_SEASON = "S04";
-
     private final FranchiseRepository franchiseRepository;
     private final PlayerRepository playerRepository;
     private final GameRepository gameRepository;
     private final PlayerGameProficiencyRepository playerGameProficiencyRepository;
+    private final LeagueSettingsRepository leagueSettingsRepository;
 
     public StandingsService(FranchiseRepository franchiseRepository,
                             PlayerRepository playerRepository,
                             GameRepository gameRepository,
-                            PlayerGameProficiencyRepository playerGameProficiencyRepository) {
+                            PlayerGameProficiencyRepository playerGameProficiencyRepository,
+                            LeagueSettingsRepository leagueSettingsRepository) {
         this.franchiseRepository = franchiseRepository;
         this.playerRepository = playerRepository;
         this.gameRepository = gameRepository;
         this.playerGameProficiencyRepository = playerGameProficiencyRepository;
+        this.leagueSettingsRepository = leagueSettingsRepository;
     }
 
     /**
      * The franchise league table, ordered by points (desc) then name (asc). The season is taken
-     * from the leading franchise's {@code seasonId}, falling back to {@value #DEFAULT_SEASON} when
-     * there are no franchises.
+     * from the leading franchise's {@code seasonId}, falling back to the league's currently
+     * configured season (from {@link LeagueSettings}) when there are no franchises.
      */
     @Cacheable(CacheConfig.STANDINGS)
     @Transactional(readOnly = true)
     public StandingsResponse standings() {
         List<Franchise> franchises = franchiseRepository.findAllByOrderByPointsDescNameAsc();
 
-        String season = franchises.isEmpty() ? DEFAULT_SEASON : franchises.get(0).getSeasonId();
+        String season = franchises.isEmpty() ? currentSeasonCode() : franchises.get(0).getSeasonId();
         if (season == null) {
-            season = DEFAULT_SEASON;
+            season = currentSeasonCode();
         }
 
         List<StandingRow> rows = new ArrayList<>(franchises.size());
@@ -136,6 +138,17 @@ public class StandingsService {
                     prof.getRating()));
         }
         return rows;
+    }
+
+    /**
+     * The league's currently configured season code, read dynamically from {@link LeagueSettings}
+     * (repointed whenever an admin starts a new season). Used as the season label when there are no
+     * franchises to derive it from. Returns {@code null} only if settings are somehow absent.
+     */
+    private String currentSeasonCode() {
+        return leagueSettingsRepository.findById(LeagueSettings.SINGLETON_ID)
+                .map(LeagueSettings::getSeasonId)
+                .orElse(null);
     }
 
     /** Parse a string id to UUID; an unparseable id can never match, so report it as not found. */

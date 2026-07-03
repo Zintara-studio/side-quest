@@ -17,6 +17,10 @@ import com.sidequest.arena.model.Match;
 import com.sidequest.arena.model.MatchParticipant;
 import com.sidequest.arena.model.NotificationType;
 import com.sidequest.arena.model.Player;
+import com.sidequest.arena.model.PlayerStatus;
+import com.sidequest.arena.model.Registration;
+import com.sidequest.arena.model.RegistrationStatus;
+import com.sidequest.arena.model.RegistrationType;
 import com.sidequest.arena.model.ResultRow;
 import com.sidequest.arena.model.Role;
 import com.sidequest.arena.model.User;
@@ -25,8 +29,11 @@ import com.sidequest.arena.repo.FranchiseRepository;
 import com.sidequest.arena.repo.MatchParticipantRepository;
 import com.sidequest.arena.repo.PlayerRepository;
 import com.sidequest.arena.config.CacheConfig;
+import com.sidequest.arena.repo.RegistrationRepository;
 import com.sidequest.arena.repo.ResultRowRepository;
 import com.sidequest.arena.repo.UserRepository;
+import com.sidequest.arena.seasons.SeasonService;
+import com.sidequest.arena.seasons.dto.SeasonView;
 import com.sidequest.arena.security.SecurityUtils;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
@@ -49,7 +56,9 @@ public class FranchiseService {
     private final UserRepository userRepository;
     private final MatchParticipantRepository matchParticipantRepository;
     private final ResultRowRepository resultRowRepository;
+    private final RegistrationRepository registrationRepository;
     private final NotificationService notificationService;
+    private final SeasonService seasonService;
     private final AuditService auditService;
 
     public FranchiseService(FranchiseRepository franchiseRepository,
@@ -57,14 +66,18 @@ public class FranchiseService {
                             UserRepository userRepository,
                             MatchParticipantRepository matchParticipantRepository,
                             ResultRowRepository resultRowRepository,
+                            RegistrationRepository registrationRepository,
                             NotificationService notificationService,
+                            SeasonService seasonService,
                             AuditService auditService) {
         this.franchiseRepository = franchiseRepository;
         this.playerRepository = playerRepository;
         this.userRepository = userRepository;
         this.matchParticipantRepository = matchParticipantRepository;
         this.resultRowRepository = resultRowRepository;
+        this.registrationRepository = registrationRepository;
         this.notificationService = notificationService;
+        this.seasonService = seasonService;
         this.auditService = auditService;
     }
 
@@ -177,14 +190,19 @@ public class FranchiseService {
     }
 
     /**
-     * Admin: elevate a player to franchise owner. The owner is added to the roster, granted the
-     * {@code FRANCHISE_OWNER} role (which carries manager permissions), and notified.
+     * Admin: elevate a player to franchise owner. The owner is a roster member, so the player is
+     * added to the roster, granted the {@code FRANCHISE_OWNER} role (which carries manager
+     * permissions), and notified. The player must be free (unassigned) or already on this franchise,
+     * and — once a season is running — the owner can only be (re)assigned between seasons.
      */
     @CacheEvict(cacheNames = {CacheConfig.FRANCHISES, CacheConfig.PLAYERS}, allEntries = true)
     @Transactional
     public FranchiseDetail setOwner(String id, AssignRoleRequest req) {
         Franchise franchise = require(id);
         Player player = requirePlayer(req.playerId());
+
+        requireBetweenSeasons(franchise.getOwnerPlayer());
+        requireEligible(player, franchise);
 
         franchise.setOwnerPlayer(player);
         player.setFranchise(franchise);
@@ -210,6 +228,9 @@ public class FranchiseService {
         Franchise franchise = require(id);
         requireOwnerOrAdmin(franchise);
         Player player = requirePlayer(req.playerId());
+
+        requireBetweenSeasons(franchise.getManagerPlayer());
+        requireEligible(player, franchise);
 
         franchise.setManagerPlayer(player);
         player.setFranchise(franchise);
@@ -237,6 +258,81 @@ public class FranchiseService {
         return toDetail(saved);
     }
 
+    /**
+     * Admin: turn an approved-in-principle franchise-creation proposal (a {@code FRANCHISE}
+     * {@link Registration}) into a real franchise. The proposal's squad name becomes the franchise
+     * name with a derived tag, it is scoped to the current active season, the applying player is
+     * made owner (added to the roster and elevated to {@code FRANCHISE_OWNER}), the registration is
+     * marked APPROVED, and the applicant is notified. Discarding a proposal is the existing
+     * registrations reject flow.
+     */
+    @CacheEvict(cacheNames = {CacheConfig.FRANCHISES, CacheConfig.PLAYERS}, allEntries = true)
+    @Transactional
+    public FranchiseDetail createFromProposal(UUID registrationId) {
+        Registration registration = registrationRepository.findById(registrationId)
+                .orElseThrow(() -> ApiException.notFound("Registration", registrationId));
+        if (registration.getType() != RegistrationType.FRANCHISE) {
+            throw ApiException.badRequest("Registration is not a franchise proposal");
+        }
+        if (registration.getStatus() == RegistrationStatus.APPROVED) {
+            throw ApiException.conflict("This proposal has already been approved");
+        }
+        Player applicant = registration.getPlayer();
+        if (applicant == null) {
+            throw ApiException.badRequest("Franchise proposal has no applicant player");
+        }
+        // The applicant becomes the new franchise's owner, so they must be free — a player already on
+        // another franchise cannot found a second one (mirrors the setOwner/setManager eligibility rule).
+        if (applicant.getFranchise() != null) {
+            throw ApiException.badRequest(
+                    "Applicant already belongs to a franchise and cannot found a new one");
+        }
+        String name = registration.getSquadName();
+        if (name == null || name.isBlank()) {
+            throw ApiException.badRequest("Franchise proposal has no name");
+        }
+
+        SeasonView current = seasonService.current();
+
+        Franchise franchise = new Franchise();
+        franchise.setName(name.trim());
+        franchise.setTag(deriveTag(name));
+        franchise.setSeasonId(current != null ? current.code() : null);
+        franchise.setPoints(0);
+        franchise.setRank(0);
+        franchise.setActive(true);
+        franchise.setOwnerPlayer(applicant);
+        Franchise saved = franchiseRepository.save(franchise);
+
+        applicant.setFranchise(saved);
+        playerRepository.save(applicant);
+        elevateRole(applicant, Role.FRANCHISE_OWNER);
+
+        registration.setStatus(RegistrationStatus.APPROVED);
+        registrationRepository.save(registration);
+
+        notify(applicant, "Franchise approved",
+                "Your franchise '" + saved.getName() + "' was created. You're the owner.");
+        auditService.record("franchise.fromProposal", "Franchise", saved.getId().toString(),
+                "Created " + saved.getName() + " from proposal " + registrationId);
+        return toDetail(saved);
+    }
+
+    /**
+     * Admin: candidate players for a franchise's owner/manager slot — verified players who are
+     * unassigned or already on this franchise. 404 if the franchise does not exist.
+     */
+    @Transactional(readOnly = true)
+    public List<FranchiseDetail.PersonView> eligiblePlayers(UUID franchiseId) {
+        franchiseRepository.findById(franchiseId)
+                .orElseThrow(() -> ApiException.notFound("Franchise", franchiseId));
+        return playerRepository.findByStatus(PlayerStatus.VERIFIED).stream()
+                .filter(p -> p.getFranchise() == null
+                        || p.getFranchise().getId().equals(franchiseId))
+                .map(p -> new FranchiseDetail.PersonView(p.getId().toString(), p.getGamerTag()))
+                .toList();
+    }
+
     // ---- helpers ----
 
     /**
@@ -250,6 +346,43 @@ public class FranchiseService {
             user.setRole(role);
             userRepository.save(user);
         }
+    }
+
+    /**
+     * A player is eligible for a franchise role only if they are unassigned or already on this
+     * franchise (owner/manager are roster members). Otherwise they belong to another franchise.
+     */
+    private void requireEligible(Player player, Franchise franchise) {
+        Franchise existing = player.getFranchise();
+        if (existing != null && !existing.getId().equals(franchise.getId())) {
+            throw ApiException.badRequest("Player already belongs to another franchise");
+        }
+    }
+
+    /**
+     * Owner/manager may only be changed once a slot has been filled if there is no active season
+     * (i.e. between seasons). First-time assignment (an empty slot) is always allowed.
+     */
+    private void requireBetweenSeasons(Player currentSlot) {
+        boolean firstTime = currentSlot == null;
+        boolean seasonActive = seasonService.current() != null;
+        if (!firstTime && seasonActive) {
+            throw ApiException.badRequest("Owner and manager can only be changed between seasons");
+        }
+    }
+
+    /** Derive a short tag (uppercase, first ~3 alpha chars) from a franchise/proposal name. */
+    private static String deriveTag(String name) {
+        StringBuilder sb = new StringBuilder(3);
+        if (name != null) {
+            for (int i = 0; i < name.length() && sb.length() < 3; i++) {
+                char c = name.charAt(i);
+                if (Character.isLetter(c)) {
+                    sb.append(Character.toUpperCase(c));
+                }
+            }
+        }
+        return sb.length() > 0 ? sb.toString() : "TBD";
     }
 
     /** Require the current caller to be an admin or the owner of this franchise. */

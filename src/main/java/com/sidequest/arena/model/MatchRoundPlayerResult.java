@@ -30,8 +30,9 @@ public class MatchRoundPlayerResult extends BaseEntity {
     @JoinColumn(name = "match_round_id", nullable = false)
     private MatchRound matchRound;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "franchise_id", nullable = false)
+    // The player's franchise for this round (null for FFA matches, where the player has no franchise).
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "franchise_id")
     private Franchise franchise;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)

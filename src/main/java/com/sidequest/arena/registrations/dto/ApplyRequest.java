@@ -5,6 +5,7 @@ import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Request body for {@code POST /registrations} — a player or squad applying to the league.
@@ -16,12 +17,15 @@ import java.util.List;
  * @param games     game titles being registered for, at least one required
  * @param contact   free-form contact (whatsapp/discord), nullable
  * @param matchId   the FFA match this entry is for, when the call was tied to a match, nullable
+ * @param gameId    explicit game hint for the registration; usually derived from the linked match, so
+ *                  only needed for season/general calls with no match, nullable
  */
 public record ApplyRequest(
         @NotNull RegistrationType type,
         String squadName,
         @NotEmpty List<String> games,
         String contact,
-        String matchId
+        String matchId,
+        UUID gameId
 ) {
 }

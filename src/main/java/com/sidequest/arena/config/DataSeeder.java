@@ -3,6 +3,7 @@ package com.sidequest.arena.config;
 import com.sidequest.arena.model.Announcement;
 import com.sidequest.arena.model.AnnouncementCategory;
 import com.sidequest.arena.model.Dispute;
+import com.sidequest.arena.model.DisputeCategory;
 import com.sidequest.arena.model.DisputeStatus;
 import com.sidequest.arena.model.Franchise;
 import com.sidequest.arena.model.Game;
@@ -14,9 +15,11 @@ import com.sidequest.arena.model.MatchRound;
 import com.sidequest.arena.model.MatchRoundPlayerResult;
 import com.sidequest.arena.model.MatchRoundResult;
 import com.sidequest.arena.model.MatchStatus;
+import com.sidequest.arena.model.MatchType;
 import com.sidequest.arena.model.Notification;
 import com.sidequest.arena.model.NotificationType;
 import com.sidequest.arena.model.Player;
+import com.sidequest.arena.model.PlayerFranchiseHistory;
 import com.sidequest.arena.model.PlayerGameProficiency;
 import com.sidequest.arena.model.PlayerGameUsername;
 import com.sidequest.arena.model.PlayerStatus;
@@ -41,6 +44,7 @@ import com.sidequest.arena.repo.MatchRoundPlayerResultRepository;
 import com.sidequest.arena.repo.MatchRoundRepository;
 import com.sidequest.arena.repo.MatchRoundResultRepository;
 import com.sidequest.arena.repo.NotificationRepository;
+import com.sidequest.arena.repo.PlayerFranchiseHistoryRepository;
 import com.sidequest.arena.repo.PlayerGameProficiencyRepository;
 import com.sidequest.arena.repo.PlayerGameUsernameRepository;
 import com.sidequest.arena.repo.PlayerRepository;
@@ -104,6 +108,7 @@ public class DataSeeder {
                                LeagueSettingsRepository settings,
                                SeasonRepository seasons,
                                SeasonStandingRepository seasonStandings,
+                               PlayerFranchiseHistoryRepository franchiseHistory,
                                ScoringService scoring,
                                PasswordEncoder encoder) {
         return args -> {
@@ -173,13 +178,36 @@ public class DataSeeder {
             Player ace = player(users, players, "Ace", "ace@sidequest.gg", pw, rxg, PlayerStatus.VERIFIED);
             Player kiran = player(users, players, "Kiran", "kiran@sidequest.gg", pw, rxg, PlayerStatus.VERIFIED);
             Player echo = player(users, players, "Echo", "echo@sidequest.gg", pw, moti, PlayerStatus.VERIFIED);
-            player(users, players, "Riot", "riot@sidequest.gg", pw, moti, PlayerStatus.VERIFIED);
+            Player riot = player(users, players, "Riot", "riot@sidequest.gg", pw, moti, PlayerStatus.VERIFIED);
             player(users, players, "Frost", "frost@sidequest.gg", pw, moti, PlayerStatus.VERIFIED);
-            player(users, players, "Zen", "zen@sidequest.gg", pw, night, PlayerStatus.VERIFIED);
-            player(users, players, "Kai", "kai@sidequest.gg", pw, night, PlayerStatus.VERIFIED);
-            player(users, players, "Onyx", "onyx@sidequest.gg", pw, titans, PlayerStatus.VERIFIED);
-            player(users, players, "Sable", "sable@sidequest.gg", pw, titans, PlayerStatus.VERIFIED);
+            Player zen = player(users, players, "Zen", "zen@sidequest.gg", pw, night, PlayerStatus.VERIFIED);
+            Player kai = player(users, players, "Kai", "kai@sidequest.gg", pw, night, PlayerStatus.VERIFIED);
+            Player onyx = player(users, players, "Onyx", "onyx@sidequest.gg", pw, titans, PlayerStatus.VERIFIED);
+            Player sable = player(users, players, "Sable", "sable@sidequest.gg", pw, titans, PlayerStatus.VERIFIED);
             Player drift = player(users, players, "Drift", "drift@sidequest.gg", pw, null, PlayerStatus.PENDING);
+
+            // ---- franchise owners + managers (roster members, elevated user roles) ----
+            // Each franchise gets an owner and a distinct manager drawn from its own roster; their
+            // user accounts are raised to FRANCHISE_OWNER / FRANCHISE_MANAGER.
+            assignOwnerManager(rxg, vortex, ace, franchises, users);
+            assignOwnerManager(moti, echo, riot, franchises, users);
+            assignOwnerManager(night, zen, kai, franchises, users);
+            assignOwnerManager(titans, onyx, sable, franchises, users);
+
+            // ---- frozen S03 roster history (browsable past memberships for the finished season) ----
+            franchiseHistory.save(pfh(raghavan, rxg, "S03", "OWNER"));
+            franchiseHistory.save(pfh(vortex, rxg, "S03", "MANAGER"));
+            franchiseHistory.save(pfh(ace, rxg, "S03", "PLAYER"));
+            franchiseHistory.save(pfh(kiran, rxg, "S03", "PLAYER"));
+            franchiseHistory.save(pfh(blaze, moti, "S03", "OWNER"));
+            franchiseHistory.save(pfh(echo, moti, "S03", "MANAGER"));
+            franchiseHistory.save(pfh(riot, moti, "S03", "PLAYER"));
+            franchiseHistory.save(pfh(specter, night, "S03", "OWNER"));
+            franchiseHistory.save(pfh(zen, night, "S03", "MANAGER"));
+            franchiseHistory.save(pfh(kai, night, "S03", "PLAYER"));
+            franchiseHistory.save(pfh(nova, titans, "S03", "OWNER"));
+            franchiseHistory.save(pfh(onyx, titans, "S03", "MANAGER"));
+            franchiseHistory.save(pfh(sable, titans, "S03", "PLAYER"));
 
             // ---- game handles + proficiency for Raghavan ----
             usernames.save(handle(raghavan, valorant, "RXG_Raghavan", true));
@@ -205,6 +233,12 @@ public class DataSeeder {
             Match live = matches.save(match(bgmi, now, MatchStatus.LIVE, "Main Stage", "Bo1"));
             Match scheduled = matches.save(match(cs2, now.plus(1, ChronoUnit.DAYS),
                     MatchStatus.SCHEDULED, "Arena B", "Bo3"));
+            // A future free-for-all fixture the open Valorant showmatch call points at. Scheduled well
+            // beyond the 3h registration lock so the demo sign-up flow stays open.
+            Match futureFfa = match(valorant, now.plus(7, ChronoUnit.DAYS),
+                    MatchStatus.SCHEDULED, "Arena C", "Bo1");
+            futureFfa.setMatchType(MatchType.FFA);
+            futureFfa = matches.save(futureFfa);
 
             participants.save(participant(completed, rxg));
             participants.save(participant(completed, moti));
@@ -301,6 +335,7 @@ public class DataSeeder {
             squadReg.setPlayer(rookie);
             squadReg.setGames(new ArrayList<>(List.of("Valorant", "CS2")));
             squadReg.setContact("discord: phantom#0001");
+            squadReg.setGame(valorant);
             squadReg.setStatus(RegistrationStatus.PENDING);
             Registration savedSquad = registrations.save(squadReg);
 
@@ -314,8 +349,31 @@ public class DataSeeder {
             ffaReg.setPlayer(rookie);
             ffaReg.setGames(new ArrayList<>(List.of("Smashkarts")));
             ffaReg.setContact("whatsapp: +91 98765 43210");
+            ffaReg.setGame(smash);
             ffaReg.setStatus(RegistrationStatus.PENDING);
             registrations.save(ffaReg);
+
+            // ---- an approved FFA entry tied to the future Valorant showmatch (game derived from match) ----
+            Registration ffaMatchReg = new Registration();
+            ffaMatchReg.setType(RegistrationType.PLAYER);
+            ffaMatchReg.setPlayer(drift);
+            ffaMatchReg.setGames(new ArrayList<>(List.of("Valorant")));
+            ffaMatchReg.setContact("discord: drift#1234");
+            ffaMatchReg.setMatch(futureFfa);
+            ffaMatchReg.setGame(valorant);
+            ffaMatchReg.setStatus(RegistrationStatus.APPROVED);
+            registrations.save(ffaMatchReg);
+
+            // ---- a pending FRANCHISE proposal so the admin can approve it into a franchise ----
+            Registration franchiseProposal = new Registration();
+            franchiseProposal.setType(RegistrationType.FRANCHISE);
+            franchiseProposal.setSquadName("Crimson Vanguard");
+            franchiseProposal.setPlayer(rookie);
+            franchiseProposal.setGames(new ArrayList<>(List.of("Valorant", "BGMI")));
+            franchiseProposal.setContact("discord: vanguard#0007");
+            franchiseProposal.setReason("Bootstrapping a new org for Season 04 — full roster ready.");
+            franchiseProposal.setStatus(RegistrationStatus.PENDING);
+            registrations.save(franchiseProposal);
 
             // ---- announcements ----
             announcements.save(announcement(AnnouncementCategory.RESULT,
@@ -338,7 +396,7 @@ public class DataSeeder {
 
             Announcement valoFfa = announcement(AnnouncementCategory.MATCH,
                     "Valorant Showmatch — solo sign-up", "Open free-for-all Valorant showmatch, register solo.",
-                    null, now.minus(2, ChronoUnit.HOURS));
+                    futureFfa, now.minus(2, ChronoUnit.HOURS));
             valoFfa.setRegistrationOpen(true);
             valoFfa.setGame(valorant);
             valoFfa.setRegistrationType(RegistrationType.PLAYER); // FFA solo call
@@ -347,6 +405,40 @@ public class DataSeeder {
             announcements.save(announcement(AnnouncementCategory.RECAP,
                     "Week 1 recap", "Highlights, upsets and the players to watch.",
                     null, now.minus(1, ChronoUnit.DAYS)));
+
+            // ---- a long markdown-body announcement to showcase rich rendering ----
+            announcements.save(announcement(AnnouncementCategory.RECAP,
+                    "Season 04 Kickoff — Everything You Need to Know",
+                    """
+                    # Welcome to Season 04
+
+                    Season 04 is officially **live**, and it's shaping up to be our biggest split yet.
+                    Here's everything you need to get up to speed.
+
+                    ![Season 04 banner](https://cdn.sidequest.gg/announcements/s04-banner.png)
+
+                    ## What's new this season
+
+                    - A revamped **franchise auction** — rosters are rebuilt from scratch every season.
+                    - Per-match scoring weights, so organizers can tune kills vs. placement.
+                    - A public **all-time standings** board that sums every season's points.
+
+                    ## Key dates
+
+                    1. **Auction night** — franchises draft their rosters.
+                    2. **Match Day 1** — Valorant and CS2 open the split.
+                    3. **Playoffs** — top four franchises fight for the title.
+
+                    ## How to take part
+
+                    Sign-ups are open from the [registrations page](/announcements). Solo players can
+                    register for free-for-all showmatches, while squads can bid to form a franchise.
+
+                    > "Every season is a fresh start. Earn your place." — League Admin
+
+                    See you in the arena. **GLHF!**
+                    """,
+                    null, now.minus(6, ChronoUnit.DAYS)));
 
             // ---- a few in-app notifications for demo users ----
             notifs.save(notification(raghavan.getUser(), NotificationType.RESULT,
@@ -367,12 +459,22 @@ public class DataSeeder {
             notifs.save(notification(nova.getUser(), NotificationType.ANNOUNCEMENT,
                     "Registrations open", "Season 04 and free-for-all sign-ups are live.", "/announcements"));
 
-            // ---- an open result dispute for the admin control room ----
+            // ---- an open result dispute for the admin control room (raised by a Motichoor player) ----
             Dispute dispute = new Dispute();
             dispute.setMatch(completed);
+            dispute.setRaisedBy(blaze.getUser());
             dispute.setReason("Motichoor dispute final-circle kill credit — scoreboard screenshot mismatch.");
+            dispute.setCategory(DisputeCategory.RESULT);
             dispute.setStatus(DisputeStatus.OPEN);
             disputes.save(dispute);
+
+            // ---- a match-less appeal dispute (account status) so the appeals flow has data ----
+            Dispute appeal = new Dispute();
+            appeal.setRaisedBy(rookie.getUser());
+            appeal.setReason("Requesting review of my pending verification — I've completed every profile step.");
+            appeal.setCategory(DisputeCategory.APPEAL);
+            appeal.setStatus(DisputeStatus.OPEN);
+            disputes.save(appeal);
 
             // ---- compute standings from seeded results ----
             scoring.recomputeStandings();
@@ -433,6 +535,35 @@ public class DataSeeder {
         f.setSeasonId(SEASON);
         f.setActive(true);
         return f;
+    }
+
+    /**
+     * Make {@code owner} the franchise owner and {@code manager} its manager (both roster members),
+     * persist the franchise, and raise their user accounts to the matching franchise roles.
+     */
+    private static void assignOwnerManager(Franchise f, Player owner, Player manager,
+                                           FranchiseRepository franchises, UserRepository users) {
+        f.setOwnerPlayer(owner);
+        f.setManagerPlayer(manager);
+        franchises.save(f);
+        owner.getUser().setRole(Role.FRANCHISE_OWNER);
+        users.save(owner.getUser());
+        manager.getUser().setRole(Role.FRANCHISE_MANAGER);
+        users.save(manager.getUser());
+    }
+
+    /** A frozen player-franchise membership record for a finished season. */
+    private static PlayerFranchiseHistory pfh(Player p, Franchise f, String seasonCode, String role) {
+        PlayerFranchiseHistory h = new PlayerFranchiseHistory();
+        h.setPlayerId(p.getId());
+        h.setPlayerGamerTag(p.getGamerTag());
+        h.setFranchiseId(f.getId());
+        h.setFranchiseName(f.getName());
+        h.setFranchiseTag(f.getTag());
+        h.setSeasonCode(seasonCode);
+        h.setRole(role);
+        h.setRecordedAt(Instant.now());
+        return h;
     }
 
     private static Player player(UserRepository users, PlayerRepository players, String name,

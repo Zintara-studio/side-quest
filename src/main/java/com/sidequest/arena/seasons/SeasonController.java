@@ -40,6 +40,12 @@ public class SeasonController {
         return seasonService.current();
     }
 
+    /** Combined all-time standings: total points per franchise across every season plus live points. */
+    @GetMapping("/all-time/standings")
+    public List<SeasonStandingView> allTimeStandings() {
+        return seasonService.allTimeStandings();
+    }
+
     /** Standings for a season by code — live for the active season, the frozen snapshot otherwise. */
     @GetMapping("/{code}/standings")
     public List<SeasonStandingView> standings(@PathVariable String code) {

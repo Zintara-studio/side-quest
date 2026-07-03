@@ -31,8 +31,14 @@ public record EnterRoundsRequest(
     ) {
     }
 
+    /**
+     * One entrant's line in a round. For a FRANCHISE match set {@code franchiseId}; for an FFA match
+     * set {@code playerId} (the individual entrant) and leave {@code franchiseId} null. Exactly one of
+     * the two identifies the entrant.
+     */
     public record RoundResultEntry(
-            @NotBlank String franchiseId,
+            String franchiseId,
+            String playerId,
             int rank,
             int kills,
             int survivalSeconds,

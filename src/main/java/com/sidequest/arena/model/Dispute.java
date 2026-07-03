@@ -14,7 +14,11 @@ import lombok.Setter;
 
 import java.time.Instant;
 
-/** A challenge against a published match result, triaged in the admin control room. */
+/**
+ * A challenge raised for admin attention, triaged in the admin control room. Classic result
+ * disputes reference a {@link Match}; account-status appeals and general issues have no match, so
+ * the match reference is optional and the {@link #category} distinguishes them.
+ */
 @Entity
 @Table(name = "disputes")
 @Getter
@@ -22,8 +26,9 @@ import java.time.Instant;
 @NoArgsConstructor
 public class Dispute extends BaseEntity {
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "match_id", nullable = false)
+    /** The disputed match, for RESULT disputes. Null for APPEAL / GENERAL disputes. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "match_id")
     private Match match;
 
     @ManyToOne(fetch = FetchType.LAZY)
@@ -32,6 +37,11 @@ public class Dispute extends BaseEntity {
 
     @Column(columnDefinition = "text", nullable = false)
     private String reason;
+
+    /** What the dispute is about; defaults to a match result dispute. */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 16)
+    private DisputeCategory category = DisputeCategory.RESULT;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 16)

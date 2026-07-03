@@ -154,6 +154,10 @@ public class MatchService {
         Game game = gameRepository.findById(parseId(request.gameId(), "Game"))
                 .orElseThrow(() -> ApiException.notFound("Game", request.gameId()));
 
+        if (request.scheduledAt() != null && request.scheduledAt().isBefore(Instant.now())) {
+            throw ApiException.badRequest("A match cannot be scheduled in the past");
+        }
+
         Match match = new Match();
         match.setGame(game);
         match.setScheduledAt(request.scheduledAt());
@@ -301,8 +305,11 @@ public class MatchService {
         matchRoundRepository.flush();
         resultRowRepository.flush();
 
-        Map<UUID, int[]> aggregate = new HashMap<>(); // franchiseId -> [kills, placePts]
+        // FFA matches are scored per individual entrant (no franchise); FRANCHISE matches per franchise.
+        boolean ffa = match.getMatchType() == MatchType.FFA;
+        Map<UUID, int[]> aggregate = new HashMap<>(); // entrant id (franchise or player) -> [kills, placePts]
         Map<UUID, Franchise> franchises = new HashMap<>();
+        Map<UUID, Player> ffaEntrants = new HashMap<>();
 
         for (EnterRoundsRequest.RoundEntry roundEntry : request.rounds()) {
             MatchRound round = new MatchRound();
@@ -313,8 +320,27 @@ public class MatchService {
             MatchRound savedRound = matchRoundRepository.save(round);
 
             for (EnterRoundsRequest.RoundResultEntry row : roundEntry.rows()) {
-                Franchise franchise = requireFranchise(row.franchiseId());
-                franchises.put(franchise.getId(), franchise);
+                Franchise franchise = null;
+                Player entrant = null;
+                UUID key;
+                if (ffa) {
+                    // The entrant is an individual player. Prefer the explicit playerId; fall back to the
+                    // first per-player breakdown line if only that was supplied.
+                    String pid = row.playerId();
+                    if ((pid == null || pid.isBlank()) && row.players() != null && !row.players().isEmpty()) {
+                        pid = row.players().get(0).playerId();
+                    }
+                    if (pid == null || pid.isBlank()) {
+                        throw ApiException.badRequest("Each FFA result row must identify a player");
+                    }
+                    entrant = requirePlayer(pid);
+                    key = entrant.getId();
+                    ffaEntrants.put(key, entrant);
+                } else {
+                    franchise = requireFranchise(row.franchiseId());
+                    key = franchise.getId();
+                    franchises.put(key, franchise);
+                }
 
                 boolean hasPlayers = row.players() != null && !row.players().isEmpty();
                 int teamKills = row.kills();
@@ -329,6 +355,7 @@ public class MatchService {
                 MatchRoundResult result = new MatchRoundResult();
                 result.setMatchRound(savedRound);
                 result.setFranchise(franchise);
+                result.setPlayer(entrant);
                 result.setRank(row.rank());
                 result.setKills(teamKills);
                 result.setSurvivalSeconds(teamSurvival);
@@ -340,7 +367,7 @@ public class MatchService {
                         Player player = requirePlayer(pe.playerId());
                         MatchRoundPlayerResult pr = new MatchRoundPlayerResult();
                         pr.setMatchRound(savedRound);
-                        pr.setFranchise(franchise);
+                        pr.setFranchise(franchise); // null for FFA entrants
                         pr.setPlayer(player);
                         pr.setKills(pe.kills());
                         pr.setSurvivalSeconds(pe.survivalSeconds());
@@ -348,7 +375,7 @@ public class MatchService {
                     }
                 }
 
-                int[] totals = aggregate.computeIfAbsent(franchise.getId(), k -> new int[2]);
+                int[] totals = aggregate.computeIfAbsent(key, k -> new int[2]);
                 totals[0] += teamKills;
                 totals[1] += placePts;
             }
@@ -361,7 +388,8 @@ public class MatchService {
             int placePts = entry.getValue()[1];
             ResultRow row = new ResultRow();
             row.setMatch(match);
-            row.setFranchise(franchises.get(entry.getKey()));
+            row.setFranchise(franchises.get(entry.getKey())); // null for FFA
+            row.setPlayer(ffaEntrants.get(entry.getKey()));    // null for FRANCHISE
             row.setKills(kills);
             row.setPlacePts(placePts);
             row.setTotal(kills * pointsPerKill + placePts);
@@ -474,15 +502,18 @@ public class MatchService {
     }
 
     private MatchRoundView toRoundView(MatchRound round) {
-        // Per-player lines for this round, grouped by franchise so each team row can carry its breakdown.
-        Map<UUID, List<MatchRoundView.PlayerStatView>> playersByFranchise = new HashMap<>();
+        // Per-player breakdown lines for this round, grouped by entrant key: the franchise id for
+        // FRANCHISE rows, or the player id for FFA rows (which have no franchise).
+        Map<UUID, List<MatchRoundView.PlayerStatView>> playersByKey = new HashMap<>();
         for (MatchRoundPlayerResult pr : matchRoundPlayerResultRepository
                 .findByMatchRoundIdOrderByKillsDesc(round.getId())) {
-            if (pr.getFranchise() == null) {
+            Player p = pr.getPlayer();
+            UUID key = pr.getFranchise() != null ? pr.getFranchise().getId()
+                    : (p != null ? p.getId() : null);
+            if (key == null) {
                 continue;
             }
-            Player p = pr.getPlayer();
-            playersByFranchise.computeIfAbsent(pr.getFranchise().getId(), k -> new ArrayList<>())
+            playersByKey.computeIfAbsent(key, k -> new ArrayList<>())
                     .add(new MatchRoundView.PlayerStatView(
                             p == null ? null : p.getId().toString(),
                             p == null ? null : p.getGamerTag(),
@@ -494,13 +525,23 @@ public class MatchService {
                 matchRoundResultRepository.findByMatchRoundIdOrderByRankAsc(round.getId()).stream()
                         .map(rr -> {
                             Franchise f = rr.getFranchise();
-                            List<MatchRoundView.PlayerStatView> players = f == null ? List.of()
-                                    : playersByFranchise.getOrDefault(f.getId(), List.of());
+                            Player pl = rr.getPlayer();
+                            // FFA entrants are surfaced with their gamer tag in the name/tag slots so the
+                            // existing round tables render them like a single-player "team".
+                            String rowId = f != null ? f.getId().toString()
+                                    : (pl != null ? pl.getId().toString() : null);
+                            String rowName = f != null ? f.getName()
+                                    : (pl != null ? pl.getGamerTag() : null);
+                            String rowTag = f != null ? f.getTag()
+                                    : (pl != null ? pl.getGamerTag() : null);
+                            UUID key = f != null ? f.getId() : (pl != null ? pl.getId() : null);
+                            List<MatchRoundView.PlayerStatView> players =
+                                    key == null ? List.of() : playersByKey.getOrDefault(key, List.of());
                             return new MatchRoundView.RoundResultView(
                                     rr.getRank(),
-                                    f == null ? null : f.getId().toString(),
-                                    f == null ? null : f.getName(),
-                                    f == null ? null : f.getTag(),
+                                    rowId,
+                                    rowName,
+                                    rowTag,
                                     rr.getKills(),
                                     rr.getSurvivalSeconds(),
                                     rr.getPlacePts(),
@@ -591,14 +632,26 @@ public class MatchService {
 
     private static ResultView toResultView(ResultRow row) {
         Franchise franchise = row.getFranchise();
+        if (franchise != null) {
+            return new ResultView(
+                    row.getRank(),
+                    franchise.getId().toString(),
+                    franchise.getName(),
+                    franchise.getTag(),
+                    row.getKills(),
+                    row.getPlacePts(),
+                    row.getTotal());
+        }
+        // FFA entrant: no franchise — surface the player's gamer tag in the name/tag slots (franchiseId
+        // is left null so the row does not link to a non-existent franchise page).
+        Player player = row.getPlayer();
         return new ResultView(
                 row.getRank(),
-                franchise == null ? null : franchise.getId().toString(),
-                franchise == null ? null : franchise.getName(),
-                franchise == null ? null : franchise.getTag(),
+                null,
+                player == null ? null : player.getGamerTag(),
+                player == null ? null : player.getGamerTag(),
                 row.getKills(),
                 row.getPlacePts(),
-                row.getTotal()
-        );
+                row.getTotal());
     }
 }

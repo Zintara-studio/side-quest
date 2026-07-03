@@ -150,10 +150,13 @@ public class AdminService {
 
     private static DisputeView toDisputeView(Dispute dispute) {
         Match match = dispute.getMatch();
+        String matchTitle = match != null && match.getGame() != null ? match.getGame().getName() : null;
         return new DisputeView(
                 dispute.getId().toString(),
                 match != null ? match.getId().toString() : null,
+                matchTitle,
                 dispute.getReason(),
+                dispute.getCategory() != null ? dispute.getCategory().name() : null,
                 dispute.getStatus().name(),
                 dispute.getResolution(),
                 dispute.getCreatedAt());

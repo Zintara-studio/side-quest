@@ -1,5 +1,6 @@
 package com.sidequest.arena.franchises;
 
+import com.sidequest.arena.common.ApiException;
 import com.sidequest.arena.common.PageResponse;
 import com.sidequest.arena.franchises.dto.AssignPlayerRequest;
 import com.sidequest.arena.franchises.dto.AssignRoleRequest;
@@ -23,6 +24,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Franchises (teams) API: league table / standings, franchise detail and stats, rosters and
@@ -94,6 +96,20 @@ public class FranchiseController {
         return franchiseService.setOwner(id, request);
     }
 
+    /** Candidate players for this franchise's owner/manager slot (admin only). */
+    @GetMapping("/{id}/eligible-owners")
+    @PreAuthorize("hasRole('ADMIN')")
+    public List<FranchiseDetail.PersonView> eligibleOwners(@PathVariable String id) {
+        return franchiseService.eligiblePlayers(parseId(id, "Franchise"));
+    }
+
+    /** Create a franchise from an approved franchise-creation proposal / registration (admin only). */
+    @PostMapping("/from-proposal/{registrationId}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public FranchiseDetail createFromProposal(@PathVariable String registrationId) {
+        return franchiseService.createFromProposal(parseId(registrationId, "Registration"));
+    }
+
     /** Set the franchise manager (admin or the franchise owner; ownership enforced in the service). */
     @PostMapping("/{id}/manager")
     @PreAuthorize("hasAnyRole('ADMIN','FRANCHISE_OWNER')")
@@ -106,5 +122,14 @@ public class FranchiseController {
     @PreAuthorize("hasRole('ADMIN')")
     public FranchiseDetail discard(@PathVariable String id) {
         return franchiseService.discard(id);
+    }
+
+    /** Parse a path id to UUID; an unparseable id can never match, so report it as not found. */
+    private static UUID parseId(String id, String resource) {
+        try {
+            return UUID.fromString(id);
+        } catch (IllegalArgumentException ex) {
+            throw ApiException.notFound(resource, id);
+        }
     }
 }

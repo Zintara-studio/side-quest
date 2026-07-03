@@ -137,7 +137,13 @@ public class ScoringService {
 
     private static Map<String, Object> resultView(ResultRow r) {
         Map<String, Object> m = new LinkedHashMap<>();
-        m.put("franchiseId", r.getFranchise().getId().toString());
+        // FRANCHISE rows carry a franchise; FFA rows carry an individual player instead.
+        var franchise = r.getFranchise();
+        var player = r.getPlayer();
+        m.put("franchiseId", franchise != null ? franchise.getId().toString() : null);
+        m.put("playerId", player != null ? player.getId().toString() : null);
+        m.put("name", franchise != null ? franchise.getName()
+                : (player != null ? player.getGamerTag() : null));
         m.put("kills", r.getKills());
         m.put("placePts", r.getPlacePts());
         m.put("total", r.getTotal());

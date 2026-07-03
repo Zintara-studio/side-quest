@@ -46,6 +46,15 @@ public class Registration extends BaseEntity {
     @JoinColumn(name = "match_id")
     private Match match;
 
+    /**
+     * The game this registration is for. Derived from the linked {@link Match} when the call is tied to
+     * a match; otherwise resolved from the request's game hint (or left null for season/general
+     * registrations). Lets the frontend show the correct game without a manual picker.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "game_id")
+    private Game game;
+
     /** Game titles the applicant is registering for. */
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "registration_games", joinColumns = @JoinColumn(name = "registration_id"))

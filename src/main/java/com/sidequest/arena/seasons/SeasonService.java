@@ -5,11 +5,15 @@ import com.sidequest.arena.common.ApiException;
 import com.sidequest.arena.config.CacheConfig;
 import com.sidequest.arena.model.Franchise;
 import com.sidequest.arena.model.LeagueSettings;
+import com.sidequest.arena.model.Player;
+import com.sidequest.arena.model.PlayerFranchiseHistory;
 import com.sidequest.arena.model.Season;
 import com.sidequest.arena.model.SeasonStanding;
 import com.sidequest.arena.model.SeasonStatus;
 import com.sidequest.arena.repo.FranchiseRepository;
 import com.sidequest.arena.repo.LeagueSettingsRepository;
+import com.sidequest.arena.repo.PlayerFranchiseHistoryRepository;
+import com.sidequest.arena.repo.PlayerRepository;
 import com.sidequest.arena.repo.SeasonRepository;
 import com.sidequest.arena.repo.SeasonStandingRepository;
 import com.sidequest.arena.seasons.dto.SeasonStandingView;
@@ -20,8 +24,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 /**
  * Season lifecycle: list seasons, resolve the current season, browse a finished season's frozen
@@ -35,17 +43,23 @@ public class SeasonService {
     private final SeasonRepository seasonRepository;
     private final SeasonStandingRepository seasonStandingRepository;
     private final FranchiseRepository franchiseRepository;
+    private final PlayerRepository playerRepository;
+    private final PlayerFranchiseHistoryRepository playerFranchiseHistoryRepository;
     private final LeagueSettingsRepository leagueSettingsRepository;
     private final AuditService auditService;
 
     public SeasonService(SeasonRepository seasonRepository,
                          SeasonStandingRepository seasonStandingRepository,
                          FranchiseRepository franchiseRepository,
+                         PlayerRepository playerRepository,
+                         PlayerFranchiseHistoryRepository playerFranchiseHistoryRepository,
                          LeagueSettingsRepository leagueSettingsRepository,
                          AuditService auditService) {
         this.seasonRepository = seasonRepository;
         this.seasonStandingRepository = seasonStandingRepository;
         this.franchiseRepository = franchiseRepository;
+        this.playerRepository = playerRepository;
+        this.playerFranchiseHistoryRepository = playerFranchiseHistoryRepository;
         this.leagueSettingsRepository = leagueSettingsRepository;
         this.auditService = auditService;
     }
@@ -85,15 +99,81 @@ public class SeasonService {
     }
 
     /**
+     * Combined all-time standings across every season: the sum of each franchise's frozen
+     * {@link SeasonStanding} points from all finished seasons, plus the current live points of any
+     * franchise still competing. Franchises are keyed by id (or by tag for legacy rows with no id).
+     * Name/tag come from the most recent record for that franchise. Ranked 1..n by total points desc.
+     * (The conceptual season code for this view is "ALL"; {@link SeasonStandingView} carries no code.)
+     */
+    @Transactional(readOnly = true)
+    public List<SeasonStandingView> allTimeStandings() {
+        Map<String, AllTimeAcc> byKey = new HashMap<>();
+
+        // Frozen history from every finished season.
+        for (SeasonStanding s : seasonStandingRepository.findAll()) {
+            String key = s.getFranchiseId() != null ? s.getFranchiseId() : "tag:" + s.getFranchiseTag();
+            AllTimeAcc acc = byKey.computeIfAbsent(key, k -> new AllTimeAcc());
+            acc.points += s.getPoints();
+            Instant stamp = s.getCreatedAt() != null ? s.getCreatedAt() : Instant.EPOCH;
+            if (acc.nameStamp == null || stamp.isAfter(acc.nameStamp)) {
+                acc.nameStamp = stamp;
+                acc.franchiseId = s.getFranchiseId();
+                acc.name = s.getFranchiseName();
+                acc.tag = s.getFranchiseTag();
+            }
+        }
+
+        // Live points from the current season's franchises — only while a season is ACTIVE. In the
+        // off-season (finished but no new season started) the just-finished season already has a frozen
+        // snapshot AND the franchises still carry those same points, so adding live points would double
+        // count. We still refresh each franchise's name/tag from the live row (freshest) either way.
+        boolean seasonActive = activeOrNull() != null;
+        for (Franchise f : franchiseRepository.findAll()) {
+            String key = f.getId().toString();
+            AllTimeAcc acc = byKey.computeIfAbsent(key, k -> new AllTimeAcc());
+            if (seasonActive) {
+                acc.points += f.getPoints();
+            }
+            acc.nameStamp = Instant.MAX;
+            acc.franchiseId = f.getId().toString();
+            acc.name = f.getName();
+            acc.tag = f.getTag();
+        }
+
+        List<AllTimeAcc> sorted = byKey.values().stream()
+                .sorted(Comparator.comparingLong((AllTimeAcc a) -> a.points).reversed()
+                        .thenComparing(a -> a.name == null ? "" : a.name))
+                .toList();
+
+        List<SeasonStandingView> rows = new ArrayList<>(sorted.size());
+        int rank = 1;
+        for (AllTimeAcc a : sorted) {
+            rows.add(new SeasonStandingView(rank++, a.franchiseId, a.name, a.tag, (int) a.points));
+        }
+        return rows;
+    }
+
+    /** Mutable accumulator for {@link #allTimeStandings()}: running total plus latest name/tag. */
+    private static final class AllTimeAcc {
+        long points;
+        String franchiseId;
+        String name;
+        String tag;
+        Instant nameStamp;
+    }
+
+    /**
      * Admin: finish the active season — snapshot its franchises' final standings and mark it FINISHED.
      * Idempotent per season (re-snapshots). 409 if there is no active season.
      */
-    @CacheEvict(cacheNames = {CacheConfig.STANDINGS, CacheConfig.FRANCHISES}, allEntries = true)
+    @CacheEvict(cacheNames = {CacheConfig.STANDINGS, CacheConfig.FRANCHISES, CacheConfig.PLAYERS,
+            CacheConfig.LEADERBOARD_PLAYERS}, allEntries = true)
     @Transactional
     public SeasonView finish() {
         Season active = seasonRepository.findFirstByStatusOrderByStartedAtDesc(SeasonStatus.ACTIVE)
                 .orElseThrow(() -> ApiException.conflict("No active season to finish"));
         snapshot(active.getCode());
+        archiveAndResetRosters(active.getCode());
         active.setStatus(SeasonStatus.FINISHED);
         active.setEndedAt(Instant.now());
         Season saved = seasonRepository.save(active);
@@ -119,6 +199,7 @@ public class SeasonService {
         // Finalize the outgoing season, if any.
         seasonRepository.findFirstByStatusOrderByStartedAtDesc(SeasonStatus.ACTIVE).ifPresent(active -> {
             snapshot(active.getCode());
+            archiveAndResetRosters(active.getCode());
             active.setStatus(SeasonStatus.FINISHED);
             active.setEndedAt(Instant.now());
             seasonRepository.save(active);
@@ -156,6 +237,70 @@ public class SeasonService {
 
     private Season activeOrNull() {
         return seasonRepository.findFirstByStatusOrderByStartedAtDesc(SeasonStatus.ACTIVE).orElse(null);
+    }
+
+    /**
+     * Archive every franchise's current roster into {@link PlayerFranchiseHistory} for the given
+     * season, tagging each player's role (OWNER / MANAGER / PLAYER), then wipe rosters: every player
+     * is detached from their franchise and every franchise's owner/manager slots are cleared. Called
+     * on the finish path so rosters are re-formed (via auction) each new season while the prior
+     * season's memberships remain browsable.
+     */
+    private void archiveAndResetRosters(String seasonCode) {
+        List<Franchise> franchises = franchiseRepository.findAll();
+
+        // (a) One history row per roster player, tagged with the role they held.
+        List<PlayerFranchiseHistory> history = new ArrayList<>();
+        for (Franchise f : franchises) {
+            Player owner = f.getOwnerPlayer();
+            Player manager = f.getManagerPlayer();
+            Player igl = f.getIglPlayer();
+            UUID ownerId = owner != null ? owner.getId() : null;
+            UUID managerId = manager != null ? manager.getId() : null;
+            UUID iglId = igl != null ? igl.getId() : null;
+            for (Player p : playerRepository.findByFranchiseId(f.getId())) {
+                String role;
+                if (ownerId != null && ownerId.equals(p.getId())) {
+                    role = "OWNER";
+                } else if (managerId != null && managerId.equals(p.getId())) {
+                    role = "MANAGER";
+                } else if (iglId != null && iglId.equals(p.getId())) {
+                    role = "IGL";
+                } else {
+                    role = "PLAYER";
+                }
+                PlayerFranchiseHistory row = new PlayerFranchiseHistory();
+                row.setPlayerId(p.getId());
+                row.setPlayerGamerTag(p.getGamerTag());
+                row.setFranchiseId(f.getId());
+                row.setFranchiseName(f.getName());
+                row.setFranchiseTag(f.getTag());
+                row.setSeasonCode(seasonCode);
+                row.setRole(role);
+                row.setRecordedAt(Instant.now());
+                history.add(row);
+            }
+        }
+        playerFranchiseHistoryRepository.saveAll(history);
+
+        // (b) Detach every player from their franchise.
+        List<Player> assigned = new ArrayList<>();
+        for (Player p : playerRepository.findAll()) {
+            if (p.getFranchise() != null) {
+                p.setFranchise(null);
+                assigned.add(p);
+            }
+        }
+        playerRepository.saveAll(assigned);
+
+        // (b) Clear each franchise's leadership slots (owner / manager / IGL) — the whole roster,
+        // including its leaders, is re-formed via auction next season.
+        for (Franchise f : franchises) {
+            f.setOwnerPlayer(null);
+            f.setManagerPlayer(null);
+            f.setIglPlayer(null);
+        }
+        franchiseRepository.saveAll(franchises);
     }
 
     /** Recompute and persist a frozen standings snapshot for the given season code. */

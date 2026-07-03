@@ -4,6 +4,7 @@ import com.sidequest.arena.audit.AuditService;
 import com.sidequest.arena.common.ApiException;
 import com.sidequest.arena.common.Cursors;
 import com.sidequest.arena.common.PageResponse;
+import com.sidequest.arena.model.Game;
 import com.sidequest.arena.model.InviteStatus;
 import com.sidequest.arena.model.Match;
 import com.sidequest.arena.model.NotificationType;
@@ -22,6 +23,7 @@ import com.sidequest.arena.registrations.dto.InviteRequest;
 import com.sidequest.arena.registrations.dto.InviteView;
 import com.sidequest.arena.registrations.dto.RegistrationView;
 import com.sidequest.arena.registrations.dto.ReviewRequest;
+import com.sidequest.arena.repo.GameRepository;
 import com.sidequest.arena.repo.MatchRepository;
 import com.sidequest.arena.repo.PlayerRepository;
 import com.sidequest.arena.repo.RegistrationRepository;
@@ -31,6 +33,8 @@ import com.sidequest.arena.security.SecurityUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -51,6 +55,7 @@ public class RegistrationService {
     private final UserRepository userRepository;
     private final TeamInviteRepository teamInviteRepository;
     private final MatchRepository matchRepository;
+    private final GameRepository gameRepository;
     private final RealtimeService realtimeService;
     private final NotificationService notificationService;
     private final AuditService auditService;
@@ -60,6 +65,7 @@ public class RegistrationService {
                                UserRepository userRepository,
                                TeamInviteRepository teamInviteRepository,
                                MatchRepository matchRepository,
+                               GameRepository gameRepository,
                                RealtimeService realtimeService,
                                NotificationService notificationService,
                                AuditService auditService) {
@@ -68,6 +74,7 @@ public class RegistrationService {
         this.userRepository = userRepository;
         this.teamInviteRepository = teamInviteRepository;
         this.matchRepository = matchRepository;
+        this.gameRepository = gameRepository;
         this.realtimeService = realtimeService;
         this.notificationService = notificationService;
         this.auditService = auditService;
@@ -97,11 +104,37 @@ public class RegistrationService {
         registration.setGames(new ArrayList<>(request.games()));
         registration.setContact(request.contact());
         registration.setStatus(RegistrationStatus.PENDING);
+
+        Game game = null;
         if (request.matchId() != null && !request.matchId().isBlank()) {
             Match match = matchRepository.findById(parseId(request.matchId(), "Match"))
                     .orElseThrow(() -> ApiException.notFound("Match", request.matchId()));
+
+            // Prevent duplicate entries: a player may only have one live (non-rejected) registration per match.
+            boolean alreadyEntered = registrationRepository
+                    .findByPlayerIdAndMatchId(player.getId(), match.getId()).stream()
+                    .anyMatch(r -> r.getStatus() != RegistrationStatus.REJECTED);
+            if (alreadyEntered) {
+                throw ApiException.conflict("You have already registered for this match");
+            }
+
+            // Registration locks 3 hours before the scheduled start.
+            if (match.getScheduledAt() != null
+                    && Instant.now().isAfter(match.getScheduledAt().minus(Duration.ofHours(3)))) {
+                throw ApiException.badRequest(
+                        "Registration is closed — it locks 3 hours before match time");
+            }
+
             registration.setMatch(match);
+            // Derive the game from the linked match so the frontend needs no manual picker.
+            game = match.getGame();
         }
+        // Fall back to the explicit game hint (season / general calls with no match).
+        if (game == null && request.gameId() != null) {
+            game = gameRepository.findById(request.gameId())
+                    .orElseThrow(() -> ApiException.notFound("Game", request.gameId()));
+        }
+        registration.setGame(game);
 
         Registration saved = registrationRepository.save(registration);
 
@@ -486,6 +519,10 @@ public class RegistrationService {
         String matchId = registration.getMatch() != null
                 ? registration.getMatch().getId().toString() : null;
 
+        Game game = registration.getGame();
+        String gameId = game != null ? game.getId().toString() : null;
+        String gameName = game != null ? game.getName() : null;
+
         return new RegistrationView(
                 registration.getId().toString(),
                 registration.getType().name(),
@@ -498,6 +535,8 @@ public class RegistrationService {
                 registration.getReason(),
                 registration.getCreatedAt(),
                 matchId,
+                gameId,
+                gameName,
                 members,
                 acceptedCount);
     }

@@ -17,6 +17,9 @@ import java.util.List;
  * @param reviewedBy display name of the reviewing admin, or {@code null} if not yet reviewed
  * @param reason     rejection reason or approval note, nullable
  * @param createdAt  when the application was submitted
+ * @param matchId    the linked match id, when the registration was tied to a match, nullable
+ * @param gameId     the resolved game id (from the linked match, else the game hint), nullable
+ * @param gameName   the resolved game name, so the frontend can label the entry without a lookup, nullable
  * @param members    the squad roster (captain + invited players with their invite status); empty for
  *                   solo (PLAYER) registrations
  * @param acceptedCount number of confirmed members (captain + accepted invites), so admins can verify
@@ -34,6 +37,8 @@ public record RegistrationView(
         String reason,
         Instant createdAt,
         String matchId,
+        String gameId,
+        String gameName,
         List<MemberView> members,
         int acceptedCount
 ) {

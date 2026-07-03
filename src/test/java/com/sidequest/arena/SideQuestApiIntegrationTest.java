@@ -19,6 +19,8 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -215,10 +217,10 @@ class SideQuestApiIntegrationTest {
         String fA = franchises.get(0).get("id").asText();
         String fB = franchises.get(1).get("id").asText();
 
-        // schedule a match
+        // schedule a match (in the future — matches can no longer be scheduled in the past)
         ObjectNode create = mapper.createObjectNode();
         create.put("gameId", gameId);
-        create.put("scheduledAt", "2026-07-01T18:00:00Z");
+        create.put("scheduledAt", Instant.now().plus(Duration.ofDays(7)).toString());
         create.put("arena", "Test Arena");
         create.put("format", "Bo1");
         create.putArray("participantFranchiseIds").add(fA).add(fB);

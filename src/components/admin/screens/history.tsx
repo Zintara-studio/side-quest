@@ -9,6 +9,7 @@ import { StateNote } from "@/components/sidequest/state-note";
 import {
   useSeasons,
   useSeasonStandings,
+  useAllTimeStandings,
   useStartSeason,
   useFinishSeason,
   useMatches,
@@ -45,6 +46,11 @@ export function HistoryScreen() {
   const isAll = selected === ALL;
 
   const standingsQ = useSeasonStandings(isAll ? undefined : code || undefined);
+  const allTimeQ = useAllTimeStandings();
+  // When "All seasons" is picked, source the aggregated all-time standings
+  // (same SeasonStandingView shape); otherwise the frozen per-season standings.
+  const standingsRows = isAll ? (allTimeQ.data ?? []) : (standingsQ.data ?? []);
+  const standingsLoading = isAll ? allTimeQ.isLoading : standingsQ.isLoading;
   const matchesQ = useMatches({ limit: 50 });
   const matches = useMemo(() => {
     const all = matchesQ.data?.items ?? [];
@@ -215,14 +221,12 @@ export function HistoryScreen() {
         {/* season standings */}
         <div>
           <div style={{ fontFamily: FONT.mono, fontSize: 12, letterSpacing: ".2em", textTransform: "uppercase", marginBottom: 14 }}>
-            {isAll ? "Standings" : `${code} Standings`}
+            {isAll ? "All-time Standings" : `${code} Standings`}
           </div>
-          {isAll ? (
-            <StateNote>Pick a single season to see its franchise standings.</StateNote>
-          ) : standingsQ.isLoading ? (
+          {standingsLoading ? (
             <StateNote>Loading standings…</StateNote>
-          ) : (standingsQ.data ?? []).length === 0 ? (
-            <StateNote>No standings recorded for this season.</StateNote>
+          ) : standingsRows.length === 0 ? (
+            <StateNote>{isAll ? "No standings recorded yet." : "No standings recorded for this season."}</StateNote>
           ) : (
             <TableScroll minWidth={320}>
               <div style={{ display: "flex", padding: "12px 16px", borderBottom: `1px solid ${SQ.hairline}`, ...headCell }}>
@@ -230,7 +234,7 @@ export function HistoryScreen() {
                 <div style={{ flex: 1 }}>FRANCHISE</div>
                 <div style={{ width: 80, textAlign: "right" }}>POINTS</div>
               </div>
-              {(standingsQ.data ?? []).map((r) => (
+              {standingsRows.map((r) => (
                 <div
                   key={`${r.rank}-${r.franchiseId}-${r.tag}`}
                   style={{ display: "flex", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${SQ.hairlineSoft}` }}

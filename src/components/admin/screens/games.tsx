@@ -5,6 +5,7 @@ import { ScreenHeader } from "../screen-header";
 import { Toggle } from "../toggle";
 import { StateNote } from "@/components/sidequest/state-note";
 import { useGames, useUpdateGame, useCurrentSeason } from "@/lib/query/hooks";
+import type { GameType } from "@/lib/api/types";
 
 const statLabel = {
   fontFamily: FONT.mono,
@@ -18,6 +19,45 @@ const statValue = {
   fontSize: 12,
   marginTop: 3,
 } as const;
+
+const typeBadge = {
+  fontFamily: FONT.mono,
+  fontSize: 9.5,
+  letterSpacing: ".08em",
+  padding: "3px 7px",
+  borderRadius: 9,
+  whiteSpace: "nowrap",
+  flex: "0 0 auto",
+} as const;
+
+const typeSelect = {
+  marginTop: 4,
+  background: SQ.inset,
+  border: `1px solid ${SQ.inputBorder}`,
+  borderRadius: 5,
+  padding: "6px 8px",
+  fontFamily: FONT.mono,
+  fontSize: 11.5,
+  color: SQ.ink,
+} as const;
+
+/** Friendly genre labels shown in the type badge + the game-type <select>. */
+const GAME_TYPE_LABEL: Record<GameType, string> = {
+  BATTLE_ROYALE: "Battle Royale",
+  TACTICAL: "Tactical",
+  SPORTS: "Sports",
+  FIGHTING: "Fighting",
+  PARTY: "Party·FFA",
+};
+
+/** [text, border] badge colors per genre — mirrors the status-badge idiom in tokens.ts. */
+const GAME_TYPE_COLORS: Record<GameType, [string, string]> = {
+  BATTLE_ROYALE: [SQ.ember, "rgba(232,96,44,.45)"],
+  TACTICAL: [SQ.blue, "rgba(59,111,212,.45)"],
+  SPORTS: [SQ.green, "rgba(31,157,99,.45)"],
+  FIGHTING: [SQ.amber, "rgba(181,131,26,.5)"],
+  PARTY: [SQ.mute, SQ.inputBorder],
+};
 
 export function GamesScreen() {
   const { data, isLoading, isError } = useGames();
@@ -57,7 +97,9 @@ export function GamesScreen() {
             gap: 16,
           }}
         >
-          {games.map((g) => (
+          {games.map((g) => {
+            const [typeColor, typeBorder] = GAME_TYPE_COLORS[g.gameType];
+            return (
             <div
               key={g.id}
               style={{
@@ -68,9 +110,14 @@ export function GamesScreen() {
                 opacity: g.enabled ? 1 : 0.7,
               }}
             >
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div style={{ fontFamily: FONT.display, fontSize: 18, letterSpacing: "-.02em" }}>
-                  {g.name}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                  <div style={{ fontFamily: FONT.display, fontSize: 18, letterSpacing: "-.02em" }}>
+                    {g.name}
+                  </div>
+                  <span style={{ ...typeBadge, color: typeColor, border: `1px solid ${typeBorder}` }}>
+                    {GAME_TYPE_LABEL[g.gameType]}
+                  </span>
                 </div>
                 <Toggle
                   on={g.enabled}
@@ -98,8 +145,35 @@ export function GamesScreen() {
                   </div>
                 </div>
               </div>
+              <div style={{ marginTop: 14 }}>
+                <div style={statLabel}>GAME TYPE</div>
+                <select
+                  value={g.gameType}
+                  disabled={updateGame.isPending || seasonActive}
+                  onChange={(e) =>
+                    seasonActive
+                      ? undefined
+                      : updateGame.mutate({
+                          id: g.id,
+                          body: { gameType: e.target.value as GameType },
+                        })
+                  }
+                  style={{
+                    ...typeSelect,
+                    cursor: updateGame.isPending || seasonActive ? "default" : "pointer",
+                    opacity: updateGame.isPending || seasonActive ? 0.5 : 1,
+                  }}
+                >
+                  {(Object.keys(GAME_TYPE_LABEL) as GameType[]).map((t) => (
+                    <option key={t} value={t}>
+                      {GAME_TYPE_LABEL[t]}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

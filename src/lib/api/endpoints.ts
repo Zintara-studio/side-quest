@@ -2,9 +2,14 @@
 // All paths are relative to the /v1 context-path baked into `api`'s baseURL.
 import { api } from "@/lib/api/client";
 import type {
+  AddFundsRequest,
   AnnouncementView,
   ApplyRequest,
+  AssignRequest,
+  AuctionView,
   AuthResponse,
+  CreateAuctionRequest,
+  PlaceBidRequest,
   CreateAnnouncementRequest,
   CreateDisputeRequest,
   CreateFranchiseRequest,
@@ -13,7 +18,10 @@ import type {
   EligiblePlayer,
   EnterResultsRequest,
   FranchiseDetail,
+  FranchiseInviteRequest,
+  FranchiseInviteView,
   FranchiseMatchView,
+  FranchiseMineView,
   FranchiseSummary,
   GameDetail,
   GameRankRow,
@@ -23,6 +31,7 @@ import type {
   InviteView,
   LoginRequest,
   MatchDetail,
+  MatchLineupView,
   MatchPlayerView,
   MatchRoundView,
   MatchSummary,
@@ -142,6 +151,18 @@ export const franchisesApi = {
     api.post<FranchiseDetail>(`/franchises/${id}/discard`).then((r) => r.data),
   eligibleOwners: (id: string) =>
     api.get<EligiblePlayer[]>(`/franchises/${id}/eligible-owners`).then((r) => r.data),
+  mine: () =>
+    api.get<FranchiseMineView | null>("/franchises/mine").then((r) => r.data ?? null),
+  myInvites: () =>
+    api.get<FranchiseInviteView[]>("/franchises/invites/mine").then((r) => r.data),
+  pendingInvites: (id: string) =>
+    api.get<FranchiseInviteView[]>(`/franchises/${id}/invites`).then((r) => r.data),
+  createInvite: (id: string, body: FranchiseInviteRequest) =>
+    api.post<FranchiseInviteView>(`/franchises/${id}/invites`, body).then((r) => r.data),
+  acceptInvite: (inviteId: string) =>
+    api.post<FranchiseInviteView>(`/franchises/invites/${inviteId}/accept`).then((r) => r.data),
+  rejectInvite: (inviteId: string) =>
+    api.post<FranchiseInviteView>(`/franchises/invites/${inviteId}/reject`).then((r) => r.data),
   createFromProposal: (registrationId: string) =>
     api
       .post<FranchiseDetail>(`/franchises/from-proposal/${registrationId}`)
@@ -171,6 +192,12 @@ export const matchesApi = {
     api.get<MatchRoundView[]>(`/matches/${id}/rounds`).then((r) => r.data),
   players: (id: string) =>
     api.get<MatchPlayerView[]>(`/matches/${id}/players`).then((r) => r.data),
+  lineups: (id: string) =>
+    api.get<MatchLineupView[]>(`/matches/${id}/lineups`).then((r) => r.data),
+  setLineup: (id: string, franchiseId: string, playerIds: string[]) =>
+    api
+      .put<MatchLineupView>(`/matches/${id}/lineups/${franchiseId}`, { playerIds })
+      .then((r) => r.data),
   enterResults: (id: string, body: EnterResultsRequest) =>
     api.post<ResultView[]>(`/matches/${id}/results`, body).then((r) => r.data),
   enterRounds: (id: string, body: EnterRoundsRequest) =>
@@ -228,6 +255,8 @@ export const registrationsApi = {
   myInvites: () => api.get<InviteView[]>("/registrations/invites/mine").then((r) => r.data),
   invite: (id: string, body: InviteRequest) =>
     api.post<RegistrationView>(`/registrations/${id}/invite`, body).then((r) => r.data),
+  submit: (id: string) =>
+    api.post<RegistrationView>(`/registrations/${id}/submit`).then((r) => r.data),
   acceptInvite: (inviteId: string) =>
     api.post<InviteView>(`/registrations/invites/${inviteId}/accept`).then((r) => r.data),
   rejectInvite: (inviteId: string) =>
@@ -281,4 +310,27 @@ export const notificationsApi = {
   markRead: (id: string) =>
     api.post<NotificationView>(`/notifications/${id}/read`).then((r) => r.data),
   markAllRead: () => api.post<void>("/notifications/read-all").then((r) => r.data),
+};
+
+export const auctionsApi = {
+  active: () => api.get<AuctionView | null>("/auctions/active").then((r) => r.data ?? null),
+  get: (id: string) => api.get<AuctionView>(`/auctions/${id}`).then((r) => r.data),
+  create: (body: CreateAuctionRequest) =>
+    api.post<AuctionView>("/auctions", body).then((r) => r.data),
+  start: (id: string) => api.post<AuctionView>(`/auctions/${id}/start`).then((r) => r.data),
+  pause: (id: string) => api.post<AuctionView>(`/auctions/${id}/pause`).then((r) => r.data),
+  resume: (id: string) => api.post<AuctionView>(`/auctions/${id}/resume`).then((r) => r.data),
+  finalize: (id: string) => api.post<AuctionView>(`/auctions/${id}/finalize`).then((r) => r.data),
+  unsold: (id: string) => api.post<AuctionView>(`/auctions/${id}/unsold`).then((r) => r.data),
+  complete: (id: string) => api.post<AuctionView>(`/auctions/${id}/complete`).then((r) => r.data),
+  nominate: (id: string, lotId: string) =>
+    api.post<AuctionView>(`/auctions/${id}/nominate`, { lotId }).then((r) => r.data),
+  assign: (id: string, body: AssignRequest) =>
+    api.post<AuctionView>(`/auctions/${id}/assign`, body).then((r) => r.data),
+  reauction: (id: string, lotId: string) =>
+    api.post<AuctionView>(`/auctions/${id}/reauction`, { lotId }).then((r) => r.data),
+  funds: (id: string, body: AddFundsRequest) =>
+    api.post<AuctionView>(`/auctions/${id}/funds`, body).then((r) => r.data),
+  bid: (id: string, body: PlaceBidRequest) =>
+    api.post<AuctionView>(`/auctions/${id}/bid`, body).then((r) => r.data),
 };

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { SQ, FONT } from "../tokens";
 import { StateNote } from "../state-note";
@@ -10,6 +10,8 @@ import {
   useMyInvites,
   useInviteTeammate,
   useRespondInvite,
+  useSubmitSquad,
+  usePlayers,
 } from "@/lib/query/hooks";
 import { apiErrorMessage } from "@/lib/api/client";
 import { shortDate } from "@/lib/adapters/league";
@@ -190,21 +192,44 @@ export function MyRegistrationsScreen() {
 
 function RegistrationCard({ r }: { r: RegistrationView }) {
   const invite = useInviteTeammate();
+  const submit = useSubmitSquad();
+  const playersQ = usePlayers({ limit: 100 });
   const [tag, setTag] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const isSquad = r.type === "SQUAD";
-  const canInvite = isSquad && r.status === "PENDING";
+  const isForming = r.status === "FORMING";
+  // Invites are only allowed while the squad is still assembling (FORMING). Once submitted for
+  // approval the roster is locked, so the invite UI disappears.
+  const canInvite = isSquad && isForming;
 
-  const sendInvite = async () => {
+  // Live candidate list, mirroring the picker on the register screen: match players by gamer-tag
+  // substring and drop anyone already on the roster (the captain + everyone already invited).
+  const candidates = useMemo(() => {
+    const q = tag.trim().toLowerCase();
+    if (!q) return [];
+    const takenIds = new Set(r.members.map((m) => m.playerId));
+    const takenTags = new Set(r.members.map((m) => m.gamerTag.toLowerCase()));
+    return (playersQ.data?.items ?? [])
+      .filter((p) => p.gamerTag.toLowerCase().includes(q))
+      .filter((p) => !takenIds.has(p.id) && !takenTags.has(p.gamerTag.toLowerCase()))
+      .slice(0, 5);
+  }, [tag, playersQ.data, r.members]);
+
+  const sendInvite = async (gamerTag: string) => {
     setErr(null);
-    if (!tag.trim()) return;
+    const gt = gamerTag.trim();
+    if (!gt) return;
     try {
-      await invite.mutateAsync({ id: r.id, body: { gamerTag: tag.trim() } });
+      await invite.mutateAsync({ id: r.id, body: { gamerTag: gt } });
       setTag("");
     } catch (e) {
       setErr(apiErrorMessage(e, "Couldn't send the invite."));
     }
   };
+
+  const submitErr = submit.isError
+    ? apiErrorMessage(submit.error, "Couldn't submit the squad for approval.")
+    : null;
 
   return (
     <div style={{ background: SQ.panel, border: `1px solid ${SQ.hairline}`, borderRadius: 9, padding: 18 }}>
@@ -217,9 +242,26 @@ function RegistrationCard({ r }: { r: RegistrationView }) {
             {r.type} · {shortDate(r.createdAt)}
           </div>
         </div>
-        <span style={{ fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".1em", color: statusColor(r.status) }}>
-          {r.status}
-        </span>
+        {isForming ? (
+          <span
+            style={{
+              fontFamily: FONT.mono,
+              fontSize: 9.5,
+              letterSpacing: ".12em",
+              color: SQ.amber,
+              border: `1px solid ${SQ.amber}`,
+              borderRadius: 999,
+              padding: "4px 10px",
+              whiteSpace: "nowrap",
+            }}
+          >
+            ● FORMING
+          </span>
+        ) : (
+          <span style={{ fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".1em", color: statusColor(r.status) }}>
+            {r.status}
+          </span>
+        )}
       </div>
 
       {(() => {
@@ -246,7 +288,7 @@ function RegistrationCard({ r }: { r: RegistrationView }) {
           <div style={{ fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".1em", color: SQ.label, marginBottom: 8 }}>
             ROSTER · {r.acceptedCount} CONFIRMED
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: canInvite ? 14 : 0 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 0 }}>
             {r.members.map((m) => (
               <div key={m.playerId} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5 }}>
                 <span style={{ flex: 1, fontWeight: m.isCaptain ? 700 : 500 }}>
@@ -263,12 +305,15 @@ function RegistrationCard({ r }: { r: RegistrationView }) {
           </div>
 
           {canInvite ? (
-            <div>
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".1em", color: SQ.label, marginBottom: 8 }}>
+                INVITE TEAMMATES
+              </div>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                 <input
                   value={tag}
                   onChange={(e) => setTag(e.target.value)}
-                  placeholder="Invite by gamer tag (e.g. Vortex)"
+                  placeholder="Search players to invite (e.g. Vortex)"
                   style={{
                     flex: 1,
                     minWidth: 200,
@@ -284,18 +329,89 @@ function RegistrationCard({ r }: { r: RegistrationView }) {
                 <button
                   type="button"
                   disabled={invite.isPending || !tag.trim()}
-                  onClick={sendInvite}
+                  onClick={() => sendInvite(tag)}
                   style={actionBtn(SQ.red, SQ.sidebar, false, invite.isPending || !tag.trim())}
                 >
                   {invite.isPending ? "Inviting…" : "Invite ▸"}
                 </button>
               </div>
+
+              {/* live candidate results — click a row to invite that player */}
+              {candidates.length > 0 ? (
+                <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+                  {candidates.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      disabled={invite.isPending}
+                      onClick={() => sendInvite(p.gamerTag)}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        padding: "10px 12px",
+                        borderRadius: 5,
+                        border: `1px solid ${SQ.inputBorder}`,
+                        background: "transparent",
+                        color: SQ.ink,
+                        cursor: invite.isPending ? "not-allowed" : "pointer",
+                        fontSize: 13.5,
+                        opacity: invite.isPending ? 0.6 : 1,
+                      }}
+                    >
+                      <span>{p.gamerTag}</span>
+                      <span style={{ fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".1em", color: SQ.ember }}>
+                        + INVITE
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : tag.trim() && !playersQ.isLoading ? (
+                <div style={{ fontFamily: FONT.mono, fontSize: 11, color: SQ.mute, marginTop: 8 }}>
+                  No players match &ldquo;{tag.trim()}&rdquo; — you can still invite that exact tag above.
+                </div>
+              ) : null}
+
               {err ? (
                 <div style={{ fontFamily: FONT.mono, fontSize: 11.5, color: SQ.ember, marginTop: 8 }}>{err}</div>
               ) : null}
               <div style={{ fontSize: 11.5, color: SQ.mute, marginTop: 8 }}>
                 If someone declines, just invite a different player here.
               </div>
+            </div>
+          ) : null}
+
+          {isForming ? (
+            <div style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${SQ.hairline}` }}>
+              <div style={{ fontSize: 12.5, color: SQ.mute, marginBottom: 10, lineHeight: 1.5 }}>
+                Invite your teammates, then submit for approval. Submitting locks the roster and sends it to the
+                league admins.
+              </div>
+              <button
+                type="button"
+                disabled={submit.isPending}
+                onClick={() => submit.mutate(r.id)}
+                style={{
+                  width: "100%",
+                  fontFamily: FONT.mono,
+                  fontSize: 11.5,
+                  letterSpacing: ".14em",
+                  textTransform: "uppercase",
+                  fontWeight: 700,
+                  color: SQ.sidebar,
+                  background: SQ.red,
+                  padding: "13px 16px",
+                  borderRadius: 5,
+                  border: "none",
+                  cursor: submit.isPending ? "not-allowed" : "pointer",
+                  opacity: submit.isPending ? 0.6 : 1,
+                }}
+              >
+                {submit.isPending ? "Submitting…" : "Submit squad for approval ▸"}
+              </button>
+              {submitErr ? (
+                <div style={{ fontFamily: FONT.mono, fontSize: 11.5, color: SQ.ember, marginTop: 8 }}>{submitErr}</div>
+              ) : null}
             </div>
           ) : null}
         </>

@@ -1,11 +1,14 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { SQ, FONT, rankAccent } from "../tokens";
 import { LeagueTitle } from "../league-title";
 import { StateNote } from "../state-note";
-import { useMatch, useMatchLeaderboard, useMatchRounds, useMatches } from "@/lib/query/hooks";
+import { useMatch, useMatchLeaderboard, useMatchRounds, useMatches, useSeasons } from "@/lib/query/hooks";
 import { shortDate } from "@/lib/adapters/league";
+
+const ALL = "__all__";
 
 const headCell = {
   fontFamily: FONT.mono,
@@ -31,8 +34,19 @@ function matchStatusTone(status: string): { color: string; border: string; live:
 
 /** History route (/match with no id): the full match archive, newest first. */
 function MatchHistory({ base }: { base: string }) {
+  const seasonsQ = useSeasons();
+  const seasons = seasonsQ.data ?? [];
+  const current = seasons.find((s) => s.current);
+  const [selected, setSelected] = useState<string>("");
+  const code = selected || current?.code || seasons[0]?.code || "";
+  const isAll = selected === ALL;
+
   const mq = useMatches({ limit: 100 });
-  const matches = [...(mq.data?.items ?? [])].sort((a, b) => ts(b.scheduledAt) - ts(a.scheduledAt));
+  // The matches API has no seasonId param, so filter client-side. Default view
+  // is the current season; "All seasons" shows the full archive.
+  const matches = [...(mq.data?.items ?? [])]
+    .filter((m) => isAll || m.seasonId === code)
+    .sort((a, b) => ts(b.scheduledAt) - ts(a.scheduledAt));
   const finals = matches.filter((m) => (m.status ?? "").toUpperCase() === "COMPLETED").length;
 
   return (
@@ -54,13 +68,64 @@ function MatchHistory({ base }: { base: string }) {
         <div style={{ fontFamily: FONT.mono, fontSize: 12, letterSpacing: ".1em", color: SQ.mute }}>
           {matches.length} MATCHES · {finals} COMPLETED
         </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {seasons.map((s) => {
+            const active = !isAll && code === s.code;
+            return (
+              <button
+                key={s.code}
+                type="button"
+                onClick={() => setSelected(s.code)}
+                style={{
+                  fontFamily: FONT.mono,
+                  fontSize: 11,
+                  letterSpacing: ".1em",
+                  padding: "8px 14px",
+                  borderRadius: 5,
+                  background: active ? SQ.red : "transparent",
+                  color: active ? SQ.league : SQ.faint,
+                  border: active ? "none" : `1px solid ${SQ.inputBorder}`,
+                  fontWeight: active ? 600 : 400,
+                  cursor: "pointer",
+                }}
+              >
+                {s.code}
+                {s.current ? " ·" : ""}
+              </button>
+            );
+          })}
+          <button
+            key={ALL}
+            type="button"
+            onClick={() => setSelected(ALL)}
+            style={{
+              fontFamily: FONT.mono,
+              fontSize: 11,
+              letterSpacing: ".1em",
+              padding: "8px 14px",
+              borderRadius: 5,
+              background: isAll ? SQ.red : "transparent",
+              color: isAll ? SQ.league : SQ.faint,
+              border: isAll ? "none" : `1px solid ${SQ.inputBorder}`,
+              fontWeight: isAll ? 600 : 400,
+              cursor: "pointer",
+            }}
+          >
+            All seasons
+          </button>
+        </div>
       </div>
 
-      {mq.isLoading ? (
+      {mq.isLoading || seasonsQ.isLoading ? (
+        // Wait for seasons too, so `code` is settled before filtering (avoids a wrong-season flash).
         <StateNote>Loading matches…</StateNote>
       ) : matches.length === 0 ? (
         <StateNote tone={mq.isError ? "error" : "muted"}>
-          {mq.isError ? "Couldn't reach the league API." : "No matches yet."}
+          {mq.isError
+            ? "Couldn't reach the league API."
+            : isAll
+              ? "No matches yet."
+              : "No matches recorded for this season."}
         </StateNote>
       ) : (
         <div style={{ overflowX: "auto", border: `1px solid ${SQ.hairline}`, borderRadius: 8 }}>

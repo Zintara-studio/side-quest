@@ -134,7 +134,10 @@ export function DisputesScreen() {
                   >
                     {d.category}
                   </span>
-                  <span style={{ fontFamily: FONT.mono, fontSize: 11, color: SQ.mute }}>
+                  <span style={{ fontFamily: FONT.mono, fontSize: 11, letterSpacing: ".08em", color: SQ.mute }}>
+                    RAISED BY{" "}
+                    <span style={{ color: SQ.ink }}>{d.raisedByGamerTag || d.raisedByName || "—"}</span>
+                    {" · "}
                     {shortDate(d.createdAt)}
                   </span>
                   {d.matchTitle ? (

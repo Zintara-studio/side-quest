@@ -26,6 +26,7 @@ function activeKey(pathname: string): string {
   if (pathname.startsWith("/player")) return "players"; // players + player
   if (pathname.startsWith("/match")) return "match";
   if (pathname.startsWith("/announcements")) return "announcements";
+  if (pathname.startsWith("/my/franchise")) return "myFranchise"; // must precede the generic /my check
   if (pathname.startsWith("/my")) return "my";
   return "home";
 }
@@ -172,6 +173,24 @@ export function LeagueShell({
               }}
             >
               My Team
+            </Link>
+          ) : null}
+          {isAuthenticated && user && user.role !== "ADMIN" ? (
+            <Link
+              href="/my/franchise"
+              style={{
+                fontFamily: FONT.mono,
+                fontSize: 11.5,
+                letterSpacing: ".16em",
+                textTransform: "uppercase",
+                color: cur === "myFranchise" ? SQ.ink : SQ.mute,
+                textDecoration: "none",
+                paddingBottom: 4,
+                borderBottom: `2px solid ${cur === "myFranchise" ? SQ.red : "transparent"}`,
+                whiteSpace: "nowrap",
+              }}
+            >
+              My Franchise
             </Link>
           ) : null}
         </div>

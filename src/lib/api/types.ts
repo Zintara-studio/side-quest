@@ -63,6 +63,9 @@ export interface MeResponse {
 
 // ---- games -----------------------------------------------------------------
 
+/** Genre classification driving type-appropriate result entry + default scoring. */
+export type GameType = "BATTLE_ROYALE" | "TACTICAL" | "SPORTS" | "FIGHTING" | "PARTY";
+
 export interface GameSummary {
   id: string;
   name: string;
@@ -70,6 +73,7 @@ export interface GameSummary {
   iconUrl?: string;
   enabled: boolean;
   popularity: number;
+  gameType: GameType;
 }
 
 export interface GameMatchView {
@@ -87,6 +91,7 @@ export interface UpdateGameRequest {
   enabled?: boolean;
   format?: string;
   popularity?: number;
+  gameType?: GameType;
 }
 
 // ---- players ---------------------------------------------------------------
@@ -173,6 +178,34 @@ export interface FranchiseDetail {
   matchesPlayed: number;
 }
 
+export type FranchiseRole = "OWNER" | "MANAGER";
+
+/** The franchise the current user owns/manages/plays for, plus their role. Null body when none. */
+export interface FranchiseMineView {
+  franchise: FranchiseDetail;
+  myRole: "OWNER" | "MANAGER" | "IGL" | "PLAYER";
+}
+
+export interface FranchiseInviteRequest {
+  gamerTag?: string;
+  playerId?: string;
+  role: FranchiseRole;
+  message?: string;
+}
+
+export interface FranchiseInviteView {
+  id: string;
+  franchiseId: string;
+  franchiseName: string;
+  franchiseTag: string;
+  role: string; // OWNER | MANAGER
+  invitedByGamerTag?: string;
+  invitedPlayerGamerTag?: string;
+  status: string; // PENDING | ACCEPTED | REJECTED
+  message?: string;
+  createdAt: string;
+}
+
 export interface UpdateFranchiseRequest {
   name?: string;
   tag?: string;
@@ -217,6 +250,7 @@ export interface EligiblePlayer {
 export interface GameMini {
   id: string;
   name: string;
+  gameType?: GameType;
 }
 
 export interface ParticipantView {
@@ -245,6 +279,18 @@ export interface MatchPlayerView {
   franchiseId?: string;
   franchiseTag?: string;
   squadName?: string;
+}
+
+/** A franchise's fielded lineup for a match (empty `lineup` = no lineup set → full-roster fallback). */
+export interface MatchLineupView {
+  franchiseId: string;
+  franchiseTag: string;
+  franchiseName: string;
+  lineup: MatchPlayerView[];
+}
+
+export interface SetLineupRequest {
+  playerIds: string[];
 }
 
 export interface MatchDetail {
@@ -411,7 +457,14 @@ export interface CreateAnnouncementRequest {
 
 // ---- registrations ---------------------------------------------------------
 
-export type RegistrationType = "PLAYER" | "SQUAD" | "FRANCHISE";
+export type RegistrationType = "PLAYER" | "SQUAD" | "FRANCHISE" | "AUCTION";
+
+/** One game's expertise line in an exhaustive auction self-registration. rating is 0-100. */
+export interface ProficiencyEntry {
+  gameId: string;
+  rating: number;
+  handle?: string;
+}
 
 export interface ApplyRequest {
   type: RegistrationType;
@@ -421,6 +474,10 @@ export interface ApplyRequest {
   matchId?: string;
   /** Only needed for match-less / general sign-ups; match-tied calls derive the game from the match. */
   gameId?: string;
+  /** AUCTION registrations: per-game expertise (upserts the player's proficiency + in-game handle). */
+  proficiencies?: ProficiencyEntry[];
+  /** AUCTION registrations: a free-form note shown to admins. */
+  note?: string;
 }
 
 export type InviteStatus = "PENDING" | "ACCEPTED" | "REJECTED";
@@ -520,6 +577,10 @@ export interface DisputeView {
   status: string;
   resolution?: string;
   createdAt: string;
+  /** Display name of the user who raised the dispute; null if unknown. */
+  raisedByName?: string;
+  /** Gamer tag of the raiser's player profile; null if the raiser has no player. */
+  raisedByGamerTag?: string;
 }
 
 /**
@@ -585,4 +646,89 @@ export interface NotificationView {
 
 export interface UnreadCountResponse {
   count: number;
+}
+
+// ---- auction ---------------------------------------------------------------
+
+export type AuctionStatus = "DRAFT" | "LIVE" | "PAUSED" | "COMPLETED";
+export type AuctionLotStatus = "QUEUED" | "ON_BLOCK" | "SOLD" | "UNSOLD";
+
+export interface AuctionLotView {
+  id: string;
+  playerId: string;
+  gamerTag: string;
+  status: AuctionLotStatus;
+  currentBid: number;
+  /** The exact minimum the next bid must meet (basePrice, or currentBid + smallest increment). */
+  minNextBid: number;
+  currentBidderFranchiseId?: string;
+  currentBidderTag?: string;
+  soldToFranchiseId?: string;
+  soldToTag?: string;
+  soldPrice: number;
+  /** When the current bid timer expires (server-authoritative). */
+  bidDeadline?: string;
+  lotOrder: number;
+}
+
+export interface AuctionFranchiseView {
+  franchiseId: string;
+  name: string;
+  tag: string;
+  budget: number;
+  balance: number;
+  acquiredCount: number;
+}
+
+export interface AuctionBidView {
+  lotId: string;
+  playerGamerTag: string;
+  franchiseTag: string;
+  amount: number;
+  at: string;
+}
+
+export interface AuctionView {
+  id: string;
+  title: string;
+  seasonId?: string;
+  status: AuctionStatus;
+  basePrice: number;
+  bidTimerSeconds: number;
+  antiSnipeSeconds: number;
+  raiseIncrements: number[];
+  /** Authoritative server clock — reconcile the countdown against this each poll. */
+  serverTime: string;
+  currentLot: AuctionLotView | null;
+  franchises: AuctionFranchiseView[];
+  lots: AuctionLotView[];
+  recentBids: AuctionBidView[];
+}
+
+export interface CreateAuctionRequest {
+  title: string;
+  seasonId?: string;
+  basePrice: number;
+  bidTimerSeconds: number;
+  antiSnipeSeconds?: number;
+  raiseIncrements: number[];
+  defaultBudget: number;
+  participantFranchiseIds: string[];
+  playerIds?: string[];
+}
+
+export interface PlaceBidRequest {
+  lotId: string;
+  amount: number;
+}
+
+export interface AssignRequest {
+  lotId: string;
+  franchiseId: string;
+  price: number;
+}
+
+export interface AddFundsRequest {
+  franchiseId: string;
+  amount: number;
 }

@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   adminApi,
   announcementsApi,
+  auctionsApi,
   disputesApi,
   franchisesApi,
   gamesApi,
@@ -25,9 +26,15 @@ import type {
   CreateDisputeRequest,
   CreateFranchiseRequest,
   CreateMatchRequest,
+  AddFundsRequest,
+  AssignRequest,
+  AuctionView,
+  CreateAuctionRequest,
   EnterResultsRequest,
   EnterRoundsRequest,
+  FranchiseInviteRequest,
   InviteRequest,
+  PlaceBidRequest,
   ResolveDisputeRequest,
   StartSeasonRequest,
   UpdateFranchiseRequest,
@@ -191,6 +198,78 @@ export const useSetFranchiseManager = () => {
   });
 };
 
+/** The franchise the current user owns/manages/plays for (+ their role), or null. */
+export const useMyFranchise = (enabled = true) =>
+  useQuery({
+    queryKey: ["franchises", "mine"],
+    queryFn: () => franchisesApi.mine(),
+    enabled,
+  });
+
+/** Owner/manager offers addressed to the current user (franchise leadership invites). */
+export const useMyFranchiseInvites = (enabled = true) =>
+  useQuery({
+    queryKey: ["franchise-invites", "mine"],
+    queryFn: () => franchisesApi.myInvites(),
+    enabled,
+  });
+
+/** A franchise's outstanding (PENDING) owner/manager invites (owner/admin only). */
+export const useFranchisePendingInvites = (franchiseId?: string) =>
+  useQuery({
+    queryKey: ["franchises", franchiseId ?? "", "invites"],
+    queryFn: () => franchisesApi.pendingInvites(franchiseId!),
+    enabled: !!franchiseId,
+  });
+
+/** Owner (or admin) invites a user to become the franchise OWNER (transfer) or MANAGER. */
+export const useCreateFranchiseInvite = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: FranchiseInviteRequest }) =>
+      franchisesApi.createInvite(id, body),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ["franchises", v.id, "invites"] });
+      qc.invalidateQueries({ queryKey: ["franchise-invites"] });
+    },
+  });
+};
+
+/** The invitee accepts/declines a franchise owner/manager invite. */
+export const useRespondFranchiseInvite = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ inviteId, accept }: { inviteId: string; accept: boolean }) =>
+      accept ? franchisesApi.acceptInvite(inviteId) : franchisesApi.rejectInvite(inviteId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["franchise-invites"] });
+      qc.invalidateQueries({ queryKey: ["franchises"] });
+      qc.invalidateQueries({ queryKey: ["notifications"] });
+    },
+  });
+};
+
+/** A match's per-franchise fielded lineups. */
+export const useMatchLineups = (matchId?: string) =>
+  useQuery({
+    queryKey: ["matches", matchId ?? "", "lineups"],
+    queryFn: () => matchesApi.lineups(matchId!),
+    enabled: !!matchId,
+  });
+
+/** Owner/manager (or admin) sets a franchise's fielded lineup for a match. */
+export const useSetLineup = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, franchiseId, playerIds }: { id: string; franchiseId: string; playerIds: string[] }) =>
+      matchesApi.setLineup(id, franchiseId, playerIds),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ["matches", v.id, "lineups"] });
+      qc.invalidateQueries({ queryKey: ["matches", v.id, "players"] });
+    },
+  });
+};
+
 /** Verified players eligible to fill this franchise's owner/manager slot. */
 export const useEligibleOwners = (franchiseId?: string) =>
   useQuery({
@@ -349,6 +428,15 @@ export const useInviteTeammate = () => {
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: InviteRequest }) =>
       registrationsApi.invite(id, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["registrations"] }),
+  });
+};
+
+/** Captain submits a formed squad for admin review (FORMING → PENDING). */
+export const useSubmitSquad = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => registrationsApi.submit(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["registrations"] }),
   });
 };
@@ -534,5 +622,104 @@ export const useMarkAllNotificationsRead = () => {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["notifications"] });
     },
+  });
+};
+
+// ---- auction ---------------------------------------------------------------
+
+const applyAuction = (qc: ReturnType<typeof useQueryClient>, view: AuctionView) => {
+  qc.setQueryData(["auctions", view.id], view);
+  qc.invalidateQueries({ queryKey: ["auctions", "active"] });
+  // SOLD lots attach players to franchises + change balances.
+  qc.invalidateQueries({ queryKey: ["franchises"] });
+  qc.invalidateQueries({ queryKey: ["players"] });
+};
+
+/** The current DRAFT/LIVE/PAUSED auction (or null). Light poll so nav/CTA notice a live auction. */
+export const useActiveAuction = (enabled = true) =>
+  useQuery({
+    queryKey: ["auctions", "active"],
+    queryFn: () => auctionsApi.active(),
+    enabled,
+    refetchInterval: enabled ? 5_000 : false,
+  });
+
+/**
+ * The live auction board. Polls fast (1.5s) while LIVE, keeps a slower poll (4s) for non-terminal
+ * states (DRAFT/PAUSED) so the board notices a Start/Resume, and stops only at COMPLETED. Must NOT
+ * stop on PAUSED — otherwise a watcher's board freezes and never sees the auction resume.
+ */
+export const useAuction = (id: string | undefined) =>
+  useQuery({
+    queryKey: ["auctions", id ?? ""],
+    queryFn: () => auctionsApi.get(id!),
+    enabled: !!id,
+    refetchInterval: (q) => {
+      const s = q.state.data?.status;
+      if (s === "COMPLETED") return false;
+      return s === "LIVE" ? 1_500 : 4_000;
+    },
+    refetchIntervalInBackground: true,
+  });
+
+export const useCreateAuction = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateAuctionRequest) => auctionsApi.create(body),
+    onSuccess: (v) => applyAuction(qc, v),
+  });
+};
+
+/** Shared factory for the id-only auction admin actions (start/pause/resume/finalize/unsold/complete). */
+function useAuctionAction(fn: (id: string) => Promise<AuctionView>) {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (id: string) => fn(id), onSuccess: (v) => applyAuction(qc, v) });
+}
+
+export const useStartAuction = () => useAuctionAction(auctionsApi.start);
+export const usePauseAuction = () => useAuctionAction(auctionsApi.pause);
+export const useResumeAuction = () => useAuctionAction(auctionsApi.resume);
+export const useFinalizeLot = () => useAuctionAction(auctionsApi.finalize);
+export const useUnsoldLot = () => useAuctionAction(auctionsApi.unsold);
+export const useCompleteAuction = () => useAuctionAction(auctionsApi.complete);
+
+export const useNominateLot = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, lotId }: { id: string; lotId: string }) => auctionsApi.nominate(id, lotId),
+    onSuccess: (v) => applyAuction(qc, v),
+  });
+};
+
+export const useReauctionLot = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, lotId }: { id: string; lotId: string }) => auctionsApi.reauction(id, lotId),
+    onSuccess: (v) => applyAuction(qc, v),
+  });
+};
+
+export const useAssignLot = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: AssignRequest }) => auctionsApi.assign(id, body),
+    onSuccess: (v) => applyAuction(qc, v),
+  });
+};
+
+export const useAddAuctionFunds = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: AddFundsRequest }) => auctionsApi.funds(id, body),
+    onSuccess: (v) => applyAuction(qc, v),
+  });
+};
+
+/** Franchise owner/manager places a raise bid on the on-block lot. */
+export const usePlaceBid = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: PlaceBidRequest }) => auctionsApi.bid(id, body),
+    onSuccess: (v) => applyAuction(qc, v),
   });
 };

@@ -7,7 +7,10 @@ import { ScreenHeader } from "../screen-header";
 import { TableScroll } from "../table-scroll";
 import { StateNote } from "@/components/sidequest/state-note";
 import { SearchableSelect } from "@/components/sidequest/searchable-select";
-import { useMatches, useGames, useFranchises, useCreateMatch } from "@/lib/query/hooks";
+import { useMatches, useGames, useFranchises, useCreateMatch, useMatchLineups } from "@/lib/query/hooks";
+import { Modal } from "@/components/sidequest/modal";
+import { LineupEditor } from "@/components/sidequest/lineup-editor";
+import type { MatchSummary } from "@/lib/api/types";
 import { shortDate } from "@/lib/adapters/league";
 
 // datetime-local wants a local "YYYY-MM-DDTHH:mm" string (not a UTC ISO string).
@@ -224,6 +227,104 @@ function CreateMatchPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
+// Admin lineup control: lists a FRANCHISE match's participating franchises (with their current
+// fielded-lineup count) and opens the shared LineupEditor for one at a time. Admins have no
+// owner/manager restriction — the backend authorizes admins for any franchise's lineup.
+function LineupsModal({ match, onClose }: { match: MatchSummary; onClose: () => void }) {
+  const lineupsQ = useMatchLineups(match.id);
+  const [editorFranchiseId, setEditorFranchiseId] = useState<string | null>(null);
+  const franchises = lineupsQ.data ?? [];
+  const editor = franchises.find((f) => f.franchiseId === editorFranchiseId) ?? null;
+  const title = match.participantTags.length
+    ? match.participantTags.join(" vs ")
+    : match.game?.name ?? "Match";
+
+  return (
+    <>
+      <Modal open title={`Lineups · ${title}`} onClose={onClose}>
+        <div style={{ fontSize: 12.5, color: SQ.mute, lineHeight: 1.5, marginBottom: 14 }}>
+          Set which roster players each franchise is fielding for this fixture. Empty = the whole
+          roster plays.
+        </div>
+
+        {lineupsQ.isLoading ? (
+          <StateNote>Loading lineups…</StateNote>
+        ) : lineupsQ.isError ? (
+          <StateNote tone="error">Couldn't load lineups (admin sign-in required).</StateNote>
+        ) : franchises.length === 0 ? (
+          <StateNote tone="muted">No participating franchises to field.</StateNote>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {franchises.map((f) => {
+              const count = f.lineup.length;
+              return (
+                <div
+                  key={f.franchiseId}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    padding: "10px 12px",
+                    border: `1px solid ${SQ.hairline}`,
+                    borderRadius: 7,
+                    background: SQ.inset,
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, letterSpacing: ".04em", color: SQ.ink }}>
+                      {f.franchiseTag}
+                    </span>
+                    <div style={{ fontSize: 12, color: SQ.mute, marginTop: 2 }}>{f.franchiseName}</div>
+                  </div>
+                  <span
+                    style={{
+                      fontFamily: FONT.mono,
+                      fontSize: 10.5,
+                      letterSpacing: ".08em",
+                      color: count ? SQ.faint : SQ.mute,
+                    }}
+                  >
+                    {count ? `${count} selected` : "full roster"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setEditorFranchiseId(f.franchiseId)}
+                    style={{
+                      fontFamily: FONT.mono,
+                      fontSize: 10,
+                      letterSpacing: ".12em",
+                      textTransform: "uppercase",
+                      fontWeight: 700,
+                      color: SQ.faint,
+                      background: "transparent",
+                      border: `1px solid ${SQ.inputBorder}`,
+                      padding: "7px 12px",
+                      borderRadius: 5,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Edit
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Modal>
+
+      {editor ? (
+        <LineupEditor
+          open
+          matchId={match.id}
+          franchiseId={editor.franchiseId}
+          franchiseTag={editor.franchiseTag}
+          onClose={() => setEditorFranchiseId(null)}
+        />
+      ) : null}
+    </>
+  );
+}
+
 const headCell = {
   fontFamily: FONT.mono,
   fontSize: 10,
@@ -241,6 +342,7 @@ function statusLabel(s: string) {
 export function MatchesScreen() {
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("All");
   const [creating, setCreating] = useState(false);
+  const [lineupsMatch, setLineupsMatch] = useState<MatchSummary | null>(null);
   const { data, isLoading, isError } = useMatches({
     limit: 50,
     status: filter === "All" ? undefined : filter,
@@ -330,7 +432,7 @@ export function MatchesScreen() {
           {isError ? "Couldn't load matches (admin sign-in required)." : "No matches in this filter."}
         </StateNote>
       ) : (
-        <TableScroll minWidth={760}>
+        <TableScroll minWidth={950}>
           <div
             style={{
               display: "flex",
@@ -343,12 +445,14 @@ export function MatchesScreen() {
             <div style={{ width: 110 }}>GAME</div>
             <div style={{ width: 120 }}>SCHEDULE</div>
             <div style={{ width: 130 }}>STATUS</div>
-            <div style={{ width: 110, textAlign: "right" }}>ACTION</div>
+            <div style={{ width: 300, textAlign: "right" }}>ACTION</div>
           </div>
 
           {matches.map((m) => {
             const label = statusLabel(m.status);
             const [stColor, stBorder] = matchStatusColors(label as Parameters<typeof matchStatusColors>[0]);
+            const done = m.status === "COMPLETED";
+            const isFranchise = m.matchType === "FRANCHISE" || m.participantTags.length > 0;
             return (
               <div
                 key={m.id}
@@ -386,7 +490,47 @@ export function MatchesScreen() {
                     {label}
                   </span>
                 </div>
-                <div style={{ width: 110, textAlign: "right" }}>
+                <div
+                  style={{
+                    width: 300,
+                    display: "flex",
+                    gap: 8,
+                    justifyContent: "flex-end",
+                    alignItems: "center",
+                  }}
+                >
+                  <Link
+                    href={`/admin/matches/result?match=${m.id}`}
+                    style={
+                      done
+                        ? {
+                            fontFamily: FONT.mono,
+                            fontSize: 10.5,
+                            letterSpacing: ".1em",
+                            textTransform: "uppercase",
+                            color: SQ.faint,
+                            border: `1px solid ${SQ.inputBorder}`,
+                            padding: "8px 12px",
+                            borderRadius: 5,
+                            textDecoration: "none",
+                          }
+                        : {
+                            fontFamily: FONT.mono,
+                            fontSize: 10.5,
+                            letterSpacing: ".1em",
+                            textTransform: "uppercase",
+                            fontWeight: 700,
+                            color: SQ.sidebar,
+                            background: SQ.red,
+                            border: "none",
+                            padding: "8px 12px",
+                            borderRadius: 5,
+                            textDecoration: "none",
+                          }
+                    }
+                  >
+                    {done ? "Edit result" : "Enter result"}
+                  </Link>
                   <Link
                     href={`/admin/match/${m.id}`}
                     style={{
@@ -403,12 +547,36 @@ export function MatchesScreen() {
                   >
                     View
                   </Link>
+                  {isFranchise ? (
+                    <button
+                      type="button"
+                      onClick={() => setLineupsMatch(m)}
+                      style={{
+                        fontFamily: FONT.mono,
+                        fontSize: 10.5,
+                        letterSpacing: ".1em",
+                        textTransform: "uppercase",
+                        color: SQ.faint,
+                        background: "transparent",
+                        border: `1px solid ${SQ.inputBorder}`,
+                        padding: "8px 12px",
+                        borderRadius: 5,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Lineups
+                    </button>
+                  ) : null}
                 </div>
               </div>
             );
           })}
         </TableScroll>
       )}
+
+      {lineupsMatch ? (
+        <LineupsModal match={lineupsMatch} onClose={() => setLineupsMatch(null)} />
+      ) : null}
     </div>
   );
 }

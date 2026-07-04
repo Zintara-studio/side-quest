@@ -5,8 +5,10 @@ import Link from "next/link";
 import { SQ, FONT, rankAccent } from "../tokens";
 import { LeagueTitle } from "../league-title";
 import { StateNote } from "../state-note";
-import { useFranchises, useSeasons, useSeasonStandings } from "@/lib/query/hooks";
+import { useFranchises, useSeasons, useSeasonStandings, useAllTimeStandings } from "@/lib/query/hooks";
 import { adaptFranchises } from "@/lib/adapters/league";
+
+const ALL = "__all__";
 
 const headCell = {
   fontFamily: FONT.mono,
@@ -20,19 +22,31 @@ export function FranchisesScreen() {
   const seasons = seasonsQ.data ?? [];
   const current = seasons.find((s) => s.current);
   const [selected, setSelected] = useState<string>("");
+  const isAll = selected === ALL;
   const code = selected || current?.code || seasons[0]?.code || "";
-  const isCurrent = !!current && code === current.code;
+  const isCurrent = !isAll && !!current && code === current.code;
 
-  // Live franchises for the current season; frozen snapshot for finished seasons.
+  // Live franchises for the current season; frozen snapshot for finished seasons;
+  // aggregated all-time standings for the "All seasons" view.
   const liveQ = useFranchises({ active: true });
-  const snapshotQ = useSeasonStandings(isCurrent ? undefined : code || undefined);
+  const snapshotQ = useSeasonStandings(isCurrent || isAll ? undefined : code || undefined);
+  const allTimeQ = useAllTimeStandings();
   const live = liveQ.data ? adaptFranchises(liveQ.data.items) : [];
+
+  // The frozen-snapshot table markup is reused for both a finished season and the
+  // combined all-time view; feed it whichever SeasonStandingView[] source applies.
+  const snapshotData = isAll ? (allTimeQ.data ?? []) : (snapshotQ.data ?? []);
+  const snapshotLoading = isAll ? allTimeQ.isLoading : snapshotQ.isLoading;
+  const snapshotError = isAll ? allTimeQ.isError : snapshotQ.isError;
 
   const isLoading =
     (seasonsQ.isLoading && seasons.length === 0) ||
-    (isCurrent ? liveQ.isLoading : snapshotQ.isLoading);
-  const isError = isCurrent ? liveQ.isError : snapshotQ.isError;
+    (isCurrent ? liveQ.isLoading : snapshotLoading);
+  const isError = isCurrent ? liveQ.isError : snapshotError;
   const seasonLabel = seasons.find((s) => s.code === code)?.name ?? code;
+  const headerLabel = isAll
+    ? "ALL SEASONS · COMBINED"
+    : `${seasonLabel.toUpperCase()} · ${isCurrent ? "ONGOING" : "FINISHED"}`;
 
   return (
     <div>
@@ -51,11 +65,11 @@ export function FranchisesScreen() {
         }}
       >
         <div style={{ fontFamily: FONT.mono, fontSize: 12, letterSpacing: ".1em", color: SQ.mute }}>
-          {seasonLabel.toUpperCase()} · {isCurrent ? "ONGOING" : "FINISHED"}
+          {headerLabel}
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {seasons.map((s) => {
-            const active = code === s.code;
+            const active = !isAll && code === s.code;
             return (
               <button
                 key={s.code}
@@ -79,6 +93,25 @@ export function FranchisesScreen() {
               </button>
             );
           })}
+          <button
+            key={ALL}
+            type="button"
+            onClick={() => setSelected(ALL)}
+            style={{
+              fontFamily: FONT.mono,
+              fontSize: 11,
+              letterSpacing: ".1em",
+              padding: "8px 14px",
+              borderRadius: 5,
+              background: isAll ? SQ.red : "transparent",
+              color: isAll ? SQ.league : SQ.faint,
+              border: isAll ? "none" : `1px solid ${SQ.inputBorder}`,
+              fontWeight: isAll ? 600 : 400,
+              cursor: "pointer",
+            }}
+          >
+            All seasons
+          </button>
         </div>
       </div>
 
@@ -132,9 +165,13 @@ export function FranchisesScreen() {
             </div>
           </div>
         )
-      ) : (snapshotQ.data ?? []).length === 0 ? (
+      ) : snapshotData.length === 0 ? (
         <StateNote tone={isError ? "error" : "muted"}>
-          {isError ? "Couldn't reach the league API." : "No standings recorded for this season."}
+          {isError
+            ? "Couldn't reach the league API."
+            : isAll
+              ? "No standings recorded yet."
+              : "No standings recorded for this season."}
         </StateNote>
       ) : (
         <div style={{ overflowX: "auto", border: `1px solid ${SQ.hairline}`, borderRadius: 8 }}>
@@ -144,7 +181,7 @@ export function FranchisesScreen() {
               <div style={{ flex: 1 }}>FRANCHISE</div>
               <div style={{ width: 80, textAlign: "right" }}>PTS</div>
             </div>
-            {(snapshotQ.data ?? []).map((r) => {
+            {snapshotData.map((r) => {
               const accent = rankAccent(r.rank === 1);
               const row = (
                 <>

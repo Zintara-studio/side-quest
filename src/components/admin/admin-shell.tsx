@@ -6,13 +6,15 @@ import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/lib/theme";
 import { useAuth } from "@/lib/auth/context";
-import { useCurrentSeason, useRegistrations } from "@/lib/query/hooks";
+import { useActiveAuction, useAdminOverview, useCurrentSeason, useRegistrations } from "@/lib/query/hooks";
 import { SQ, FONT } from "./tokens";
 
 interface NavItem {
   href: string;
   label: string;
-  badgeKey?: "registrations" | "franchiseProposals";
+  badgeKey?: "registrations" | "franchiseProposals" | "openDisputes" | "resultsToEnter";
+  /** Renders a live-pulse "LIVE" pill instead of a numeric badge while the auction is running. */
+  liveKey?: "auction";
 }
 interface NavGroup {
   label: string;
@@ -24,9 +26,10 @@ const navGroups: NavGroup[] = [
     label: "LEAGUE",
     items: [
       { href: "/admin", label: "Overview" },
-      { href: "/admin/matches", label: "Matches" },
+      { href: "/admin/matches", label: "Matches", badgeKey: "resultsToEnter" },
+      { href: "/admin/auction", label: "Auction", liveKey: "auction" },
       { href: "/admin/registrations", label: "Registrations", badgeKey: "registrations" },
-      { href: "/admin/disputes", label: "Disputes" },
+      { href: "/admin/disputes", label: "Disputes", badgeKey: "openDisputes" },
     ],
   },
   {
@@ -92,6 +95,13 @@ export function AdminShell({ children, fontClass }: { children: ReactNode; fontC
   // separately on the Franchises nav item.
   const pendingCount = pendingItems.filter((r) => r.type !== "FRANCHISE").length;
   const franchiseProposalCount = pendingItems.filter((r) => r.type === "FRANCHISE").length;
+
+  const ov = useAdminOverview();
+  const openDisputesCount = isAdmin ? ov.data?.openDisputes ?? 0 : 0;
+  const resultsToEnterCount = isAdmin ? ov.data?.resultsToEnter ?? 0 : 0;
+
+  const activeAuctionQ = useActiveAuction(isAdmin);
+  const auctionLive = isAdmin && activeAuctionQ.data?.status === "LIVE";
 
   if (!hydrated) return <FullScreen>Checking access…</FullScreen>;
   if (!isAdmin) return <FullScreen>Redirecting to sign in…</FullScreen>;
@@ -187,10 +197,17 @@ export function AdminShell({ children, fontClass }: { children: ReactNode; fontC
                     ? pendingCount
                     : it.badgeKey === "franchiseProposals"
                       ? franchiseProposalCount
-                      : 0;
+                      : it.badgeKey === "openDisputes"
+                        ? openDisputesCount
+                        : it.badgeKey === "resultsToEnter"
+                          ? resultsToEnterCount
+                          : 0;
                 const badge = badgeCount > 0 ? badgeCount : null;
-                // Franchise proposals are a softer, amber-toned signal vs the primary red queue badge.
-                const isSoftBadge = it.badgeKey === "franchiseProposals";
+                // Softer amber-toned signals (franchise proposals, matches awaiting result)
+                // vs the primary red queue badge (registrations, open disputes).
+                const isSoftBadge =
+                  it.badgeKey === "franchiseProposals" || it.badgeKey === "resultsToEnter";
+                const showLive = it.liveKey === "auction" && auctionLive;
                 return (
                   <Link
                     key={it.href}
@@ -225,7 +242,22 @@ export function AdminShell({ children, fontClass }: { children: ReactNode; fontC
                     >
                       {it.label}
                     </span>
-                    {badge ? (
+                    {showLive ? (
+                      <span
+                        style={{
+                          fontFamily: FONT.mono,
+                          fontSize: 9,
+                          letterSpacing: ".14em",
+                          color: SQ.sidebar,
+                          background: SQ.red,
+                          padding: "2px 7px",
+                          borderRadius: 9,
+                          fontWeight: 700,
+                        }}
+                      >
+                        LIVE
+                      </span>
+                    ) : badge ? (
                       <span
                         style={
                           isSoftBadge

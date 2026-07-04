@@ -4,6 +4,10 @@ import { useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 import { SQ, FONT } from "./tokens";
 
+// Stack of currently-open modals (in open order). Esc only closes the topmost, so a nested modal
+// (e.g. the lineup editor over the lineups list) steps back one level per Esc instead of closing both.
+const modalStack: symbol[] = [];
+
 export interface ModalProps {
   open: boolean;
   title: string;
@@ -21,25 +25,40 @@ export function Modal({ open, title, onClose, children }: ModalProps) {
   // Only close on a backdrop click whose press ORIGINATED on the overlay — so dragging a text
   // selection out of a textarea and releasing over the backdrop doesn't discard the user's input.
   const pressedOnOverlay = useRef(false);
+  // Keep the latest onClose in a ref so the open-effect does NOT depend on its (unstable) identity.
+  // Otherwise every parent re-render (e.g. each keystroke in a child textarea) would re-run the
+  // effect and re-focus the card, yanking focus off the input after a single character.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const idRef = useRef<symbol>(Symbol("modal"));
 
   useEffect(() => {
     if (!open) return;
+    const id = idRef.current;
+    modalStack.push(id);
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      // Only the topmost open modal responds to Escape.
+      if (e.key === "Escape" && modalStack[modalStack.length - 1] === id) onCloseRef.current();
     };
     document.addEventListener("keydown", onKey);
     // Lock background scroll while the modal is open.
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    // Move focus into the dialog on open; restore it to the trigger on close.
+    // Move focus into the dialog once on open; restore it to the trigger on close. Only focus the
+    // card itself when focus isn't already inside it — so a child field's autoFocus (e.g. the resolve
+    // / report textarea) keeps the cursor and the user can type immediately.
     const previouslyFocused = document.activeElement as HTMLElement | null;
-    cardRef.current?.focus();
+    if (!cardRef.current?.contains(document.activeElement)) {
+      cardRef.current?.focus();
+    }
     return () => {
       document.removeEventListener("keydown", onKey);
+      const at = modalStack.lastIndexOf(id);
+      if (at !== -1) modalStack.splice(at, 1);
       document.body.style.overflow = prev;
       previouslyFocused?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 

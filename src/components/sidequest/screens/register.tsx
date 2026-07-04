@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { SQ, FONT } from "../tokens";
 import { LeagueTitle } from "../league-title";
 import { StateNote } from "../state-note";
@@ -16,7 +17,8 @@ import {
   useMatch,
   usePlayers,
 } from "@/lib/query/hooks";
-import type { RegistrationType } from "@/lib/api/types";
+import type { GameSummary, RegistrationType } from "@/lib/api/types";
+import type { SessionUser } from "@/lib/auth/store";
 
 // Registration locks this long before the match starts (backend enforces the same window).
 const REG_LOCK_MS = 3 * 60 * 60 * 1000;
@@ -62,6 +64,7 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
   const playersQ = usePlayers({ limit: 100 });
   const apply = useApplyRegistration();
   const invite = useInviteTeammate();
+  const router = useRouter();
 
   // Registration mode is fixed by the announcement: season = solo (PLAYER); free-for-all calls
   // may be PLAYER or SQUAD, as the organizer chose. No user-facing toggle.
@@ -93,6 +96,7 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
   const [error, setError] = useState<string | null>(null);
   const [alreadyRegistered, setAlreadyRegistered] = useState(false);
   const [done, setDone] = useState(false);
+  const [redirecting, setRedirecting] = useState(false);
 
   // Prefill name from the signed-in user.
   useEffect(() => {
@@ -148,6 +152,13 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
           ),
         );
       }
+      if (mode === "SQUAD") {
+        // A squad is created FORMING: the captain still has to finish the roster and submit it for
+        // approval. Route to My Team (instead of the generic success card) so they can do that.
+        setRedirecting(true);
+        router.push("/my/registrations");
+        return;
+      }
       setDone(true);
     } catch (err) {
       const status = axios.isAxiosError(err) ? err.response?.status : undefined;
@@ -182,6 +193,49 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
               Sign in ▸
             </Link>
           </StateNote>
+        </div>
+      </div>
+    );
+  }
+
+  // Auction self-registration is a wholly different flow: no match-derived game, no squad name, no
+  // 3h match-lock. Branch to its own exhaustive form once auth has resolved.
+  if (mode === "AUCTION") {
+    return <AuctionRegisterForm user={user} seasonName={season?.name} announcementTitle={ann.data?.title} />;
+  }
+
+  if (redirecting) {
+    return (
+      <div>
+        <LeagueTitle eyebrow="Registration" title="REGISTER TO PLAY" />
+        <div style={{ ...card, marginTop: 24, maxWidth: 560 }}>
+          <div style={{ fontFamily: FONT.mono, fontSize: 11, letterSpacing: ".16em", color: SQ.green }}>
+            ✓ SQUAD CREATED
+          </div>
+          <div style={{ fontSize: 20, fontWeight: 700, marginTop: 10 }}>Squad created</div>
+          <p style={{ fontSize: 14, color: SQ.faint, lineHeight: 1.6, marginTop: 10 }}>
+            {squadName ? `“${squadName}” ` : "Your squad "}is being assembled. Invite your teammates and then
+            submit the squad for approval on My Team. Taking you there now…
+          </p>
+          <div style={{ marginTop: 20 }}>
+            <Link
+              href="/my/registrations"
+              style={{
+                fontFamily: FONT.mono,
+                fontSize: 11,
+                letterSpacing: ".12em",
+                textTransform: "uppercase",
+                color: SQ.league,
+                background: SQ.red,
+                padding: "11px 16px",
+                borderRadius: 5,
+                fontWeight: 700,
+                textDecoration: "none",
+              }}
+            >
+              Go to My Team ▸
+            </Link>
+          </div>
         </div>
       </div>
     );
@@ -607,6 +661,461 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
                   The registration mode is set by the organizer on the announcement you came from.
                 </p>
               </>
+            )}
+          </div>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// AUCTION self-registration — exhaustive per-game expertise form.
+// Fed by an announcement whose registrationType is "AUCTION". Unlike the match/
+// squad flows there is no derived game, no squad name and no 3h match-lock: the
+// player declares which games they play, how strong they are (0-100) and their
+// in-game handle, plus a free-form note for admins. This feeds the auction pool.
+// ---------------------------------------------------------------------------
+
+const clampRating = (n: number) => (Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : 0);
+
+function AuctionRegisterForm({
+  user,
+  seasonName,
+  announcementTitle,
+}: {
+  user: SessionUser | null;
+  seasonName?: string;
+  announcementTitle?: string;
+}) {
+  const gamesQ = useGames(true);
+  const apply = useApplyRegistration();
+
+  const games: GameSummary[] = gamesQ.data ?? [];
+
+  const [name, setName] = useState("");
+  const [whatsapp, setWhatsapp] = useState("");
+  const [email, setEmail] = useState("");
+  const [note, setNote] = useState("");
+  // Per-game expertise, keyed by gameId. `on` = "I play this"; rating is 0-100; handle is optional.
+  const [plays, setPlays] = useState<Record<string, boolean>>({});
+  const [ratings, setRatings] = useState<Record<string, number>>({});
+  const [handles, setHandles] = useState<Record<string, string>>({});
+  const [error, setError] = useState<string | null>(null);
+  const [alreadyRegistered, setAlreadyRegistered] = useState(false);
+  const [done, setDone] = useState(false);
+
+  // Prefill identity from the signed-in user.
+  useEffect(() => {
+    if (user?.name) setName((n) => n || user.name);
+  }, [user]);
+  useEffect(() => {
+    if (user?.email) setEmail((e) => e || user.email);
+  }, [user]);
+
+  const toggleGame = (id: string) =>
+    setPlays((cur) => {
+      const on = !cur[id];
+      // First time a game is switched on, seed a sensible rating so the slider isn't stuck at 0.
+      if (on) setRatings((r) => (r[id] == null ? { ...r, [id]: 50 } : r));
+      return { ...cur, [id]: on };
+    });
+
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (alreadyRegistered) return;
+
+    const chosen = games.filter((g) => plays[g.id]);
+    // Require at least one game toggled on with a rating above 0 — no squad, no derived game.
+    const rated = chosen.filter((g) => clampRating(ratings[g.id] ?? 0) > 0);
+    if (rated.length === 0) {
+      setError("Add at least one game you play with a rating above 0.");
+      return;
+    }
+
+    const contact = [whatsapp && `WhatsApp: ${whatsapp}`, email && `Email: ${email}`]
+      .filter(Boolean)
+      .join(" · ");
+
+    const proficiencies = chosen.map((g) => ({
+      gameId: g.id,
+      rating: clampRating(ratings[g.id] ?? 0),
+      handle: handles[g.id]?.trim() || undefined,
+    }));
+
+    try {
+      await apply.mutateAsync({
+        type: "AUCTION",
+        games: chosen.map((g) => g.name),
+        contact: contact || undefined,
+        note: note.trim() || undefined,
+        proficiencies,
+      });
+      setDone(true);
+    } catch (err) {
+      const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+      const msg = apiErrorMessage(err, "Could not submit registration.");
+      if (status === 409) {
+        // Duplicate guard — already have a live auction registration.
+        setAlreadyRegistered(true);
+        setError(null);
+      } else {
+        setError(msg);
+      }
+    }
+  };
+
+  if (done) {
+    return (
+      <div>
+        <LeagueTitle eyebrow="Auction registration" title="REGISTER TO PLAY" />
+        <div style={{ ...card, marginTop: 24, maxWidth: 560 }}>
+          <div style={{ fontFamily: FONT.mono, fontSize: 11, letterSpacing: ".16em", color: SQ.green }}>
+            ✓ SUBMITTED
+          </div>
+          <div style={{ fontSize: 20, fontWeight: 700, marginTop: 10 }}>You're in the auction pool</div>
+          <p style={{ fontSize: 14, color: SQ.faint, lineHeight: 1.6, marginTop: 10 }}>
+            The organizers will review your auction registration
+            {announcementTitle ? ` for “${announcementTitle}”` : ""} and your declared game expertise.
+            Franchises draft from this pool when the auction goes live — you'll get a notification when
+            you're reviewed.
+          </p>
+          <div style={{ display: "flex", gap: 12, marginTop: 20, flexWrap: "wrap" }}>
+            <Link
+              href="/notifications"
+              style={{
+                fontFamily: FONT.mono,
+                fontSize: 11,
+                letterSpacing: ".12em",
+                textTransform: "uppercase",
+                color: SQ.league,
+                background: SQ.red,
+                padding: "11px 16px",
+                borderRadius: 5,
+                fontWeight: 700,
+                textDecoration: "none",
+              }}
+            >
+              View notifications ▸
+            </Link>
+            <Link
+              href="/announcements"
+              style={{
+                fontFamily: FONT.mono,
+                fontSize: 11,
+                letterSpacing: ".12em",
+                textTransform: "uppercase",
+                color: SQ.faint,
+                border: `1px solid ${SQ.inputBorder}`,
+                padding: "11px 16px",
+                borderRadius: 5,
+                textDecoration: "none",
+              }}
+            >
+              Back to announcements
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const chosenCount = games.filter((g) => plays[g.id]).length;
+
+  return (
+    <div>
+      <LeagueTitle eyebrow={`${seasonName ?? "Pre-season"} auction`} title="REGISTER TO PLAY" />
+
+      <div
+        style={{
+          marginTop: 18,
+          padding: "14px 18px",
+          borderRadius: 8,
+          border: `1px solid ${SQ.hairline}`,
+          background: SQ.panel,
+          fontSize: 13.5,
+          color: SQ.faint,
+        }}
+      >
+        {announcementTitle ? (
+          <>
+            <span style={{ color: SQ.mute, fontFamily: FONT.mono, fontSize: 11, letterSpacing: ".12em" }}>
+              REGISTERING FOR
+            </span>{" "}
+            <span style={{ color: SQ.ink, fontWeight: 600 }}>{announcementTitle}</span>
+            <span style={{ color: SQ.ember }}> · Player auction</span>
+          </>
+        ) : (
+          "Auction self-registration — declare the games you play and how strong you are so franchises can draft you."
+        )}
+      </div>
+
+      <div
+        style={{
+          margin: "18px 0 4px",
+          fontFamily: FONT.mono,
+          fontSize: 11,
+          letterSpacing: ".12em",
+          color: SQ.mute,
+        }}
+      >
+        AUCTION · PLAYER POOL REGISTRATION
+      </div>
+
+      <form onSubmit={onSubmit}>
+        <div style={grid}>
+          {/* left: identity + contact + note */}
+          <div style={card}>
+            <div style={{ ...fieldLabel, marginBottom: 8 }}>PLAYER NAME</div>
+            <input
+              className="sq-field"
+              style={inputStyle}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Your name"
+            />
+
+            <div style={{ ...fieldLabel, margin: "18px 0 8px" }}>CONTACT</div>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              <input
+                className="sq-field"
+                style={{ ...inputStyle, flex: 1, minWidth: 140 }}
+                value={whatsapp}
+                onChange={(e) => setWhatsapp(e.target.value)}
+                placeholder="WhatsApp no."
+              />
+              <input
+                className="sq-field"
+                type="email"
+                style={{ ...inputStyle, flex: 1, minWidth: 140 }}
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="Email"
+              />
+            </div>
+
+            <div style={{ ...fieldLabel, margin: "18px 0 8px" }}>NOTE FOR ORGANIZERS</div>
+            <textarea
+              className="sq-field"
+              style={{ ...inputStyle, minHeight: 100, lineHeight: 1.5, resize: "vertical" }}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Anything the auction admins should know — availability, past teams, achievements…"
+            />
+
+            {alreadyRegistered ? (
+              <div
+                style={{
+                  margin: "18px 0 0",
+                  padding: "12px 14px",
+                  borderRadius: 5,
+                  background: SQ.inset,
+                  border: `1px solid ${SQ.amber}`,
+                  color: SQ.ink,
+                  fontSize: 12.5,
+                  lineHeight: 1.55,
+                }}
+              >
+                <span style={{ color: SQ.amber, fontWeight: 700 }}>
+                  You are already registered for this auction.
+                </span>{" "}
+                <Link
+                  href="/my/registrations"
+                  style={{ color: SQ.ember, textDecoration: "none", fontWeight: 600 }}
+                >
+                  View your registrations ▸
+                </Link>
+              </div>
+            ) : null}
+
+            {error ? (
+              <div
+                style={{
+                  margin: "18px 0 0",
+                  padding: "10px 12px",
+                  borderRadius: 5,
+                  background: "rgba(232,96,44,.10)",
+                  border: `1px solid ${SQ.red}`,
+                  color: SQ.ember,
+                  fontSize: 12.5,
+                }}
+              >
+                {error}
+              </div>
+            ) : null}
+
+            {(() => {
+              const disabled = apply.isPending || alreadyRegistered;
+              const label = alreadyRegistered
+                ? "Already registered"
+                : apply.isPending
+                  ? "Submitting…"
+                  : "Enter the auction ▸";
+              return (
+                <button
+                  type="submit"
+                  disabled={disabled}
+                  style={{
+                    cursor: disabled ? "not-allowed" : "pointer",
+                    marginTop: 22,
+                    width: "100%",
+                    fontFamily: FONT.mono,
+                    fontSize: 12,
+                    letterSpacing: ".16em",
+                    textTransform: "uppercase",
+                    fontWeight: 700,
+                    color: SQ.league,
+                    background: SQ.red,
+                    padding: 14,
+                    borderRadius: 5,
+                    border: "none",
+                    opacity: disabled ? 0.6 : 1,
+                  }}
+                >
+                  {label}
+                </button>
+              );
+            })()}
+          </div>
+
+          {/* right: exhaustive per-game expertise grid */}
+          <div style={card}>
+            <div style={{ ...fieldLabel, marginBottom: 6 }}>YOUR GAME EXPERTISE</div>
+            <p style={{ margin: "0 0 14px", fontSize: 12.5, lineHeight: 1.6, color: SQ.mute }}>
+              Toggle every game you play, rate yourself 0–100 and drop your in-game handle. Franchises
+              use these ratings to value you in the auction.
+              {chosenCount > 0 ? (
+                <span style={{ color: SQ.green }}> {chosenCount} selected.</span>
+              ) : null}
+            </p>
+
+            {games.length === 0 ? (
+              <span style={{ fontSize: 13, color: SQ.mute }}>Loading games…</span>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {games.map((g) => {
+                  const on = !!plays[g.id];
+                  const rating = clampRating(ratings[g.id] ?? 0);
+                  return (
+                    <div
+                      key={g.id}
+                      style={{
+                        border: `1px solid ${on ? SQ.red : SQ.hairline}`,
+                        borderRadius: 6,
+                        padding: on ? "12px 14px" : "0",
+                        background: on ? SQ.inset : "transparent",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <button
+                          type="button"
+                          onClick={() => toggleGame(g.id)}
+                          style={{
+                            fontFamily: FONT.mono,
+                            fontSize: 11,
+                            letterSpacing: ".06em",
+                            padding: "9px 13px",
+                            borderRadius: 5,
+                            border: `1px solid ${on ? SQ.red : SQ.inputBorder}`,
+                            color: on ? SQ.league : SQ.faint,
+                            background: on ? SQ.red : "transparent",
+                            cursor: "pointer",
+                          }}
+                        >
+                          {on ? "✓ " : ""}
+                          {g.name}
+                        </button>
+                        {on ? (
+                          <span
+                            style={{
+                              fontFamily: FONT.mono,
+                              fontSize: 12,
+                              color: SQ.ember,
+                              marginLeft: "auto",
+                              minWidth: 44,
+                              textAlign: "right",
+                            }}
+                          >
+                            {rating}
+                            <span style={{ color: SQ.mute }}>/100</span>
+                          </span>
+                        ) : null}
+                      </div>
+
+                      {on ? (
+                        <>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 12,
+                              marginTop: 12,
+                            }}
+                          >
+                            <span
+                              style={{
+                                fontFamily: FONT.mono,
+                                fontSize: 10,
+                                letterSpacing: ".12em",
+                                color: SQ.label,
+                                width: 58,
+                                flex: "0 0 auto",
+                              }}
+                            >
+                              RATING
+                            </span>
+                            <input
+                              type="range"
+                              min={0}
+                              max={100}
+                              value={rating}
+                              onChange={(e) =>
+                                setRatings((r) => ({ ...r, [g.id]: clampRating(Number(e.target.value)) }))
+                              }
+                              style={{ flex: 1, accentColor: SQ.red, cursor: "pointer" }}
+                            />
+                            <input
+                              className="sq-field"
+                              type="number"
+                              min={0}
+                              max={100}
+                              value={rating}
+                              onChange={(e) =>
+                                setRatings((r) => ({ ...r, [g.id]: clampRating(Number(e.target.value)) }))
+                              }
+                              style={{ ...inputStyle, width: 72, flex: "0 0 auto", padding: "8px 10px" }}
+                            />
+                          </div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 10 }}>
+                            <span
+                              style={{
+                                fontFamily: FONT.mono,
+                                fontSize: 10,
+                                letterSpacing: ".12em",
+                                color: SQ.label,
+                                width: 58,
+                                flex: "0 0 auto",
+                              }}
+                            >
+                              HANDLE
+                            </span>
+                            <input
+                              className="sq-field"
+                              style={{ ...inputStyle, flex: 1, padding: "8px 10px" }}
+                              value={handles[g.id] ?? ""}
+                              onChange={(e) =>
+                                setHandles((h) => ({ ...h, [g.id]: e.target.value }))
+                              }
+                              placeholder={`In-game name for ${g.name} (optional)`}
+                            />
+                          </div>
+                        </>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
         </div>

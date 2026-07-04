@@ -36,6 +36,173 @@ const inputBox = {
 
 const CATEGORIES = ["GENERAL", "RESULT", "RECAP", "MATCH", "ROSTER"];
 
+// One-line explainer shown under the KIND picker so admins know what each registration call opens.
+const KIND_HINTS: Record<RegistrationType, string> = {
+  PLAYER: "Solo players sign up individually for the FFA lobby.",
+  SQUAD: "Captains register a team and invite teammates from Side Quest.",
+  FRANCHISE: "Owners propose a franchise; admins form the franchises before the season.",
+  AUCTION:
+    "Opens the exhaustive self-registration form — players declare per-game expertise (rating + handle) and feed the player auction pool.",
+};
+
+// Ready-made presets that prefill the composer's existing setters. `category`
+// is always one of CATEGORIES; `registrationType` is only set on registration
+// calls. Templates never touch matchId/gameId/showPreview.
+type Template = {
+  id: string;
+  label: string;
+  category: string;
+  registrationOpen: boolean;
+  registrationType?: RegistrationType;
+  title: string;
+  body: string;
+};
+
+const TEMPLATES: Template[] = [
+  {
+    id: "season-kickoff",
+    label: "Season Kickoff",
+    category: "GENERAL",
+    registrationOpen: false,
+    title: "Season __ is live",
+    body: [
+      "# Welcome to Season __",
+      "",
+      "The new season is officially underway. Here's what to know:",
+      "",
+      "- **Format:** __",
+      "- **Kickoff:** __",
+      "",
+      "Good luck out there.",
+    ].join("\n"),
+  },
+  {
+    id: "match-day",
+    label: "Match Day",
+    category: "MATCH",
+    registrationOpen: false,
+    title: "Match Day __",
+    body: [
+      "## Match Day __ — Fixtures",
+      "",
+      "- __ vs __ — __ IST",
+      "- __ vs __ — __ IST",
+      "",
+      "_Lobby details drop ~30 minutes before start._",
+      "",
+      "> Remember to link the fixture below before publishing.",
+    ].join("\n"),
+  },
+  {
+    id: "result-recap",
+    label: "Result Recap",
+    category: "RESULT",
+    registrationOpen: false,
+    title: "__ — Match Result",
+    body: [
+      "## __ — Match Result",
+      "",
+      "**Final:** __",
+      "**Winner:** __",
+      "",
+      "| Placement | Team | Points |",
+      "| --- | --- | --- |",
+      "| 1 | __ | __ |",
+      "| 2 | __ | __ |",
+      "| 3 | __ | __ |",
+    ].join("\n"),
+  },
+  {
+    id: "reg-solo",
+    label: "Registration Open — Solo",
+    category: "GENERAL",
+    registrationOpen: true,
+    registrationType: "PLAYER",
+    title: "Registration open — Solo",
+    body: [
+      "**Solo sign-ups open.**",
+      "",
+      "Register directly from this post to claim your spot in the FFA lobby.",
+      "",
+      "- **Game:** __",
+      "- **Closes:** __",
+    ].join("\n"),
+  },
+  {
+    id: "reg-squad",
+    label: "Registration Open — Squad",
+    category: "GENERAL",
+    registrationOpen: true,
+    registrationType: "SQUAD",
+    title: "Registration open — Squad",
+    body: [
+      "**Squad sign-ups open.**",
+      "",
+      "Captains: register your team and invite your roster from Side Quest.",
+      "",
+      "- **Game:** __",
+      "- **Squad size:** __",
+      "- **Closes:** __",
+    ].join("\n"),
+  },
+  {
+    id: "reg-franchise",
+    label: "Franchise Call",
+    category: "GENERAL",
+    registrationOpen: true,
+    registrationType: "FRANCHISE",
+    title: "Franchise call",
+    body: [
+      "**Franchise applications open.**",
+      "",
+      "Owners: propose your franchise. Admins form the franchises before the season begins.",
+      "",
+      "- **Season:** __",
+      "- **Closes:** __",
+    ].join("\n"),
+  },
+  {
+    id: "reg-auction",
+    label: "Auction Call",
+    category: "GENERAL",
+    registrationOpen: true,
+    registrationType: "AUCTION",
+    title: "Auction call",
+    body: [
+      "**Enter the auction pool** — declare your per-game rating + handle.",
+      "",
+      "Fill the self-registration form so franchises can bid on you.",
+      "",
+      "- **Games + rating:** __",
+      "- **In-game handle:** __",
+      "- **Closes:** __",
+    ].join("\n"),
+  },
+  {
+    id: "roster-move",
+    label: "Roster Move",
+    category: "ROSTER",
+    registrationOpen: false,
+    title: "Roster Move — __",
+    body: [
+      "## Roster Move",
+      "",
+      "**Player:** __",
+      "**From:** __ → **To:** __",
+      "",
+      "_Effective __._",
+    ].join("\n"),
+  },
+  {
+    id: "blank",
+    label: "Blank / General Notice",
+    category: "GENERAL",
+    registrationOpen: false,
+    title: "",
+    body: "",
+  },
+];
+
 export function AnnouncementsScreen() {
   const list = useAnnouncements({ limit: 20 });
   const create = useCreateAnnouncement();
@@ -66,6 +233,24 @@ export function AnnouncementsScreen() {
       hint: m.status,
     })),
   ];
+
+  // Prefill the composer from a preset. Only touches the fields the preset
+  // owns (category/title/body/registrationOpen [+ registrationType]); leaves
+  // matchId/gameId alone. Confirm before clobbering a draft in progress.
+  const applyTemplate = (t: Template) => {
+    if (
+      (title.trim() || body.trim()) &&
+      !window.confirm("Replace the current draft with this template?")
+    ) {
+      return;
+    }
+    setCategory(t.category);
+    setTitle(t.title);
+    setBody(t.body);
+    setRegistrationOpen(t.registrationOpen);
+    if (t.registrationType) setRegistrationType(t.registrationType);
+    setErr(null);
+  };
 
   const onPublish = async () => {
     setErr(null);
@@ -110,6 +295,31 @@ export function AnnouncementsScreen() {
         <div
           style={{ background: SQ.panel, border: `1px solid ${SQ.hairline}`, borderRadius: 9, padding: 22 }}
         >
+          <div style={{ ...fieldLabel, marginBottom: 8 }}>TEMPLATES</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 18 }}>
+            {TEMPLATES.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => applyTemplate(t)}
+                style={{
+                  fontFamily: FONT.mono,
+                  fontSize: 10,
+                  letterSpacing: ".06em",
+                  padding: "7px 11px",
+                  borderRadius: 5,
+                  cursor: "pointer",
+                  color: SQ.faint,
+                  background: "transparent",
+                  border: `1px solid ${SQ.inputBorder}`,
+                  fontWeight: 400,
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
           <div style={{ ...fieldLabel, marginBottom: 8 }}>NEW POST · TITLE</div>
           <input
             className="sq-field"
@@ -259,7 +469,19 @@ export function AnnouncementsScreen() {
                   <option value="PLAYER">Solo player (FFA)</option>
                   <option value="SQUAD">Squad / team (FFA)</option>
                   <option value="FRANCHISE">Franchise (pre-season)</option>
+                  <option value="AUCTION">Auction (pre-season)</option>
                 </select>
+              </div>
+              <div
+                style={{
+                  flexBasis: "100%",
+                  fontFamily: FONT.mono,
+                  fontSize: 11,
+                  lineHeight: 1.6,
+                  color: SQ.mute,
+                }}
+              >
+                {KIND_HINTS[registrationType]}
               </div>
             </div>
           ) : null}

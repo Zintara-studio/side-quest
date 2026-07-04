@@ -260,23 +260,6 @@ export function PlayerScreen({ id, base = "" }: { id?: string; base?: string }) 
             ) : null}
           </div>
 
-          {isOwner ? (
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16 }}>
-              <button type="button" onClick={openReport} style={ghostAction}>
-                Report an issue
-              </button>
-              {canAppeal ? (
-                <button
-                  type="button"
-                  onClick={openAppeal}
-                  style={{ ...ghostAction, color: SQ.ember, border: "1px solid rgba(232,96,44,.45)" }}
-                >
-                  Appeal account status
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-
           <div
             style={{
               display: "grid",
@@ -434,7 +417,32 @@ export function PlayerScreen({ id, base = "" }: { id?: string; base?: string }) 
 
           {isOwner ? (
             <div style={{ marginTop: 34, paddingTop: 26, borderTop: `1px solid ${SQ.hairline}` }}>
-              <div style={sectionLabel}>My disputes &amp; appeals</div>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  flexWrap: "wrap",
+                  gap: 10,
+                  marginBottom: 14,
+                }}
+              >
+                <div style={{ ...sectionLabel, marginBottom: 0 }}>My disputes &amp; appeals</div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button type="button" onClick={openReport} style={ghostAction}>
+                    Report an issue
+                  </button>
+                  {canAppeal ? (
+                    <button
+                      type="button"
+                      onClick={openAppeal}
+                      style={{ ...ghostAction, color: SQ.ember, border: "1px solid rgba(232,96,44,.45)" }}
+                    >
+                      Appeal account status
+                    </button>
+                  ) : null}
+                </div>
+              </div>
               {myDisputesQ.isLoading ? (
                 <div style={{ fontFamily: FONT.mono, fontSize: 11.5, color: SQ.mute }}>Loading…</div>
               ) : (myDisputesQ.data ?? []).length === 0 ? (

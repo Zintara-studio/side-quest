@@ -27,8 +27,10 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -241,13 +243,22 @@ public class SeasonService {
 
     /**
      * Archive every franchise's current roster into {@link PlayerFranchiseHistory} for the given
-     * season, tagging each player's role (OWNER / MANAGER / PLAYER), then wipe rosters: every player
-     * is detached from their franchise and every franchise's owner/manager slots are cleared. Called
-     * on the finish path so rosters are re-formed (via auction) each new season while the prior
-     * season's memberships remain browsable.
+     * season (tagging each player OWNER / MANAGER / IGL / PLAYER), then reset the playing rosters for
+     * the next season's auction: the regular players are detached from their franchise, while the
+     * franchise LEADERSHIP (owner / manager / IGL) PERSISTS across seasons and stays on the roster.
+     * Leaders change only between seasons via the owner/manager invite flow, not on the reset. The
+     * prior season's full memberships remain browsable in history.
      */
     private void archiveAndResetRosters(String seasonCode) {
         List<Franchise> franchises = franchiseRepository.findAll();
+
+        // Leaders (owner / manager / IGL of any franchise) are protected — they carry over unchanged.
+        Set<UUID> protectedLeaders = new HashSet<>();
+        for (Franchise f : franchises) {
+            if (f.getOwnerPlayer() != null) protectedLeaders.add(f.getOwnerPlayer().getId());
+            if (f.getManagerPlayer() != null) protectedLeaders.add(f.getManagerPlayer().getId());
+            if (f.getIglPlayer() != null) protectedLeaders.add(f.getIglPlayer().getId());
+        }
 
         // (a) One history row per roster player, tagged with the role they held.
         List<PlayerFranchiseHistory> history = new ArrayList<>();
@@ -283,24 +294,16 @@ public class SeasonService {
         }
         playerFranchiseHistoryRepository.saveAll(history);
 
-        // (b) Detach every player from their franchise.
-        List<Player> assigned = new ArrayList<>();
+        // (b) Detach only the regular players; leaders (owner / manager / IGL) stay on their franchise.
+        List<Player> detached = new ArrayList<>();
         for (Player p : playerRepository.findAll()) {
-            if (p.getFranchise() != null) {
+            if (p.getFranchise() != null && !protectedLeaders.contains(p.getId())) {
                 p.setFranchise(null);
-                assigned.add(p);
+                detached.add(p);
             }
         }
-        playerRepository.saveAll(assigned);
-
-        // (b) Clear each franchise's leadership slots (owner / manager / IGL) — the whole roster,
-        // including its leaders, is re-formed via auction next season.
-        for (Franchise f : franchises) {
-            f.setOwnerPlayer(null);
-            f.setManagerPlayer(null);
-            f.setIglPlayer(null);
-        }
-        franchiseRepository.saveAll(franchises);
+        playerRepository.saveAll(detached);
+        // Leadership slots are intentionally NOT cleared — owner/manager/IGL persist across seasons.
     }
 
     /** Recompute and persist a frozen standings snapshot for the given season code. */

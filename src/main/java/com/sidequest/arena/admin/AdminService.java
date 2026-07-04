@@ -95,7 +95,7 @@ public class AdminService {
     @Transactional(readOnly = true)
     public List<DisputeView> openDisputes() {
         return disputeRepository.findByStatusOrderByCreatedAtDesc(DisputeStatus.OPEN).stream()
-                .map(AdminService::toDisputeView)
+                .map(this::toDisputeView)
                 .toList();
     }
 
@@ -148,9 +148,14 @@ public class AdminService {
                 log.getCreatedAt());
     }
 
-    private static DisputeView toDisputeView(Dispute dispute) {
+    private DisputeView toDisputeView(Dispute dispute) {
         Match match = dispute.getMatch();
         String matchTitle = match != null && match.getGame() != null ? match.getGame().getName() : null;
+        User raiser = dispute.getRaisedBy();
+        String raisedByName = raiser != null ? raiser.getName() : null;
+        String raisedByGamerTag = raiser == null ? null
+                : playerRepository.findByUserId(raiser.getId())
+                        .map(com.sidequest.arena.model.Player::getGamerTag).orElse(null);
         return new DisputeView(
                 dispute.getId().toString(),
                 match != null ? match.getId().toString() : null,
@@ -159,7 +164,9 @@ public class AdminService {
                 dispute.getCategory() != null ? dispute.getCategory().name() : null,
                 dispute.getStatus().name(),
                 dispute.getResolution(),
-                dispute.getCreatedAt());
+                dispute.getCreatedAt(),
+                raisedByName,
+                raisedByGamerTag);
     }
 
     private static TeamMember toTeamMember(User user) {

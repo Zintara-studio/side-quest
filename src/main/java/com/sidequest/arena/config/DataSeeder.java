@@ -2,14 +2,23 @@ package com.sidequest.arena.config;
 
 import com.sidequest.arena.model.Announcement;
 import com.sidequest.arena.model.AnnouncementCategory;
+import com.sidequest.arena.model.Auction;
+import com.sidequest.arena.model.AuctionFranchise;
+import com.sidequest.arena.model.AuctionLot;
+import com.sidequest.arena.model.AuctionLotStatus;
+import com.sidequest.arena.model.AuctionStatus;
 import com.sidequest.arena.model.Dispute;
 import com.sidequest.arena.model.DisputeCategory;
 import com.sidequest.arena.model.DisputeStatus;
 import com.sidequest.arena.model.Franchise;
+import com.sidequest.arena.model.FranchiseInvite;
+import com.sidequest.arena.model.FranchiseRole;
 import com.sidequest.arena.model.Game;
+import com.sidequest.arena.model.GameType;
 import com.sidequest.arena.model.InviteStatus;
 import com.sidequest.arena.model.LeagueSettings;
 import com.sidequest.arena.model.Match;
+import com.sidequest.arena.model.MatchLineup;
 import com.sidequest.arena.model.MatchParticipant;
 import com.sidequest.arena.model.MatchRound;
 import com.sidequest.arena.model.MatchRoundPlayerResult;
@@ -34,10 +43,15 @@ import com.sidequest.arena.model.SeasonStatus;
 import com.sidequest.arena.model.TeamInvite;
 import com.sidequest.arena.model.User;
 import com.sidequest.arena.repo.AnnouncementRepository;
+import com.sidequest.arena.repo.AuctionFranchiseRepository;
+import com.sidequest.arena.repo.AuctionLotRepository;
+import com.sidequest.arena.repo.AuctionRepository;
 import com.sidequest.arena.repo.DisputeRepository;
+import com.sidequest.arena.repo.FranchiseInviteRepository;
 import com.sidequest.arena.repo.FranchiseRepository;
 import com.sidequest.arena.repo.GameRepository;
 import com.sidequest.arena.repo.LeagueSettingsRepository;
+import com.sidequest.arena.repo.MatchLineupRepository;
 import com.sidequest.arena.repo.MatchParticipantRepository;
 import com.sidequest.arena.repo.MatchRepository;
 import com.sidequest.arena.repo.MatchRoundPlayerResultRepository;
@@ -94,13 +108,18 @@ public class DataSeeder {
                                GameRepository games,
                                MatchRepository matches,
                                MatchParticipantRepository participants,
+                               MatchLineupRepository lineups,
                                ResultRowRepository resultRows,
                                MatchRoundRepository matchRounds,
                                MatchRoundResultRepository matchRoundResults,
                                MatchRoundPlayerResultRepository matchRoundPlayerResults,
                                RegistrationRepository registrations,
                                TeamInviteRepository teamInvites,
+                               FranchiseInviteRepository franchiseInvites,
                                AnnouncementRepository announcements,
+                               AuctionRepository auctions,
+                               AuctionFranchiseRepository auctionFranchises,
+                               AuctionLotRepository auctionLots,
                                NotificationRepository notifs,
                                DisputeRepository disputes,
                                PlayerGameUsernameRepository usernames,
@@ -132,16 +151,26 @@ public class DataSeeder {
                     seedNow.minus(30, ChronoUnit.DAYS), null));
 
             // ---- games ----
-            Game valorant = games.save(game("Valorant", "5v5 Tactical", 96));
-            Game bgmi = games.save(game("BGMI", "Battle Royale · Squads", 91));
-            Game cs2 = games.save(game("CS2", "5v5 Tactical", 84));
-            Game smash = games.save(game("Smashkarts", "Free-for-all · 1v1", 67));
-            Game r6 = game("Rainbow Six", "5v5 Tactical", 40);
+            // Genre (GameType) drives result-entry flow + default scoring: BATTLE_ROYALE/PARTY are
+            // placement-driven; TACTICAL/SPORTS/FIGHTING score on the final result / kills alone.
+            Game valorant = games.save(game("Valorant", "5v5 Tactical", GameType.TACTICAL, 96));
+            Game bgmi = games.save(game("BGMI", "Battle Royale · Squads", GameType.BATTLE_ROYALE, 91));
+            Game cs2 = games.save(game("CS2", "5v5 Tactical", GameType.TACTICAL, 84));
+            Game smash = games.save(game("Smashkarts", "Free-for-all · 1v1", GameType.PARTY, 67));
+            Game r6 = game("Rainbow Six", "5v5 Tactical", GameType.TACTICAL, 40);
             r6.setEnabled(false);
             games.save(r6);
+            // Additional college titles.
+            games.save(game("CSGO", "5v5 Tactical", GameType.TACTICAL, 58));
+            games.save(game("FIFA", "1v1 · Sports", GameType.SPORTS, 62));
+            games.save(game("Free Fire", "Battle Royale · Squads", GameType.BATTLE_ROYALE, 78));
+            games.save(game("Marvel Rivals", "6v6 Hero Shooter", GameType.TACTICAL, 70));
+            games.save(game("COD", "Battle Royale · Mobile", GameType.BATTLE_ROYALE, 74));
+            games.save(game("Brawlhalla", "Platform Fighter", GameType.FIGHTING, 45));
 
             // ---- admin + manager ----
-            users.save(user("League Admin", "admin@sidequest.gg", "+919800000001", Role.ADMIN, pw));
+            User adminUser = users.save(user("League Admin", "admin@sidequest.gg", "+919800000001",
+                    Role.ADMIN, pw));
             users.save(user("Franchise Manager", "manager@sidequest.gg", "+919800000002",
                     Role.FRANCHISE_MANAGER, pw));
 
@@ -179,12 +208,21 @@ public class DataSeeder {
             Player kiran = player(users, players, "Kiran", "kiran@sidequest.gg", pw, rxg, PlayerStatus.VERIFIED);
             Player echo = player(users, players, "Echo", "echo@sidequest.gg", pw, moti, PlayerStatus.VERIFIED);
             Player riot = player(users, players, "Riot", "riot@sidequest.gg", pw, moti, PlayerStatus.VERIFIED);
-            player(users, players, "Frost", "frost@sidequest.gg", pw, moti, PlayerStatus.VERIFIED);
+            Player frost = player(users, players, "Frost", "frost@sidequest.gg", pw, moti, PlayerStatus.VERIFIED);
             Player zen = player(users, players, "Zen", "zen@sidequest.gg", pw, night, PlayerStatus.VERIFIED);
             Player kai = player(users, players, "Kai", "kai@sidequest.gg", pw, night, PlayerStatus.VERIFIED);
             Player onyx = player(users, players, "Onyx", "onyx@sidequest.gg", pw, titans, PlayerStatus.VERIFIED);
             Player sable = player(users, players, "Sable", "sable@sidequest.gg", pw, titans, PlayerStatus.VERIFIED);
             Player drift = player(users, players, "Drift", "drift@sidequest.gg", pw, null, PlayerStatus.PENDING);
+            // A verified free agent (no franchise) — the target of the demo franchise MANAGER invite below.
+            Player blitz = player(users, players, "Blitz", "blitz@sidequest.gg", pw, null, PlayerStatus.VERIFIED);
+
+            // ---- auction free agents (unassigned; seed the Season 04 auction pool) ----
+            Player ghost = player(users, players, "Ghost", "ghost@sidequest.gg", pw, null, PlayerStatus.VERIFIED);
+            Player pulse = player(users, players, "Pulse", "pulse@sidequest.gg", pw, null, PlayerStatus.VERIFIED);
+            Player volt = player(users, players, "Volt", "volt@sidequest.gg", pw, null, PlayerStatus.VERIFIED);
+            Player rex = player(users, players, "Rex", "rex@sidequest.gg", pw, null, PlayerStatus.VERIFIED);
+            Player hex = player(users, players, "Hex", "hex@sidequest.gg", pw, null, PlayerStatus.VERIFIED);
 
             // ---- franchise owners + managers (roster members, elevated user roles) ----
             // Each franchise gets an owner and a distinct manager drawn from its own roster; their
@@ -192,7 +230,12 @@ public class DataSeeder {
             assignOwnerManager(rxg, vortex, ace, franchises, users);
             assignOwnerManager(moti, echo, riot, franchises, users);
             assignOwnerManager(night, zen, kai, franchises, users);
-            assignOwnerManager(titans, onyx, sable, franchises, users);
+            // Apex Titans has an owner but an OPEN manager seat — its owner invites free agent Blitz below,
+            // so the owner-driven franchise-invite handshake has a live accept-able target for the demo.
+            titans.setOwnerPlayer(onyx);
+            franchises.save(titans);
+            onyx.getUser().setRole(Role.FRANCHISE_OWNER);
+            users.save(onyx.getUser());
 
             // ---- frozen S03 roster history (browsable past memberships for the finished season) ----
             franchiseHistory.save(pfh(raghavan, rxg, "S03", "OWNER"));
@@ -226,6 +269,14 @@ public class DataSeeder {
             proficiencies.save(prof(specter, bgmi, 80));
             proficiencies.save(prof(nova, cs2, 83));
 
+            // ---- scouting profiles for the auction free agents (public handles + self-rated skill) ----
+            usernames.save(handle(ghost, valorant, "Ghost_Valo", true));
+            usernames.save(handle(pulse, bgmi, "PulseBR", true));
+            usernames.save(handle(volt, cs2, "VoltAim", true));
+            proficiencies.save(prof(ghost, valorant, 78));
+            proficiencies.save(prof(pulse, bgmi, 74));
+            proficiencies.save(prof(volt, cs2, 81));
+
             // ---- matches ----
             Instant now = Instant.now();
             Match completed = matches.save(match(valorant, now.minus(2, ChronoUnit.DAYS),
@@ -248,6 +299,13 @@ public class DataSeeder {
             participants.save(participant(live, night));
             participants.save(participant(scheduled, moti));
             participants.save(participant(scheduled, titans));
+
+            // ---- a fielded lineup for the upcoming (SCHEDULED) CS2 match: Motichoor field 4 of their
+            //      roster; result entry / the players list then use this subset instead of the full roster ----
+            lineups.save(lineup(scheduled, moti, blaze));
+            lineups.save(lineup(scheduled, moti, echo));
+            lineups.save(lineup(scheduled, moti, riot));
+            lineups.save(lineup(scheduled, moti, frost));
 
             // ---- published results for the completed match ----
             resultRows.save(result(completed, rxg, 24, 15, 1));
@@ -344,6 +402,19 @@ public class DataSeeder {
             teamInvites.save(teamInvite(savedSquad, drift, rookie, InviteStatus.PENDING));
             teamInvites.save(teamInvite(savedSquad, echo, rookie, InviteStatus.REJECTED));
 
+            // ---- a squad still FORMING (captain rookie assembling the roster, not yet submitted) ----
+            Registration formingSquad = new Registration();
+            formingSquad.setType(RegistrationType.SQUAD);
+            formingSquad.setSquadName("Neon Wolves");
+            formingSquad.setPlayer(rookie);
+            formingSquad.setGames(new ArrayList<>(List.of("Valorant")));
+            formingSquad.setContact("discord: neonwolves#0007");
+            formingSquad.setGame(valorant);
+            formingSquad.setStatus(RegistrationStatus.FORMING);
+            Registration savedForming = registrations.save(formingSquad);
+            teamInvites.save(teamInvite(savedForming, drift, rookie, InviteStatus.ACCEPTED));
+            teamInvites.save(teamInvite(savedForming, echo, rookie, InviteStatus.PENDING));
+
             Registration ffaReg = new Registration();
             ffaReg.setType(RegistrationType.PLAYER);
             ffaReg.setPlayer(rookie);
@@ -375,6 +446,43 @@ public class DataSeeder {
             franchiseProposal.setStatus(RegistrationStatus.PENDING);
             registrations.save(franchiseProposal);
 
+            // ---- a pending owner-driven franchise invite: Apex Titans' owner (Onyx) invites free agent
+            //      Blitz to become the franchise MANAGER (an empty seat, so acceptable mid-season). Makes
+            //      /franchises/invites/mine (as Blitz) and Titans' pending-invites list non-empty. ----
+            FranchiseInvite managerInvite = new FranchiseInvite();
+            managerInvite.setFranchise(titans);
+            managerInvite.setInvitedPlayer(blitz);
+            managerInvite.setInvitedBy(onyx);
+            managerInvite.setRole(FranchiseRole.MANAGER);
+            managerInvite.setStatus(InviteStatus.PENDING);
+            managerInvite.setMessage("We'd love to have you run the Apex Titans bench this season.");
+            franchiseInvites.save(managerInvite);
+
+            // ---- AUCTION-type registrations: free agents entering the Season 04 auction pool ----
+            registrations.save(auctionRegistration(ghost, valorant,
+                    List.of("Valorant", "CS2"), "discord: ghost#2201",
+                    "Free-agent duelist, IGL-capable. Open to any franchise."));
+            registrations.save(auctionRegistration(pulse, bgmi,
+                    List.of("BGMI"), "whatsapp: +91 90000 11111",
+                    "BGMI fragger with 3+ seasons of scrim experience."));
+            registrations.save(auctionRegistration(volt, cs2,
+                    List.of("CS2", "Valorant"), "discord: volt#0007",
+                    "CS2 AWPer looking to get drafted for Season 04."));
+
+            // ---- a DRAFT Season 04 player auction, pre-configured and ready for the admin to Start ----
+            Auction s04Auction = auction("Season 04 Player Auction", SEASON, adminUser,
+                    10, 30, 10, "10,50,100,200,500", 1000);
+            auctions.save(s04Auction);
+            // Three participating franchises, each with a purse (budget == balance) of 1000.
+            auctionFranchises.save(auctionFranchise(s04Auction, rxg, 1000));
+            auctionFranchises.save(auctionFranchise(s04Auction, moti, 1000));
+            auctionFranchises.save(auctionFranchise(s04Auction, night, 1000));
+            // A QUEUED lot pool: the three free-agent registrants plus two more detached players.
+            int lotOrder = 0;
+            for (Player prospect : List.of(ghost, pulse, volt, rex, hex)) {
+                auctionLots.save(auctionLot(s04Auction, prospect, lotOrder++));
+            }
+
             // ---- announcements ----
             announcements.save(announcement(AnnouncementCategory.RESULT,
                     "RXG storm Match Day 4", "RXG top the table after a dominant Valorant series.",
@@ -401,6 +509,15 @@ public class DataSeeder {
             valoFfa.setGame(valorant);
             valoFfa.setRegistrationType(RegistrationType.PLAYER); // FFA solo call
             announcements.save(valoFfa);
+
+            // An AUCTION registration call: free agents sign up to enter the Season 04 auction pool.
+            Announcement auctionCall = announcement(AnnouncementCategory.AUCTION,
+                    "Season 04 Player Auction — enter the pool",
+                    "Free agents: register for the Season 04 auction so franchises can draft you on auction night.",
+                    null, now.minus(1, ChronoUnit.HOURS));
+            auctionCall.setRegistrationOpen(true);
+            auctionCall.setRegistrationType(RegistrationType.AUCTION); // player-pool auction call
+            announcements.save(auctionCall);
 
             announcements.save(announcement(AnnouncementCategory.RECAP,
                     "Week 1 recap", "Highlights, upsets and the players to watch.",
@@ -509,10 +626,11 @@ public class DataSeeder {
         return s;
     }
 
-    private static Game game(String name, String format, int popularity) {
+    private static Game game(String name, String format, GameType gameType, int popularity) {
         Game g = new Game();
         g.setName(name);
         g.setFormat(format);
+        g.setGameType(gameType);
         g.setPopularity(popularity);
         g.setEnabled(true);
         return g;
@@ -603,6 +721,10 @@ public class DataSeeder {
         m.setSeasonId(SEASON);
         m.setArena(arena);
         m.setFormat(format);
+        // Non-placement genres (tactical/sports/fighting) are scored by score alone — no ladder.
+        if (game != null && game.getGameType() != null && !game.getGameType().usesPlacement()) {
+            m.setPlacementPoints("");
+        }
         return m;
     }
 
@@ -611,6 +733,14 @@ public class DataSeeder {
         mp.setMatch(m);
         mp.setFranchise(f);
         return mp;
+    }
+
+    private static MatchLineup lineup(Match m, Franchise f, Player p) {
+        MatchLineup ml = new MatchLineup();
+        ml.setMatch(m);
+        ml.setFranchise(f);
+        ml.setPlayer(p);
+        return ml;
     }
 
     private static ResultRow result(Match m, Franchise f, int kills, int placePts, int rank) {
@@ -686,5 +816,55 @@ public class DataSeeder {
         n.setBody(body);
         n.setLinkUrl(linkUrl);
         return n;
+    }
+
+    /** A PENDING AUCTION-type registration for a free agent entering the auction pool. */
+    private static Registration auctionRegistration(Player player, Game game, List<String> games,
+                                                    String contact, String note) {
+        Registration r = new Registration();
+        r.setType(RegistrationType.AUCTION);
+        r.setPlayer(player);
+        r.setGames(new ArrayList<>(games));
+        r.setContact(contact);
+        r.setGame(game);
+        r.setReason(note);
+        r.setStatus(RegistrationStatus.PENDING);
+        return r;
+    }
+
+    private static Auction auction(String title, String seasonId, User createdBy, long basePrice,
+                                   int bidTimerSeconds, int antiSnipeSeconds, String raiseIncrements,
+                                   long defaultBudget) {
+        Auction a = new Auction();
+        a.setTitle(title);
+        a.setSeasonId(seasonId);
+        a.setStatus(AuctionStatus.DRAFT);
+        a.setBasePrice(basePrice);
+        a.setBidTimerSeconds(bidTimerSeconds);
+        a.setAntiSnipeSeconds(antiSnipeSeconds);
+        a.setRaiseIncrements(raiseIncrements);
+        a.setDefaultBudget(defaultBudget);
+        a.setCreatedBy(createdBy);
+        return a;
+    }
+
+    /** A participating franchise's purse: {@code balance} starts equal to {@code budget}. */
+    private static AuctionFranchise auctionFranchise(Auction auction, Franchise franchise, long budget) {
+        AuctionFranchise af = new AuctionFranchise();
+        af.setAuction(auction);
+        af.setFranchise(franchise);
+        af.setBudget(budget);
+        af.setBalance(budget);
+        return af;
+    }
+
+    private static AuctionLot auctionLot(Auction auction, Player player, int lotOrder) {
+        AuctionLot lot = new AuctionLot();
+        lot.setAuction(auction);
+        lot.setPlayer(player);
+        lot.setStatus(AuctionLotStatus.QUEUED);
+        lot.setCurrentBid(0);
+        lot.setLotOrder(lotOrder);
+        return lot;
     }
 }

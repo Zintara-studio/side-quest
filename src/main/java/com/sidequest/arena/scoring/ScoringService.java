@@ -6,6 +6,7 @@ import com.sidequest.arena.model.Player;
 import com.sidequest.arena.model.ResultRow;
 import com.sidequest.arena.realtime.RealtimeService;
 import com.sidequest.arena.repo.FranchiseRepository;
+import com.sidequest.arena.repo.MatchRoundPlayerResultRepository;
 import com.sidequest.arena.repo.PlayerRepository;
 import com.sidequest.arena.repo.ResultRowRepository;
 import org.slf4j.Logger;
@@ -37,15 +38,18 @@ public class ScoringService {
     private final FranchiseRepository franchiseRepo;
     private final PlayerRepository playerRepo;
     private final ResultRowRepository resultRowRepo;
+    private final MatchRoundPlayerResultRepository playerResultRepo;
     private final RealtimeService realtime;
 
     public ScoringService(FranchiseRepository franchiseRepo,
                           PlayerRepository playerRepo,
                           ResultRowRepository resultRowRepo,
+                          MatchRoundPlayerResultRepository playerResultRepo,
                           RealtimeService realtime) {
         this.franchiseRepo = franchiseRepo;
         this.playerRepo = playerRepo;
         this.resultRowRepo = resultRowRepo;
+        this.playerResultRepo = playerResultRepo;
         this.realtime = realtime;
     }
 
@@ -68,9 +72,10 @@ public class ScoringService {
 
     /**
      * Full recompute: franchise points = sum of its result-row totals from matches in the franchise's
-     * <em>current</em> season; players inherit their franchise's standing; ranks are assigned by points
-     * (desc). Scoping to the franchise's season keeps points season-scoped, so a new season starts from a
-     * clean slate even though prior-season result rows are retained for history. Idempotent.
+     * <em>current</em> season (season-scoped, so a new season starts from a clean slate); ranks by
+     * points desc. Player points, by contrast, are a season-independent CAREER total aggregated from
+     * the player's own performance across every match/season, so they accumulate and never reset.
+     * Idempotent — recomputes from the retained result history every time.
      */
     @CacheEvict(cacheNames = {CacheConfig.STANDINGS, CacheConfig.LEADERBOARD_PLAYERS,
             CacheConfig.GAME_RANKINGS, CacheConfig.FRANCHISES, CacheConfig.PLAYERS}, allEntries = true)
@@ -109,14 +114,26 @@ public class ScoringService {
         }
         franchiseRepo.saveAll(franchises);
 
-        // Players inherit their franchise's points (team standing drives the player leaderboard).
-        Map<UUID, Integer> franchisePoints = franchises.stream()
-                .collect(Collectors.toMap(Franchise::getId, Franchise::getPoints));
+        // Players are NOT seasonal — their points are a CAREER total that accumulates across all
+        // seasons and survives franchise resets. It is the sum of: (a) their individual kills in
+        // FRANCHISE matches, weighted by each match's pointsPerKill (aggregatePlayerKillPoints is
+        // restricted to franchise-match rows), and (b) their FFA result totals (kills×ppk + placement,
+        // from the player-owned ResultRow rows). The franchise!=null guard on (a) keeps the two sources
+        // disjoint even when an FFA row was entered with a per-player breakdown, so no double counting.
+        Map<UUID, Long> careerPoints = new HashMap<>();
+        for (Object[] row : playerResultRepo.aggregatePlayerKillPoints()) {
+            if (row[0] != null) {
+                careerPoints.merge((UUID) row[0], ((Number) row[1]).longValue(), Long::sum);
+            }
+        }
+        for (Object[] row : resultRowRepo.aggregateFfaPlayerPoints()) {
+            if (row[0] != null) {
+                careerPoints.merge((UUID) row[0], ((Number) row[1]).longValue(), Long::sum);
+            }
+        }
         List<Player> players = playerRepo.findAll();
         for (Player p : players) {
-            int pts = p.getFranchise() != null
-                    ? franchisePoints.getOrDefault(p.getFranchise().getId(), 0) : 0;
-            p.setPoints(pts);
+            p.setPoints(careerPoints.getOrDefault(p.getId(), 0L).intValue());
         }
         playerRepo.saveAll(players);
 

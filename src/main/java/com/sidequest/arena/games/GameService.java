@@ -88,6 +88,10 @@ public class GameService {
             game.setIconUrl(request.iconUrl());
             changes.add("iconUrl=" + request.iconUrl());
         }
+        if (request.gameType() != null) {
+            game.setGameType(request.gameType());
+            changes.add("gameType=" + request.gameType());
+        }
 
         Game saved = gameRepository.save(game);
 
@@ -104,6 +108,7 @@ public class GameService {
                 game.getId().toString(),
                 game.getName(),
                 game.getFormat(),
+                game.getGameType().name(),
                 game.getIconUrl(),
                 game.isEnabled(),
                 game.getPopularity()
@@ -120,6 +125,7 @@ public class GameService {
                 game.getId().toString(),
                 game.getName(),
                 game.getFormat(),
+                game.getGameType().name(),
                 game.getIconUrl(),
                 game.isEnabled(),
                 game.getPopularity(),

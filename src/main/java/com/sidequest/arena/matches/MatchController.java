@@ -5,10 +5,12 @@ import com.sidequest.arena.matches.dto.CreateMatchRequest;
 import com.sidequest.arena.matches.dto.EnterResultsRequest;
 import com.sidequest.arena.matches.dto.EnterRoundsRequest;
 import com.sidequest.arena.matches.dto.MatchDetail;
+import com.sidequest.arena.matches.dto.MatchLineupView;
 import com.sidequest.arena.matches.dto.MatchPlayerView;
 import com.sidequest.arena.matches.dto.MatchRoundView;
 import com.sidequest.arena.matches.dto.MatchSummary;
 import com.sidequest.arena.matches.dto.ResultView;
+import com.sidequest.arena.matches.dto.SetLineupRequest;
 import com.sidequest.arena.matches.dto.UpdateMatchRequest;
 import com.sidequest.arena.model.MatchStatus;
 import jakarta.validation.Valid;
@@ -19,6 +21,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -70,10 +73,26 @@ public class MatchController {
         return matchService.rounds(id);
     }
 
-    /** Returns the players taking part (franchise rosters, or FFA registrations). 404 if missing. */
+    /** Returns the players taking part (franchise lineups with roster fallback, or FFA registrations). */
     @GetMapping("/{id}/players")
     public List<MatchPlayerView> players(@PathVariable String id) {
         return matchService.players(id);
+    }
+
+    /** Returns the per-franchise fielded lineups for a match (empty lineup where none is set). Public. */
+    @GetMapping("/{id}/lineups")
+    public List<MatchLineupView> lineups(@PathVariable String id) {
+        return matchService.getLineups(id);
+    }
+
+    /**
+     * Set a participating franchise's fielded lineup for a match. Authenticated; the owner/manager/admin
+     * check is enforced in the service. Returns the updated lineup.
+     */
+    @PutMapping("/{id}/lineups/{franchiseId}")
+    public MatchLineupView setLineup(@PathVariable String id, @PathVariable String franchiseId,
+                                     @RequestBody SetLineupRequest request) {
+        return matchService.setLineup(id, franchiseId, request.playerIds());
     }
 
     /** Admin: schedules a new fixture and seeds its roster. Returns 201 with the new detail. */

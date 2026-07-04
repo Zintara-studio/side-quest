@@ -13,6 +13,18 @@ public interface MatchRoundPlayerResultRepository extends JpaRepository<MatchRou
 
     List<MatchRoundPlayerResult> findByMatchRoundIdOrderByKillsDesc(UUID matchRoundId);
 
+    /**
+     * Career kill-points per player from FRANCHISE matches: sum of each player's kills weighted by the
+     * match's pointsPerKill, across every round/season. Each row is [playerId (UUID), points (Long)].
+     * Restricted to franchise != null so FFA per-player breakdown rows are excluded here — FFA credit
+     * is counted once via the player-owned ResultRow (see {@code aggregateFfaPlayerPoints}); otherwise
+     * an FFA entrant's kills would be double-counted.
+     */
+    @Query("select pr.player.id, sum(pr.kills * pr.matchRound.match.pointsPerKill) "
+            + "from MatchRoundPlayerResult pr where pr.player is not null and pr.franchise is not null "
+            + "group by pr.player.id")
+    List<Object[]> aggregatePlayerKillPoints();
+
     @Modifying
     @Query("delete from MatchRoundPlayerResult pr where pr.matchRound.match.id = :matchId")
     void deleteByMatchId(@Param("matchId") UUID matchId);

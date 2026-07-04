@@ -8,11 +8,17 @@ import com.sidequest.arena.franchises.dto.AssignPlayerRequest;
 import com.sidequest.arena.franchises.dto.AssignRoleRequest;
 import com.sidequest.arena.franchises.dto.CreateFranchiseRequest;
 import com.sidequest.arena.franchises.dto.FranchiseDetail;
+import com.sidequest.arena.franchises.dto.FranchiseInviteRequest;
+import com.sidequest.arena.franchises.dto.FranchiseInviteView;
 import com.sidequest.arena.franchises.dto.FranchiseMatchView;
+import com.sidequest.arena.franchises.dto.FranchiseMineView;
 import com.sidequest.arena.franchises.dto.FranchiseSummary;
 import com.sidequest.arena.franchises.dto.RosterMember;
 import com.sidequest.arena.franchises.dto.UpdateFranchiseRequest;
 import com.sidequest.arena.model.Franchise;
+import com.sidequest.arena.model.FranchiseInvite;
+import com.sidequest.arena.model.FranchiseRole;
+import com.sidequest.arena.model.InviteStatus;
 import com.sidequest.arena.model.Match;
 import com.sidequest.arena.model.MatchParticipant;
 import com.sidequest.arena.model.NotificationType;
@@ -25,6 +31,7 @@ import com.sidequest.arena.model.ResultRow;
 import com.sidequest.arena.model.Role;
 import com.sidequest.arena.model.User;
 import com.sidequest.arena.notifications.NotificationService;
+import com.sidequest.arena.repo.FranchiseInviteRepository;
 import com.sidequest.arena.repo.FranchiseRepository;
 import com.sidequest.arena.repo.MatchParticipantRepository;
 import com.sidequest.arena.repo.PlayerRepository;
@@ -57,6 +64,7 @@ public class FranchiseService {
     private final MatchParticipantRepository matchParticipantRepository;
     private final ResultRowRepository resultRowRepository;
     private final RegistrationRepository registrationRepository;
+    private final FranchiseInviteRepository franchiseInviteRepository;
     private final NotificationService notificationService;
     private final SeasonService seasonService;
     private final AuditService auditService;
@@ -67,6 +75,7 @@ public class FranchiseService {
                             MatchParticipantRepository matchParticipantRepository,
                             ResultRowRepository resultRowRepository,
                             RegistrationRepository registrationRepository,
+                            FranchiseInviteRepository franchiseInviteRepository,
                             NotificationService notificationService,
                             SeasonService seasonService,
                             AuditService auditService) {
@@ -76,6 +85,7 @@ public class FranchiseService {
         this.matchParticipantRepository = matchParticipantRepository;
         this.resultRowRepository = resultRowRepository;
         this.registrationRepository = registrationRepository;
+        this.franchiseInviteRepository = franchiseInviteRepository;
         this.notificationService = notificationService;
         this.seasonService = seasonService;
         this.auditService = auditService;
@@ -200,21 +210,7 @@ public class FranchiseService {
     public FranchiseDetail setOwner(String id, AssignRoleRequest req) {
         Franchise franchise = require(id);
         Player player = requirePlayer(req.playerId());
-
-        requireBetweenSeasons(franchise.getOwnerPlayer());
-        requireEligible(player, franchise);
-
-        franchise.setOwnerPlayer(player);
-        player.setFranchise(franchise);
-        playerRepository.save(player);
-        elevateRole(player, Role.FRANCHISE_OWNER);
-        Franchise saved = franchiseRepository.save(franchise);
-
-        notify(player, "You're now a franchise owner",
-                "You were made owner of " + franchise.getName() + ".");
-        auditService.record("franchise.owner.set", "Franchise", saved.getId().toString(),
-                player.getGamerTag() + " is now owner of " + saved.getName());
-        return toDetail(saved);
+        return toDetail(applyOwner(franchise, player));
     }
 
     /**
@@ -228,7 +224,37 @@ public class FranchiseService {
         Franchise franchise = require(id);
         requireOwnerOrAdmin(franchise);
         Player player = requirePlayer(req.playerId());
+        return toDetail(applyManager(franchise, player));
+    }
 
+    /**
+     * Shared owner-assignment sequence used by the admin direct-assign path and the invite-accept path.
+     * Re-checks the season lock and eligibility (so a stale invite fails cleanly), sets the slot, adds
+     * the player to the roster, elevates their role, notifies and audits. Returns the saved franchise.
+     */
+    private Franchise applyOwner(Franchise franchise, Player player) {
+        requireBetweenSeasons(franchise.getOwnerPlayer());
+        requireEligible(player, franchise);
+
+        franchise.setOwnerPlayer(player);
+        player.setFranchise(franchise);
+        playerRepository.save(player);
+        elevateRole(player, Role.FRANCHISE_OWNER);
+        Franchise saved = franchiseRepository.save(franchise);
+
+        notify(player, "You're now a franchise owner",
+                "You were made owner of " + franchise.getName() + ".");
+        auditService.record("franchise.owner.set", "Franchise", saved.getId().toString(),
+                player.getGamerTag() + " is now owner of " + saved.getName());
+        return saved;
+    }
+
+    /**
+     * Shared manager-assignment sequence used by the admin direct-assign path and the invite-accept
+     * path. Re-checks the season lock and eligibility, sets the slot, adds the player to the roster,
+     * raises their role (raise-only), notifies and audits. Returns the saved franchise.
+     */
+    private Franchise applyManager(Franchise franchise, Player player) {
         requireBetweenSeasons(franchise.getManagerPlayer());
         requireEligible(player, franchise);
 
@@ -243,7 +269,7 @@ public class FranchiseService {
                 "You were made manager of " + franchise.getName() + ".");
         auditService.record("franchise.manager.set", "Franchise", saved.getId().toString(),
                 player.getGamerTag() + " is now manager of " + saved.getName());
-        return toDetail(saved);
+        return saved;
     }
 
     /** Admin: discard (deactivate) a franchise so it no longer competes; history is preserved. */
@@ -324,8 +350,10 @@ public class FranchiseService {
      */
     @Transactional(readOnly = true)
     public List<FranchiseDetail.PersonView> eligiblePlayers(UUID franchiseId) {
-        franchiseRepository.findById(franchiseId)
+        Franchise franchise = franchiseRepository.findById(franchiseId)
                 .orElseThrow(() -> ApiException.notFound("Franchise", franchiseId));
+        // Admin, or THIS franchise's owner (so an owner of another franchise can't read this list).
+        requireOwnerOrAdmin(franchise);
         return playerRepository.findByStatus(PlayerStatus.VERIFIED).stream()
                 .filter(p -> p.getFranchise() == null
                         || p.getFranchise().getId().equals(franchiseId))
@@ -333,7 +361,216 @@ public class FranchiseService {
                 .toList();
     }
 
+    // ---- owner/manager invites ----
+
+    /**
+     * The franchise owner (or an admin) invites a player to become the new owner (ownership transfer)
+     * or the manager. Fails fast if the invitee is ineligible or the target slot is season-locked (a
+     * filled slot can only change between seasons). Re-opens a previously rejected invite for the same
+     * (franchise, invitee) or creates a new pending one. The invitee is notified. Returns the invite.
+     */
+    @Transactional
+    public FranchiseInviteView createInvite(String id, FranchiseInviteRequest req) {
+        Franchise franchise = require(id);
+        requireOwnerOrAdmin(franchise);
+        if (req.role() == null) {
+            throw ApiException.badRequest("A role (OWNER or MANAGER) is required");
+        }
+        Player invitee = resolveInvitee(req);
+
+        // Fail fast so a doomed invite is never created: the invitee must be eligible and the target
+        // slot must be changeable now (empty slot, or between seasons for a filled slot).
+        requireEligible(invitee, franchise);
+        requireBetweenSeasons(req.role() == FranchiseRole.OWNER
+                ? franchise.getOwnerPlayer() : franchise.getManagerPlayer());
+
+        Player inviter = currentInviter(franchise);
+
+        FranchiseInvite invite = franchiseInviteRepository
+                .findByFranchiseIdAndInvitedPlayerId(franchise.getId(), invitee.getId())
+                .orElse(null);
+        if (invite != null && invite.getStatus() == InviteStatus.PENDING) {
+            throw ApiException.conflict(invitee.getGamerTag() + " already has a pending invite");
+        }
+        if (invite == null) {
+            invite = new FranchiseInvite();
+            invite.setFranchise(franchise);
+            invite.setInvitedPlayer(invitee);
+        }
+        invite.setInvitedBy(inviter);
+        invite.setRole(req.role());
+        invite.setStatus(InviteStatus.PENDING);
+        invite.setMessage(req.message());
+        FranchiseInvite saved = franchiseInviteRepository.save(invite);
+
+        if (invitee.getUser() != null) {
+            notificationService.create(invitee.getUser(), NotificationType.GENERAL,
+                    "Franchise invite",
+                    "You were invited to be " + req.role().name().toLowerCase() + " of "
+                            + franchise.getName() + ".", "/my/franchise");
+        }
+        auditService.record("franchise.invite.create", "Franchise", franchise.getId().toString(),
+                "Invited " + invitee.getGamerTag() + " as " + req.role().name()
+                        + " of " + franchise.getName());
+        return toInviteView(saved);
+    }
+
+    /**
+     * The invited player accepts or rejects a franchise owner/manager invite. Only the invitee may
+     * respond, and only while pending. Accepting re-runs the shared owner/manager assignment (which
+     * re-checks the season lock and eligibility, so a stale invite fails cleanly). The inviter is
+     * notified either way.
+     */
+    @CacheEvict(cacheNames = {CacheConfig.FRANCHISES, CacheConfig.PLAYERS}, allEntries = true)
+    @Transactional
+    public FranchiseInviteView respondToInvite(String inviteId, boolean accept) {
+        FranchiseInvite invite = loadInvite(inviteId);
+        Player invitee = invite.getInvitedPlayer();
+
+        if (invitee == null || invitee.getUser() == null
+                || !invitee.getUser().getId().equals(SecurityUtils.currentUserId())) {
+            throw ApiException.forbidden("You can only respond to your own invitations");
+        }
+        if (invite.getStatus() != InviteStatus.PENDING) {
+            throw ApiException.conflict("This invitation has already been answered");
+        }
+
+        Franchise franchise = invite.getFranchise();
+        if (accept) {
+            // Re-runs the season-lock + eligibility checks; a stale invite fails cleanly here.
+            if (invite.getRole() == FranchiseRole.OWNER) {
+                applyOwner(franchise, invitee);
+            } else {
+                applyManager(franchise, invitee);
+            }
+        }
+        invite.setStatus(accept ? InviteStatus.ACCEPTED : InviteStatus.REJECTED);
+        FranchiseInvite saved = franchiseInviteRepository.save(invite);
+
+        Player inviter = invite.getInvitedBy();
+        if (inviter != null && inviter.getUser() != null) {
+            notificationService.create(inviter.getUser(), NotificationType.GENERAL,
+                    accept ? "Franchise invite accepted" : "Franchise invite declined",
+                    invitee.getGamerTag() + (accept ? " accepted" : " declined")
+                            + " the " + invite.getRole().name().toLowerCase() + " invite for "
+                            + (franchise != null ? franchise.getName() : "your franchise") + ".",
+                    "/my/franchise");
+        }
+        auditService.record(accept ? "franchise.invite.accept" : "franchise.invite.reject",
+                "FranchiseInvite", saved.getId().toString(),
+                invitee.getGamerTag() + (accept ? " accepted" : " declined")
+                        + " a " + saved.getRole().name() + " invite");
+        return toInviteView(saved);
+    }
+
+    /** Owner/manager invitations addressed to the current player (newest first). */
+    @Transactional(readOnly = true)
+    public List<FranchiseInviteView> myInvites() {
+        Player player = playerRepository.findByUserId(SecurityUtils.currentUserId()).orElse(null);
+        if (player == null) {
+            return List.of();
+        }
+        return franchiseInviteRepository.findByInvitedPlayerIdOrderByCreatedAtDesc(player.getId()).stream()
+                .map(FranchiseService::toInviteView)
+                .toList();
+    }
+
+    /** Pending owner/manager invites a franchise has outstanding (owner/admin only). */
+    @Transactional(readOnly = true)
+    public List<FranchiseInviteView> franchisePendingInvites(String id) {
+        Franchise franchise = require(id);
+        requireOwnerOrAdmin(franchise);
+        return franchiseInviteRepository
+                .findByFranchiseIdAndStatusOrderByCreatedAtDesc(franchise.getId(), InviteStatus.PENDING)
+                .stream()
+                .map(FranchiseService::toInviteView)
+                .toList();
+    }
+
+    /**
+     * The current user's franchise and the role they hold on it, for the "my franchise" screen.
+     * Returns {@code null} when the caller is not a player or does not belong to a franchise.
+     */
+    @Transactional(readOnly = true)
+    public FranchiseMineView myFranchise() {
+        Player player = playerRepository.findByUserId(SecurityUtils.currentUserId()).orElse(null);
+        if (player == null || player.getFranchise() == null) {
+            return null;
+        }
+        Franchise franchise = player.getFranchise();
+        String myRole = roleOf(player, franchise);
+        return new FranchiseMineView(toDetail(franchise), myRole);
+    }
+
     // ---- helpers ----
+
+    /** The current player standing in as the inviter, or the franchise owner when an admin invites. */
+    private Player currentInviter(Franchise franchise) {
+        Player me = playerRepository.findByUserId(SecurityUtils.currentUserId()).orElse(null);
+        if (me != null) {
+            return me;
+        }
+        // An admin without a player profile falls back to the franchise owner as the invite's sender.
+        Player owner = franchise.getOwnerPlayer();
+        if (owner != null) {
+            return owner;
+        }
+        throw ApiException.badRequest("No player profile to send the invite from");
+    }
+
+    /** Resolve the invitee by player id or gamer tag (mirrors the squad-invite resolver). */
+    private Player resolveInvitee(FranchiseInviteRequest request) {
+        if (request.playerId() != null && !request.playerId().isBlank()) {
+            return playerRepository.findById(parseId(request.playerId(), "Player"))
+                    .orElseThrow(() -> ApiException.notFound("Player", request.playerId()));
+        }
+        if (request.gamerTag() != null && !request.gamerTag().isBlank()) {
+            return playerRepository.findByGamerTagIgnoreCase(request.gamerTag().trim())
+                    .orElseThrow(() -> ApiException.notFound("Player", request.gamerTag()));
+        }
+        throw ApiException.badRequest("Provide a gamerTag or playerId to invite");
+    }
+
+    /** The caller's role on a franchise: OWNER &gt; MANAGER &gt; IGL &gt; PLAYER. */
+    private static String roleOf(Player player, Franchise franchise) {
+        UUID pid = player.getId();
+        if (matchesPlayer(franchise.getOwnerPlayer(), pid)) {
+            return "OWNER";
+        }
+        if (matchesPlayer(franchise.getManagerPlayer(), pid)) {
+            return "MANAGER";
+        }
+        if (matchesPlayer(franchise.getIglPlayer(), pid)) {
+            return "IGL";
+        }
+        return "PLAYER";
+    }
+
+    private static boolean matchesPlayer(Player slot, UUID playerId) {
+        return slot != null && slot.getId().equals(playerId);
+    }
+
+    private FranchiseInvite loadInvite(String id) {
+        return franchiseInviteRepository.findById(parseId(id, "FranchiseInvite"))
+                .orElseThrow(() -> ApiException.notFound("FranchiseInvite", id));
+    }
+
+    private static FranchiseInviteView toInviteView(FranchiseInvite invite) {
+        Franchise f = invite.getFranchise();
+        Player invitedBy = invite.getInvitedBy();
+        Player invited = invite.getInvitedPlayer();
+        return new FranchiseInviteView(
+                invite.getId().toString(),
+                f == null ? null : f.getId().toString(),
+                f == null ? null : f.getName(),
+                f == null ? null : f.getTag(),
+                invite.getRole() == null ? null : invite.getRole().name(),
+                invitedBy == null ? null : invitedBy.getGamerTag(),
+                invited == null ? null : invited.getGamerTag(),
+                invite.getStatus() == null ? null : invite.getStatus().name(),
+                invite.getMessage(),
+                invite.getCreatedAt());
+    }
 
     /**
      * Raise the player's user account to {@code role} — only ever upward in the role hierarchy

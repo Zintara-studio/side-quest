@@ -6,7 +6,10 @@ import com.sidequest.arena.franchises.dto.AssignPlayerRequest;
 import com.sidequest.arena.franchises.dto.AssignRoleRequest;
 import com.sidequest.arena.franchises.dto.CreateFranchiseRequest;
 import com.sidequest.arena.franchises.dto.FranchiseDetail;
+import com.sidequest.arena.franchises.dto.FranchiseInviteRequest;
+import com.sidequest.arena.franchises.dto.FranchiseInviteView;
 import com.sidequest.arena.franchises.dto.FranchiseMatchView;
+import com.sidequest.arena.franchises.dto.FranchiseMineView;
 import com.sidequest.arena.franchises.dto.FranchiseSummary;
 import com.sidequest.arena.franchises.dto.RosterMember;
 import com.sidequest.arena.franchises.dto.UpdateFranchiseRequest;
@@ -96,9 +99,9 @@ public class FranchiseController {
         return franchiseService.setOwner(id, request);
     }
 
-    /** Candidate players for this franchise's owner/manager slot (admin only). */
+    /** Candidate players for this franchise's owner/manager slot (admin or the franchise owner). */
     @GetMapping("/{id}/eligible-owners")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','FRANCHISE_OWNER')")
     public List<FranchiseDetail.PersonView> eligibleOwners(@PathVariable String id) {
         return franchiseService.eligiblePlayers(parseId(id, "Franchise"));
     }
@@ -122,6 +125,45 @@ public class FranchiseController {
     @PreAuthorize("hasRole('ADMIN')")
     public FranchiseDetail discard(@PathVariable String id) {
         return franchiseService.discard(id);
+    }
+
+    // ---- owner/manager invites (owner or admin; enforced in the service) ----
+
+    /** The current user's franchise plus their role on it; 200 with a null body when they have none. */
+    @GetMapping("/mine")
+    public FranchiseMineView mine() {
+        return franchiseService.myFranchise();
+    }
+
+    /** Owner/manager invitations addressed to the current player. */
+    @GetMapping("/invites/mine")
+    public List<FranchiseInviteView> myInvites() {
+        return franchiseService.myInvites();
+    }
+
+    /** Invite a player to be the franchise's new owner or manager (owner or admin; enforced in service). */
+    @PostMapping("/{id}/invites")
+    public FranchiseInviteView createInvite(@PathVariable String id,
+                                            @Valid @RequestBody FranchiseInviteRequest request) {
+        return franchiseService.createInvite(id, request);
+    }
+
+    /** Pending owner/manager invites a franchise has outstanding (owner or admin). */
+    @GetMapping("/{id}/invites")
+    public List<FranchiseInviteView> pendingInvites(@PathVariable String id) {
+        return franchiseService.franchisePendingInvites(id);
+    }
+
+    /** The invited player accepts a franchise owner/manager invite. */
+    @PostMapping("/invites/{inviteId}/accept")
+    public FranchiseInviteView acceptInvite(@PathVariable String inviteId) {
+        return franchiseService.respondToInvite(inviteId, true);
+    }
+
+    /** The invited player rejects a franchise owner/manager invite. */
+    @PostMapping("/invites/{inviteId}/reject")
+    public FranchiseInviteView rejectInvite(@PathVariable String inviteId) {
+        return franchiseService.respondToInvite(inviteId, false);
     }
 
     /** Parse a path id to UUID; an unparseable id can never match, so report it as not found. */

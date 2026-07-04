@@ -7,9 +7,11 @@ import com.sidequest.arena.model.Dispute;
 import com.sidequest.arena.model.DisputeCategory;
 import com.sidequest.arena.model.DisputeStatus;
 import com.sidequest.arena.model.Match;
+import com.sidequest.arena.model.Player;
 import com.sidequest.arena.model.User;
 import com.sidequest.arena.repo.DisputeRepository;
 import com.sidequest.arena.repo.MatchRepository;
+import com.sidequest.arena.repo.PlayerRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,13 +28,16 @@ public class DisputeService {
 
     private final DisputeRepository disputeRepository;
     private final MatchRepository matchRepository;
+    private final PlayerRepository playerRepository;
     private final AuditService auditService;
 
     public DisputeService(DisputeRepository disputeRepository,
                           MatchRepository matchRepository,
+                          PlayerRepository playerRepository,
                           AuditService auditService) {
         this.disputeRepository = disputeRepository;
         this.matchRepository = matchRepository;
+        this.playerRepository = playerRepository;
         this.auditService = auditService;
     }
 
@@ -68,16 +73,20 @@ public class DisputeService {
     @Transactional(readOnly = true)
     public List<DisputeView> myDisputes(User current) {
         return disputeRepository.findByRaisedByIdOrderByCreatedAtDesc(current.getId()).stream()
-                .map(DisputeService::toView)
+                .map(this::toView)
                 .toList();
     }
 
     // ---- helpers ----
 
-    private static DisputeView toView(Dispute dispute) {
+    private DisputeView toView(Dispute dispute) {
         Match match = dispute.getMatch();
         String matchId = match != null ? match.getId().toString() : null;
         String matchTitle = match != null && match.getGame() != null ? match.getGame().getName() : null;
+        User raiser = dispute.getRaisedBy();
+        String raisedByName = raiser != null ? raiser.getName() : null;
+        String raisedByGamerTag = raiser == null ? null
+                : playerRepository.findByUserId(raiser.getId()).map(Player::getGamerTag).orElse(null);
         return new DisputeView(
                 dispute.getId().toString(),
                 matchId,
@@ -86,6 +95,8 @@ public class DisputeService {
                 dispute.getCategory() != null ? dispute.getCategory().name() : null,
                 dispute.getStatus().name(),
                 dispute.getResolution(),
-                dispute.getCreatedAt());
+                dispute.getCreatedAt(),
+                raisedByName,
+                raisedByGamerTag);
     }
 }

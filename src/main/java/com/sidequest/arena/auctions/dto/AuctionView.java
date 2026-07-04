@@ -1,0 +1,40 @@
+package com.sidequest.arena.auctions.dto;
+
+import java.time.Instant;
+import java.util.List;
+
+/**
+ * Full snapshot of an auction for the (polling) client. {@code serverTime} lets the client reconcile
+ * its countdown against the authoritative clock, {@code currentLot} is the lot on the block (nullable),
+ * and {@code franchises}/{@code lots}/{@code recentBids} carry the board state and live feed.
+ *
+ * @param id             auction id
+ * @param title          auction title
+ * @param seasonId       season the auction feeds (nullable)
+ * @param status         {@code DRAFT} / {@code LIVE} / {@code PAUSED} / {@code COMPLETED}
+ * @param basePrice      opening bid for the first bid on a lot
+ * @param bidTimerSeconds countdown length; a bid resets the deadline to now + this
+ * @param antiSnipeSeconds anti-snipe cushion (config; carried for the client)
+ * @param raiseIncrements allowed raise steps (smallest is the min raise)
+ * @param serverTime     authoritative server clock at snapshot time
+ * @param currentLot     the lot currently on the block, or {@code null}
+ * @param franchises     participating franchises with purses and hauls
+ * @param lots           every lot in queue order
+ * @param recentBids     most recent bids across the auction (newest first)
+ */
+public record AuctionView(
+        String id,
+        String title,
+        String seasonId,
+        String status,
+        long basePrice,
+        int bidTimerSeconds,
+        int antiSnipeSeconds,
+        List<Integer> raiseIncrements,
+        Instant serverTime,
+        AuctionLotView currentLot,
+        List<AuctionFranchiseView> franchises,
+        List<AuctionLotView> lots,
+        List<AuctionBidView> recentBids
+) {
+}

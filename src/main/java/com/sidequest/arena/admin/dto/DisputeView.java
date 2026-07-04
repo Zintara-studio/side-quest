@@ -12,8 +12,10 @@ import java.time.Instant;
  * @param reason     why the dispute was raised
  * @param category   {@link com.sidequest.arena.model.DisputeCategory} name (RESULT / APPEAL / GENERAL)
  * @param status     current dispute status
- * @param resolution the resolution note, if any
- * @param createdAt  when the dispute was raised
+ * @param resolution       the resolution note, if any
+ * @param createdAt        when the dispute was raised
+ * @param raisedByName     display name of the user who raised it, or {@code null}
+ * @param raisedByGamerTag gamer tag of the raiser's player profile, or {@code null}
  */
 public record DisputeView(
         String id,
@@ -23,6 +25,8 @@ public record DisputeView(
         String category,
         String status,
         String resolution,
-        Instant createdAt
+        Instant createdAt,
+        String raisedByName,
+        String raisedByGamerTag
 ) {
 }

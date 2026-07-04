@@ -8,6 +8,7 @@ import com.sidequest.arena.matches.dto.CreateMatchRequest;
 import com.sidequest.arena.matches.dto.EnterResultsRequest;
 import com.sidequest.arena.matches.dto.EnterRoundsRequest;
 import com.sidequest.arena.matches.dto.GameMini;
+import com.sidequest.arena.matches.dto.MatchLineupView;
 import com.sidequest.arena.matches.dto.MatchPlayerView;
 import com.sidequest.arena.matches.dto.MatchRoundView;
 import com.sidequest.arena.matches.dto.MatchDetail;
@@ -18,8 +19,10 @@ import com.sidequest.arena.matches.dto.ResultView;
 import com.sidequest.arena.matches.dto.UpdateMatchRequest;
 import com.sidequest.arena.model.Franchise;
 import com.sidequest.arena.model.Game;
+import com.sidequest.arena.model.GameType;
 import com.sidequest.arena.model.LeagueSettings;
 import com.sidequest.arena.model.Match;
+import com.sidequest.arena.model.MatchLineup;
 import com.sidequest.arena.model.MatchParticipant;
 import com.sidequest.arena.model.MatchRound;
 import com.sidequest.arena.model.MatchRoundPlayerResult;
@@ -35,6 +38,7 @@ import com.sidequest.arena.model.InviteStatus;
 import com.sidequest.arena.repo.FranchiseRepository;
 import com.sidequest.arena.repo.GameRepository;
 import com.sidequest.arena.repo.LeagueSettingsRepository;
+import com.sidequest.arena.repo.MatchLineupRepository;
 import com.sidequest.arena.repo.MatchParticipantRepository;
 import com.sidequest.arena.repo.MatchRepository;
 import com.sidequest.arena.repo.MatchRoundPlayerResultRepository;
@@ -45,6 +49,7 @@ import com.sidequest.arena.repo.RegistrationRepository;
 import com.sidequest.arena.repo.ResultRowRepository;
 import com.sidequest.arena.repo.TeamInviteRepository;
 import com.sidequest.arena.scoring.ScoringService;
+import com.sidequest.arena.security.SecurityUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -69,6 +74,7 @@ public class MatchService {
     private final FranchiseRepository franchiseRepository;
     private final PlayerRepository playerRepository;
     private final MatchParticipantRepository matchParticipantRepository;
+    private final MatchLineupRepository matchLineupRepository;
     private final ResultRowRepository resultRowRepository;
     private final MatchRoundRepository matchRoundRepository;
     private final MatchRoundResultRepository matchRoundResultRepository;
@@ -84,6 +90,7 @@ public class MatchService {
                         FranchiseRepository franchiseRepository,
                         PlayerRepository playerRepository,
                         MatchParticipantRepository matchParticipantRepository,
+                        MatchLineupRepository matchLineupRepository,
                         ResultRowRepository resultRowRepository,
                         MatchRoundRepository matchRoundRepository,
                         MatchRoundResultRepository matchRoundResultRepository,
@@ -98,6 +105,7 @@ public class MatchService {
         this.franchiseRepository = franchiseRepository;
         this.playerRepository = playerRepository;
         this.matchParticipantRepository = matchParticipantRepository;
+        this.matchLineupRepository = matchLineupRepository;
         this.resultRowRepository = resultRowRepository;
         this.matchRoundRepository = matchRoundRepository;
         this.matchRoundResultRepository = matchRoundResultRepository;
@@ -171,6 +179,17 @@ public class MatchService {
         if (defaults != null) {
             match.setPointsPerKill(defaults.getPointsPerKill());
             match.setPlacementPoints(defaults.getPlacementPoints());
+        }
+        // Override the placement ladder from the game's genre: non-placement genres (TACTICAL/SPORTS/
+        // FIGHTING) carry no ladder, so their fixtures score on kills/score alone; placement genres
+        // (BATTLE_ROYALE/PARTY) keep the ladder seeded above (falling back to the genre default when the
+        // league seeded none). pointsPerKill stays as-is (1) so kills/score are weighted uniformly.
+        GameType gameType = game.getGameType();
+        if (gameType != null && !gameType.usesPlacement()) {
+            match.setPlacementPoints("");
+        } else if (gameType != null && (match.getPlacementPoints() == null
+                || match.getPlacementPoints().isBlank())) {
+            match.setPlacementPoints(gameType.defaultPlacementPoints());
         }
         Match saved = matchRepository.save(match);
 
@@ -289,7 +308,10 @@ public class MatchService {
         if (request.pointsPerKill() != null) {
             match.setPointsPerKill(request.pointsPerKill());
         }
-        if (request.placementPoints() != null && !request.placementPoints().isBlank()) {
+        // A non-null value is applied even when empty: an explicit "" CLEARS the ladder (non-BR
+        // single-result entry sends "" so scores aren't inflated by stale placement points). Only an
+        // omitted/null field means "keep the existing weights".
+        if (request.placementPoints() != null) {
             match.setPlacementPoints(request.placementPoints());
         }
         int pointsPerKill = match.getPointsPerKill();
@@ -483,13 +505,126 @@ public class MatchService {
                 if (f == null) {
                     continue;
                 }
-                for (Player p : playerRepository.findByFranchiseId(f.getId())) {
-                    out.add(new MatchPlayerView(p.getId().toString(), p.getGamerTag(),
-                            f.getId().toString(), f.getTag(), null));
+                // A franchise that has set a per-match lineup fields exactly those players; otherwise
+                // fall back to the full roster.
+                List<MatchLineup> lineup = matchLineupRepository
+                        .findByMatchIdAndFranchiseId(match.getId(), f.getId());
+                if (!lineup.isEmpty()) {
+                    for (MatchLineup ml : lineup) {
+                        Player p = ml.getPlayer();
+                        if (p == null) {
+                            continue;
+                        }
+                        out.add(new MatchPlayerView(p.getId().toString(), p.getGamerTag(),
+                                f.getId().toString(), f.getTag(), null));
+                    }
+                } else {
+                    for (Player p : playerRepository.findByFranchiseId(f.getId())) {
+                        out.add(new MatchPlayerView(p.getId().toString(), p.getGamerTag(),
+                                f.getId().toString(), f.getTag(), null));
+                    }
                 }
             }
         }
         return out;
+    }
+
+    /**
+     * The per-franchise lineups for a match: one {@link MatchLineupView} per participating franchise,
+     * carrying the players it has assigned (an empty list when the franchise has set no lineup). 404 if
+     * the match is missing.
+     */
+    @Transactional(readOnly = true)
+    public List<MatchLineupView> getLineups(String id) {
+        Match match = require(id);
+        List<MatchLineupView> out = new ArrayList<>();
+        for (MatchParticipant mp : matchParticipantRepository.findByMatchId(match.getId())) {
+            Franchise f = mp.getFranchise();
+            if (f == null) {
+                continue;
+            }
+            List<MatchPlayerView> players = new ArrayList<>();
+            for (MatchLineup ml : matchLineupRepository
+                    .findByMatchIdAndFranchiseId(match.getId(), f.getId())) {
+                Player p = ml.getPlayer();
+                if (p == null) {
+                    continue;
+                }
+                players.add(new MatchPlayerView(p.getId().toString(), p.getGamerTag(),
+                        f.getId().toString(), f.getTag(), null));
+            }
+            out.add(new MatchLineupView(f.getId().toString(), f.getTag(), f.getName(), players));
+        }
+        return out;
+    }
+
+    /**
+     * Set (replace) a participating franchise's fielded lineup for a match. Allowed for an admin or the
+     * franchise's owner/manager. The match must be a FRANCHISE match, the franchise must be
+     * participating, and every supplied player must be on that franchise. The prior lineup is cleared
+     * and replaced. Returns the updated {@link MatchLineupView}.
+     */
+    @Transactional
+    public MatchLineupView setLineup(String id, String franchiseId, List<String> playerIds) {
+        Match match = require(id);
+        if (match.getMatchType() != MatchType.FRANCHISE) {
+            throw ApiException.badRequest("Lineups can only be set on franchise matches");
+        }
+        Franchise franchise = requireFranchise(franchiseId);
+        if (!matchParticipantRepository.existsByMatchIdAndFranchiseId(match.getId(), franchise.getId())) {
+            throw ApiException.badRequest("Franchise is not participating in this match");
+        }
+
+        // Authorize: admin, or the franchise owner / manager (by their linked user account).
+        if (!SecurityUtils.isAdmin()) {
+            UUID userId = SecurityUtils.currentUserId();
+            Player owner = franchise.getOwnerPlayer();
+            Player manager = franchise.getManagerPlayer();
+            boolean isOwner = owner != null && owner.getUser() != null
+                    && owner.getUser().getId().equals(userId);
+            boolean isManager = manager != null && manager.getUser() != null
+                    && manager.getUser().getId().equals(userId);
+            if (!isOwner && !isManager) {
+                throw ApiException.forbidden(
+                        "Only the franchise owner, manager, or an admin can set the lineup");
+            }
+        }
+
+        // Validate every player resolves and is on this franchise before mutating. De-duplicate the
+        // incoming ids (preserving order) so a repeated id doesn't violate the lineup unique constraint.
+        List<Player> lineupPlayers = new ArrayList<>();
+        if (playerIds != null) {
+            for (String playerId : new java.util.LinkedHashSet<>(playerIds)) {
+                Player player = requirePlayer(playerId);
+                Franchise pf = player.getFranchise();
+                if (pf == null || !pf.getId().equals(franchise.getId())) {
+                    throw ApiException.badRequest(
+                            "Player " + player.getGamerTag() + " is not on this franchise");
+                }
+                lineupPlayers.add(player);
+            }
+        }
+
+        // Replace the existing lineup atomically.
+        matchLineupRepository.deleteByMatchIdAndFranchiseId(match.getId(), franchise.getId());
+        matchLineupRepository.flush();
+        for (Player player : lineupPlayers) {
+            MatchLineup ml = new MatchLineup();
+            ml.setMatch(match);
+            ml.setFranchise(franchise);
+            ml.setPlayer(player);
+            matchLineupRepository.save(ml);
+        }
+
+        auditService.record("match.lineup.set", "Match", match.getId().toString(),
+                franchise.getTag() + " lineup set to " + lineupPlayers.size() + " player(s)");
+
+        List<MatchPlayerView> players = lineupPlayers.stream()
+                .map(p -> new MatchPlayerView(p.getId().toString(), p.getGamerTag(),
+                        franchise.getId().toString(), franchise.getTag(), null))
+                .toList();
+        return new MatchLineupView(franchise.getId().toString(), franchise.getTag(),
+                franchise.getName(), players);
     }
 
     /** Returns the per-round result tables for a match (round order, best rank first). 404 if missing. */
@@ -627,7 +762,8 @@ public class MatchService {
         if (game == null) {
             return null;
         }
-        return new GameMini(game.getId().toString(), game.getName());
+        return new GameMini(game.getId().toString(), game.getName(),
+                game.getGameType() == null ? null : game.getGameType().name());
     }
 
     private static ResultView toResultView(ResultRow row) {

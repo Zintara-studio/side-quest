@@ -61,6 +61,12 @@ public class RegistrationController {
         return registrationService.invite(id, request);
     }
 
+    /** The captain submits a formed squad for admin review (authenticated; captain-only in service). */
+    @PostMapping("/{id}/submit")
+    public RegistrationView submit(@PathVariable String id) {
+        return registrationService.submitForApproval(id);
+    }
+
     /** The invited player accepts a squad invite (authenticated; invitee-only in service). */
     @PostMapping("/invites/{inviteId}/accept")
     public InviteView acceptInvite(@PathVariable String inviteId) {

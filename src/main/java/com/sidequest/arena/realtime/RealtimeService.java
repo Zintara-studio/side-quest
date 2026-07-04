@@ -43,6 +43,10 @@ public class RealtimeService {
         return "me:" + userId;
     }
 
+    public static String auctionTopic(Object auctionId) {
+        return "auction:" + auctionId;
+    }
+
     public static final String STANDINGS_TOPIC = "standings";
 
     public void subscribe(String topic, WebSocketSession session) {
@@ -93,5 +97,10 @@ public class RealtimeService {
 
     public void publishToUser(UUID userId, String event, Object payload) {
         publish(userTopic(userId), event, payload);
+    }
+
+    /** Live auction board tick — a full {@code AuctionView} snapshot for the polling/WS clients. */
+    public void publishAuctionUpdate(Object auctionId, Object payload) {
+        publish(auctionTopic(auctionId), "auction.update", payload);
     }
 }

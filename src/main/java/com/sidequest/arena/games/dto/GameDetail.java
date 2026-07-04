@@ -9,6 +9,7 @@ public record GameDetail(
         String id,
         String name,
         String format,
+        String gameType,
         String iconUrl,
         boolean enabled,
         int popularity,

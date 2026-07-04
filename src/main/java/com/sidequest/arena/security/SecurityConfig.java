@@ -60,6 +60,11 @@ public class SecurityConfig {
                                 "/actuator/health", "/actuator/info").permitAll()
                         // --- auth (public) ---
                         .requestMatchers("/auth/register", "/auth/login", "/auth/refresh").permitAll()
+                        // --- authenticated franchise reads (must precede the broad permitAll GET below,
+                        //     otherwise these would fall through to public and break current-user lookup) ---
+                        .requestMatchers(HttpMethod.GET, "/franchises/mine",
+                                "/franchises/invites/mine").authenticated()
+                        .requestMatchers(HttpMethod.GET, "/franchises/*/invites").authenticated()
                         // --- public catalog reads (player app browses these unauthenticated) ---
                         .requestMatchers(HttpMethod.GET,
                                 "/players/**", "/franchises/**", "/games/**", "/matches/**",

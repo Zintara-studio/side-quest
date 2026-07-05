@@ -96,7 +96,6 @@ export function FranchiseScreen({ id, base = "" }: { id?: string; base?: string 
                   marginTop: 12,
                 }}
               >
-                {f.igl ? `IGL ${f.igl.gamerTag} · ` : ""}
                 {f.rosterSize} PLAYERS · {f.matchesPlayed} MATCHES · {f.active ? "ACTIVE" : "INACTIVE"}
               </div>
             </div>
@@ -192,7 +191,22 @@ export function FranchiseScreen({ id, base = "" }: { id?: string; base?: string 
                             marginTop: 2,
                           }}
                         >
-                          {p.isIgl ? "IGL" : p.status}
+                          {p.role === "OWNER" || p.role === "MANAGER" ? (
+                            <span
+                              style={{
+                                fontSize: 9,
+                                letterSpacing: ".1em",
+                                color: p.role === "OWNER" ? SQ.red : SQ.amber,
+                                border: `1px solid ${p.role === "OWNER" ? SQ.red : SQ.amber}`,
+                                borderRadius: 999,
+                                padding: "2px 8px",
+                              }}
+                            >
+                              {p.role}
+                            </span>
+                          ) : (
+                            p.status
+                          )}
                         </div>
                       </div>
                     </div>

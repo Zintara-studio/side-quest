@@ -12,6 +12,9 @@ import {
   useActiveAuction,
   useAuction,
   useCreateAuction,
+  useUpdateAuction,
+  useOpenHall,
+  useRescheduleAuction,
   useStartAuction,
   usePauseAuction,
   useResumeAuction,
@@ -28,6 +31,7 @@ import type {
   AuctionView,
   AuctionLotView,
   AuctionLotStatus,
+  UpdateAuctionRequest,
 } from "@/lib/api/types";
 
 /* ---------- shared styles ---------- */
@@ -108,6 +112,29 @@ function relTime(iso: string): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h ago`;
   return `${Math.floor(h / 24)}d ago`;
+}
+
+/** Format an ISO instant for display (medium date + short time), "" when unset/invalid. */
+function fmtSchedule(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return "";
+  return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+/** Convert an ISO instant to a `datetime-local` input value (local wall-clock, minute precision). */
+function toLocalInput(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return "";
+  const off = d.getTimezoneOffset() * 60000;
+  return new Date(d.getTime() - off).toISOString().slice(0, 16);
+}
+
+/** Highest-rated expertise line for a lot (for a compact "Valorant 78" summary), or null. */
+function topExpertise(lot: AuctionLotView): { game: string; rating: number } | null {
+  if (!lot.expertise || lot.expertise.length === 0) return null;
+  return [...lot.expertise].sort((a, b) => b.rating - a.rating)[0];
 }
 
 function lotStatusLabel(s: AuctionLotStatus): string {
@@ -216,6 +243,7 @@ function CreateAuctionForm({ onCreated }: { onCreated: (id: string) => void }) {
   const [antiSnipe, setAntiSnipe] = useState("10");
   const [raise, setRaise] = useState(RAISE_DEFAULT);
   const [defaultBudget, setDefaultBudget] = useState("1000");
+  const [scheduledAt, setScheduledAt] = useState("");
   const [picked, setPicked] = useState<Record<string, boolean>>({});
   const [err, setErr] = useState<string | null>(null);
 
@@ -239,6 +267,7 @@ function CreateAuctionForm({ onCreated }: { onCreated: (id: string) => void }) {
         raiseIncrements: increments,
         defaultBudget: Number(defaultBudget) || 0,
         participantFranchiseIds: participantIds,
+        ...(scheduledAt ? { scheduledAt: new Date(scheduledAt).toISOString() } : {}),
       });
       onCreated(view.id);
     } catch (e) {
@@ -287,6 +316,18 @@ function CreateAuctionForm({ onCreated }: { onCreated: (id: string) => void }) {
         <label>
           <span style={fieldLabel}>ANTI-SNIPE (SEC)</span>
           <input type="number" min={0} value={antiSnipe} onChange={(e) => setAntiSnipe(e.target.value)} style={formInput} />
+        </label>
+        <label style={{ gridColumn: "1 / -1" }}>
+          <span style={fieldLabel}>SCHEDULED TIME (OPTIONAL)</span>
+          <input
+            type="datetime-local"
+            value={scheduledAt}
+            onChange={(e) => setScheduledAt(e.target.value)}
+            style={formInput}
+          />
+          <span style={{ ...fieldLabel, marginTop: 6, marginBottom: 0, color: SQ.mute, letterSpacing: ".04em" }}>
+            When the hall is expected to open — {scheduledAt ? fmtSchedule(new Date(scheduledAt).toISOString()) : "leave blank for an ad-hoc auction"}
+          </span>
         </label>
         <label style={{ gridColumn: "1 / -1" }}>
           <span style={fieldLabel}>RAISE INCREMENTS</span>
@@ -362,22 +403,248 @@ function AuctionBoard({ id, onReset }: { id: string; onReset: () => void }) {
   if (!a) return <StateNote tone={isError ? "error" : "muted"}>Couldn&apos;t load the auction.</StateNote>;
 
   if (a.status === "DRAFT") return <DraftView a={a} />;
+  if (a.status === "LOBBY") return <LobbyView a={a} />;
   if (a.status === "COMPLETED") return <CompletedView a={a} onReset={onReset} />;
   return <LiveBoard a={a} />;
+}
+
+/* ---------- config summary (shared by DRAFT + LOBBY) ---------- */
+
+function ConfigStats({ a, queuedCount }: { a: AuctionView; queuedCount: number }) {
+  const scheduled = fmtSchedule(a.scheduledAt);
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 14, marginTop: 18 }}>
+      <Stat label="BASE PRICE" value={coin(a.basePrice)} />
+      <Stat label="BID TIMER" value={`${a.bidTimerSeconds}s`} />
+      <Stat label="ANTI-SNIPE" value={`${a.antiSnipeSeconds}s`} />
+      <Stat label="RAISES" value={a.raiseIncrements.map(coin).join(" · ")} />
+      <Stat label="FRANCHISES" value={String(a.franchises.length)} />
+      <Stat label="LOT POOL" value={String(queuedCount)} />
+      {scheduled ? <Stat label="SCHEDULED" value={scheduled} /> : null}
+    </div>
+  );
+}
+
+/* ---------- edit settings (shared by DRAFT + LOBBY) ---------- */
+
+/**
+ * Collapsible "Edit settings" panel for a pre-LIVE auction. Reuses the create-form field/chip
+ * styling and only sends fields the admin actually changed (blank-guarded), so a no-op save
+ * doesn't needlessly reset participant purses or replace the roster.
+ */
+function EditSettingsPanel({ a }: { a: AuctionView }) {
+  const franchisesQ = useFranchises({ limit: 100 });
+  const update = useUpdateAuction();
+  const franchises = franchisesQ.data?.items ?? [];
+
+  const [open, setOpen] = useState(false);
+
+  // Baseline: participants share a common default budget at creation; infer it from a franchise.
+  const currentBudget = a.franchises[0]?.budget;
+
+  const [basePrice, setBasePrice] = useState(String(a.basePrice));
+  const [bidTimer, setBidTimer] = useState(String(a.bidTimerSeconds));
+  const [antiSnipe, setAntiSnipe] = useState(String(a.antiSnipeSeconds));
+  const [raise, setRaise] = useState(a.raiseIncrements.join(","));
+  const [defaultBudget, setDefaultBudget] = useState(currentBudget != null ? String(currentBudget) : "");
+  const [intermission, setIntermission] = useState("");
+  const [scheduledAt, setScheduledAt] = useState(() => toLocalInput(a.scheduledAt));
+  const [picked, setPicked] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(a.franchises.map((f) => [f.franchiseId, true])),
+  );
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const toggle = (id: string) => setPicked((p) => ({ ...p, [id]: !p[id] }));
+  const participantIds = Object.keys(picked).filter((k) => picked[k]);
+
+  const submit = async () => {
+    setMsg(null);
+    const body: UpdateAuctionRequest = {};
+
+    const bp = Number(basePrice);
+    if (basePrice.trim() && Number.isFinite(bp) && bp > 0 && bp !== a.basePrice) body.basePrice = bp;
+
+    const bt = Number(bidTimer);
+    if (bidTimer.trim() && Number.isFinite(bt) && bt > 0 && bt !== a.bidTimerSeconds) body.bidTimerSeconds = bt;
+
+    const as = Number(antiSnipe);
+    if (antiSnipe.trim() && Number.isFinite(as) && as >= 0 && as !== a.antiSnipeSeconds) body.antiSnipeSeconds = as;
+
+    const inc = parseIncrements(raise);
+    if (inc.length > 0 && JSON.stringify(inc) !== JSON.stringify(a.raiseIncrements)) body.raiseIncrements = inc;
+
+    const db = Number(defaultBudget);
+    if (defaultBudget.trim() && Number.isFinite(db) && db >= 0 && db !== currentBudget) body.defaultBudget = db;
+
+    const im = Number(intermission);
+    if (intermission.trim() && Number.isFinite(im) && im >= 0) body.intermissionSeconds = im;
+
+    if (scheduledAt && scheduledAt !== toLocalInput(a.scheduledAt))
+      body.scheduledAt = new Date(scheduledAt).toISOString();
+
+    const currentParticipants = a.franchises.map((f) => f.franchiseId);
+    const sameParticipants =
+      participantIds.length === currentParticipants.length &&
+      [...participantIds].sort().join(",") === [...currentParticipants].sort().join(",");
+    if (participantIds.length > 0 && !sameParticipants) body.participantFranchiseIds = participantIds;
+
+    if (Object.keys(body).length === 0) {
+      setMsg({ ok: false, text: "No changes to save." });
+      return;
+    }
+    try {
+      await update.mutateAsync({ id: a.id, body });
+      setMsg({ ok: true, text: "Settings updated." });
+    } catch (e) {
+      setMsg({ ok: false, text: apiErrorMessage(e, "Couldn't update the auction.") });
+    }
+  };
+
+  return (
+    <div style={{ ...card, marginTop: 16 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          fontFamily: FONT.mono,
+          fontSize: 11,
+          letterSpacing: ".12em",
+          textTransform: "uppercase",
+          fontWeight: 700,
+          color: SQ.faint,
+          background: "transparent",
+          border: "none",
+          padding: 0,
+          cursor: "pointer",
+        }}
+      >
+        Edit settings {open ? "▴" : "▾"}
+      </button>
+
+      {open ? (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 12.5, color: SQ.mute, lineHeight: 1.5, marginBottom: 16 }}>
+            Adjust the configuration while the auction is still in draft/lobby. Only changed fields are
+            saved — changing the default budget resets every participant&apos;s purse, and changing the
+            selection replaces the participating franchises.
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 14 }}>
+            <label>
+              <span style={fieldLabel}>BASE PRICE</span>
+              <input type="number" min={1} value={basePrice} onChange={(e) => setBasePrice(e.target.value)} style={formInput} />
+            </label>
+            <label>
+              <span style={fieldLabel}>DEFAULT BUDGET</span>
+              <input type="number" min={0} value={defaultBudget} onChange={(e) => setDefaultBudget(e.target.value)} style={formInput} />
+            </label>
+            <label>
+              <span style={fieldLabel}>BID TIMER (SEC)</span>
+              <input type="number" min={1} value={bidTimer} onChange={(e) => setBidTimer(e.target.value)} style={formInput} />
+            </label>
+            <label>
+              <span style={fieldLabel}>ANTI-SNIPE (SEC)</span>
+              <input type="number" min={0} value={antiSnipe} onChange={(e) => setAntiSnipe(e.target.value)} style={formInput} />
+            </label>
+            <label>
+              <span style={fieldLabel}>INTERMISSION (SEC)</span>
+              <input
+                type="number"
+                min={0}
+                value={intermission}
+                onChange={(e) => setIntermission(e.target.value)}
+                placeholder="unchanged"
+                style={formInput}
+              />
+            </label>
+            <label style={{ gridColumn: "1 / -1" }}>
+              <span style={fieldLabel}>SCHEDULED TIME (OPTIONAL)</span>
+              <input
+                type="datetime-local"
+                value={scheduledAt}
+                onChange={(e) => setScheduledAt(e.target.value)}
+                style={formInput}
+              />
+            </label>
+            <label style={{ gridColumn: "1 / -1" }}>
+              <span style={fieldLabel}>RAISE INCREMENTS</span>
+              <input value={raise} onChange={(e) => setRaise(e.target.value)} placeholder={RAISE_DEFAULT} style={formInput} />
+              <span style={{ ...fieldLabel, marginTop: 6, marginBottom: 0, color: SQ.mute, letterSpacing: ".04em" }}>
+                Comma-separated bid steps → {parseIncrements(raise).map(coin).join(", ") || "—"}
+              </span>
+            </label>
+          </div>
+
+          <div style={{ ...fieldLabel, marginTop: 20 }}>
+            PARTICIPATING FRANCHISES {participantIds.length ? `· ${participantIds.length} selected` : ""}
+          </div>
+          {franchisesQ.isLoading ? (
+            <StateNote>Loading franchises…</StateNote>
+          ) : franchises.length === 0 ? (
+            <StateNote tone="muted">No franchises to enrol.</StateNote>
+          ) : (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {franchises.map((f) => {
+                const on = !!picked[f.id];
+                return (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => toggle(f.id)}
+                    title={f.name}
+                    style={{
+                      fontFamily: FONT.mono,
+                      fontSize: 11,
+                      letterSpacing: ".06em",
+                      padding: "8px 12px",
+                      borderRadius: 5,
+                      border: `1px solid ${on ? SQ.red : SQ.inputBorder}`,
+                      color: on ? SQ.sidebar : SQ.faint,
+                      background: on ? SQ.red : "transparent",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {f.tag}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {msg ? (
+            <div style={{ marginTop: 16, fontFamily: FONT.mono, fontSize: 12, color: msg.ok ? SQ.green : SQ.ember }}>
+              {msg.text}
+            </div>
+          ) : null}
+
+          <div style={{ marginTop: 20 }}>
+            <button
+              type="button"
+              onClick={submit}
+              disabled={update.isPending}
+              style={{ ...primaryBtn, opacity: update.isPending ? 0.6 : 1, cursor: update.isPending ? "not-allowed" : "pointer" }}
+            >
+              {update.isPending ? "Saving…" : "Save settings ▸"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 /* ---------- DRAFT ---------- */
 
 function DraftView({ a }: { a: AuctionView }) {
-  const start = useStartAuction();
+  const openHall = useOpenHall();
   const [err, setErr] = useState<string | null>(null);
 
-  const onStart = async () => {
+  const onOpenHall = async () => {
     setErr(null);
     try {
-      await start.mutateAsync(a.id);
+      await openHall.mutateAsync(a.id);
     } catch (e) {
-      setErr(apiErrorMessage(e, "Couldn't start the auction."));
+      setErr(apiErrorMessage(e, "Couldn't open the hall."));
     }
   };
 
@@ -391,14 +658,78 @@ function DraftView({ a }: { a: AuctionView }) {
           <div style={{ fontFamily: FONT.mono, fontSize: 10.5, letterSpacing: ".12em", color: SQ.amber, marginTop: 6 }}>
             DRAFT · NOT YET LIVE
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 14, marginTop: 18 }}>
-            <Stat label="BASE PRICE" value={coin(a.basePrice)} />
-            <Stat label="BID TIMER" value={`${a.bidTimerSeconds}s`} />
-            <Stat label="ANTI-SNIPE" value={`${a.antiSnipeSeconds}s`} />
-            <Stat label="RAISES" value={a.raiseIncrements.map(coin).join(" · ")} />
-            <Stat label="FRANCHISES" value={String(a.franchises.length)} />
-            <Stat label="LOT POOL" value={String(queued.length)} />
+          <ConfigStats a={a} queuedCount={queued.length} />
+        </div>
+        <div>
+          <button
+            type="button"
+            onClick={onOpenHall}
+            disabled={openHall.isPending}
+            style={{ ...primaryBtn, padding: "14px 22px", fontSize: 12, opacity: openHall.isPending ? 0.6 : 1 }}
+          >
+            {openHall.isPending ? "Opening…" : "Open hall ▸"}
+          </button>
+          <div style={{ marginTop: 10, fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".04em", color: SQ.mute, maxWidth: 220, lineHeight: 1.5 }}>
+            Opens the lobby so franchises can join before you start bidding.
           </div>
+          {err ? (
+            <div style={{ marginTop: 12, fontFamily: FONT.mono, fontSize: 11.5, color: SQ.ember, maxWidth: 220 }}>{err}</div>
+          ) : null}
+        </div>
+      </div>
+
+      <EditSettingsPanel a={a} />
+
+      <div style={sectionTitle}>Registered pool · {queued.length}</div>
+      <PoolPreview lots={a.lots} />
+
+      <div style={sectionTitle}>Franchises</div>
+      <FranchiseTable franchises={a.franchises} />
+    </div>
+  );
+}
+
+/* ===================================================================== */
+/* LOBBY (hall open, franchises joining, not yet bidding)                 */
+/* ===================================================================== */
+
+function LobbyView({ a }: { a: AuctionView }) {
+  const start = useStartAuction();
+  const reschedule = useRescheduleAuction();
+  const [err, setErr] = useState<string | null>(null);
+  const [when, setWhen] = useState(() => toLocalInput(a.scheduledAt));
+
+  const queued = a.lots.filter((l) => l.status === "QUEUED");
+  const joinedCount = a.franchises.filter((f) => f.joined).length;
+
+  const onStart = async () => {
+    setErr(null);
+    try {
+      await start.mutateAsync(a.id);
+    } catch (e) {
+      setErr(apiErrorMessage(e, "Couldn't start the auction."));
+    }
+  };
+
+  const onReschedule = async () => {
+    setErr(null);
+    if (!when) return setErr("Pick a new scheduled time.");
+    try {
+      await reschedule.mutateAsync({ id: a.id, scheduledAt: new Date(when).toISOString() });
+    } catch (e) {
+      setErr(apiErrorMessage(e, "Couldn't reschedule the auction."));
+    }
+  };
+
+  return (
+    <div>
+      <div style={{ ...card, display: "flex", flexWrap: "wrap", gap: 24, alignItems: "flex-start" }}>
+        <div style={{ flex: "1 1 320px", minWidth: 0 }}>
+          <div style={{ fontFamily: FONT.display, fontSize: 22, letterSpacing: "-.02em" }}>{a.title}</div>
+          <div style={{ fontFamily: FONT.mono, fontSize: 10.5, letterSpacing: ".12em", color: SQ.blue, marginTop: 6 }}>
+            LOBBY · HALL OPEN · {joinedCount} OF {a.franchises.length} JOINED
+          </div>
+          <ConfigStats a={a} queuedCount={queued.length} />
         </div>
         <div>
           <button
@@ -415,8 +746,154 @@ function DraftView({ a }: { a: AuctionView }) {
         </div>
       </div>
 
-      <div style={sectionTitle}>Franchises</div>
-      <FranchiseTable franchises={a.franchises} />
+      {/* reschedule */}
+      <div style={{ ...card, marginTop: 16 }}>
+        <div style={{ ...fieldLabel, marginBottom: 10 }}>
+          RESCHEDULE {a.scheduledAt ? `· CURRENTLY ${fmtSchedule(a.scheduledAt).toUpperCase()}` : "· NOT SCHEDULED"}
+        </div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <input
+            type="datetime-local"
+            value={when}
+            onChange={(e) => setWhen(e.target.value)}
+            style={{ ...formInput, width: "auto", flex: "1 1 220px" }}
+          />
+          <button
+            type="button"
+            onClick={onReschedule}
+            disabled={reschedule.isPending}
+            style={{ ...ghostBtn, opacity: reschedule.isPending ? 0.6 : 1 }}
+          >
+            {reschedule.isPending ? "Saving…" : "Reschedule"}
+          </button>
+        </div>
+      </div>
+
+      <EditSettingsPanel a={a} />
+
+      <div style={sectionTitle}>Presence · {joinedCount} of {a.franchises.length} joined</div>
+      <LobbyFranchiseTable franchises={a.franchises} />
+
+      <div style={sectionTitle}>Registered pool · {queued.length}</div>
+      <PoolPreview lots={a.lots} />
+    </div>
+  );
+}
+
+/* ---------- lobby franchise presence table ---------- */
+
+function LobbyFranchiseTable({ franchises }: { franchises: AuctionView["franchises"] }) {
+  if (franchises.length === 0) return <StateNote tone="muted">No participating franchises.</StateNote>;
+  return (
+    <TableScroll minWidth={520}>
+      <div style={{ display: "flex", padding: "12px 16px", borderBottom: `1px solid ${SQ.hairline}`, ...headCell }}>
+        <div style={{ width: 90 }}>TAG</div>
+        <div style={{ flex: 1 }}>FRANCHISE</div>
+        <div style={{ width: 120, textAlign: "right" }}>PRESENCE</div>
+      </div>
+      {franchises.map((f) => (
+        <div
+          key={f.franchiseId}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            padding: "12px 16px",
+            borderBottom: `1px solid ${SQ.hairlineSoft}`,
+          }}
+        >
+          <div style={{ width: 90, fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, color: SQ.ink }}>{f.tag}</div>
+          <div style={{ flex: 1, fontSize: 13, color: SQ.faint, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {f.name}
+          </div>
+          <div style={{ width: 120, textAlign: "right" }}>
+            <PresenceBadge joined={f.joined} />
+          </div>
+        </div>
+      ))}
+    </TableScroll>
+  );
+}
+
+function PresenceBadge({ joined }: { joined: boolean }) {
+  return (
+    <span
+      style={{
+        fontFamily: FONT.mono,
+        fontSize: 9.5,
+        letterSpacing: ".1em",
+        textTransform: "uppercase",
+        color: joined ? SQ.green : SQ.mute,
+        border: `1px solid ${joined ? "rgba(31,157,99,.45)" : SQ.inputBorder}`,
+        padding: "3px 9px",
+        borderRadius: 9,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {joined ? "● Joined" : "Waiting"}
+    </span>
+  );
+}
+
+/* ---------- registered-pool preview (DRAFT + LOBBY) ---------- */
+
+function PoolPreview({ lots }: { lots: AuctionLotView[] }) {
+  const queued = lots.filter((l) => l.status === "QUEUED").sort((x, y) => x.lotOrder - y.lotOrder);
+  if (queued.length === 0) return <StateNote tone="muted">No players registered yet.</StateNote>;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {queued.map((l) => (
+        <PoolPreviewRow key={l.id} lot={l} />
+      ))}
+    </div>
+  );
+}
+
+function PoolPreviewRow({ lot }: { lot: AuctionLotView }) {
+  const top = topExpertise(lot);
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "10px 14px",
+        border: `1px solid ${SQ.hairline}`,
+        borderRadius: 7,
+        background: SQ.inset,
+      }}
+    >
+      <span style={{ fontFamily: FONT.mono, fontSize: 10.5, color: SQ.mute, width: 34 }}>#{lot.lotOrder}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 600, color: SQ.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {lot.gamerTag}
+        </div>
+        {lot.games.length > 0 ? (
+          <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 6 }}>
+            {lot.games.map((g) => (
+              <span
+                key={g}
+                style={{
+                  fontFamily: FONT.mono,
+                  fontSize: 9.5,
+                  letterSpacing: ".06em",
+                  color: SQ.faint,
+                  border: `1px solid ${SQ.inputBorder}`,
+                  padding: "2px 7px",
+                  borderRadius: 6,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {g}
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      {top ? (
+        <span style={{ fontFamily: FONT.mono, fontSize: 11, color: SQ.blue, whiteSpace: "nowrap" }}>
+          {top.game} {top.rating}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -450,6 +927,15 @@ function LiveBoard({ a }: { a: AuctionView }) {
   const skew = useMemo(() => new Date(a.serverTime).getTime() - Date.now(), [a.serverTime]);
 
   const lot = a.currentLot;
+  const queuedLots = a.lots.filter((l) => l.status === "QUEUED");
+  // Brief post-sale intermission: a lot just sold and the room waits for the next nomination.
+  const inIntermission =
+    !!a.intermissionUntil && new Date(a.intermissionUntil).getTime() > Date.now() + skew;
+  const justSold = inIntermission
+    ? a.lots.filter((l) => l.status === "SOLD").sort((x, y) => y.lotOrder - x.lotOrder)[0] ?? null
+    : null;
+  // The auction no longer auto-completes: with nothing on the block and nothing queued, prompt Complete.
+  const allDone = !lot && queuedLots.length === 0;
   const run = async (fn: () => Promise<unknown>, fallback: string) => {
     setErr(null);
     try {
@@ -483,6 +969,36 @@ function LiveBoard({ a }: { a: AuctionView }) {
           {paused ? "PAUSED" : "● LIVE"}
         </span>
       </div>
+
+      {/* just-sold intermission banner */}
+      {justSold ? (
+        <div
+          style={{
+            ...card,
+            marginBottom: 16,
+            borderColor: "rgba(31,157,99,.4)",
+            background: "linear-gradient(180deg,rgba(31,157,99,.09),transparent)",
+            display: "flex",
+            alignItems: "center",
+            gap: 16,
+            flexWrap: "wrap",
+          }}
+        >
+          <span style={{ fontFamily: FONT.mono, fontSize: 11, letterSpacing: ".16em", fontWeight: 700, color: SQ.green }}>
+            ● SOLD
+          </span>
+          <div style={{ fontSize: 16, color: SQ.ink }}>
+            <span style={{ fontWeight: 700 }}>{justSold.gamerTag}</span>
+            <span style={{ color: SQ.mute }}> → </span>
+            <span style={{ fontFamily: FONT.mono, fontWeight: 700, color: SQ.ember }}>{justSold.soldToTag ?? "—"}</span>
+            <span style={{ color: SQ.mute }}> for </span>
+            <span style={{ fontFamily: FONT.mono, fontWeight: 700 }}>{coin(justSold.soldPrice)}</span>
+          </div>
+          <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 10.5, color: SQ.mute }}>
+            Next lot coming up…
+          </span>
+        </div>
+      ) : null}
 
       {/* current lot card */}
       <div
@@ -522,14 +1038,20 @@ function LiveBoard({ a }: { a: AuctionView }) {
         ) : (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center", justifyContent: "space-between" }}>
             <div>
-              <div style={{ fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".16em", color: SQ.mute }}>THE BLOCK IS EMPTY</div>
+              <div style={{ fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".16em", color: SQ.mute }}>
+                {allDone ? "ALL LOTS DONE" : "THE BLOCK IS EMPTY"}
+              </div>
               <div style={{ fontSize: 15, color: SQ.faint, marginTop: 6 }}>
-                Nominate the next player to open bidding.
+                {allDone
+                  ? "Every player has been through the block — re-auction unsold lots below, or complete the auction."
+                  : "Nominate the next player to open bidding."}
               </div>
             </div>
-            <button type="button" onClick={() => setModal("nominate")} style={primaryBtn}>
-              Nominate a lot ▸
-            </button>
+            {allDone ? null : (
+              <button type="button" onClick={() => setModal("nominate")} style={primaryBtn}>
+                Nominate a lot ▸
+              </button>
+            )}
           </div>
         )}
       </div>

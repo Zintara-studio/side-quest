@@ -10,7 +10,6 @@ import {
   useMyInvites,
   useInviteTeammate,
   useRespondInvite,
-  useSubmitSquad,
   usePlayers,
 } from "@/lib/query/hooks";
 import { apiErrorMessage } from "@/lib/api/client";
@@ -36,9 +35,19 @@ const chip = {
 } as const;
 
 function statusColor(status: string) {
-  if (status === "ACCEPTED" || status === "APPROVED") return SQ.green;
+  if (status === "ACCEPTED" || status === "APPROVED" || status === "ACTIVE") return SQ.green;
   if (status === "REJECTED") return SQ.ember;
+  // A pending invite voided at lock (EXPIRED), or a locked/closed registration — read as inert.
+  if (status === "EXPIRED" || status === "LOCKED") return SQ.mute;
   return SQ.amber;
+}
+
+// Roster-member colouring for the "who's already on this squad" list: ACCEPTED green, PENDING amber,
+// REJECTED / EXPIRED muted.
+function memberColor(status: string) {
+  if (status === "ACCEPTED") return SQ.green;
+  if (status === "PENDING") return SQ.amber;
+  return SQ.mute;
 }
 
 export function MyRegistrationsScreen() {
@@ -89,16 +98,19 @@ export function MyRegistrationsScreen() {
     <div>
       <Header />
 
-      {/* incoming invitations */}
-      <section style={{ marginTop: 26 }}>
-        <div style={sectionTitle}>Invitations to you</div>
-        {invitesQ.isLoading ? (
+      {/* incoming invitations — only PENDING ones need action; accepted/declined
+          invites disappear rather than lingering as dead cards. Hide the whole
+          section (header included) once nothing is awaiting a response. */}
+      {invitesQ.isLoading ? (
+        <section style={{ marginTop: 26 }}>
+          <div style={sectionTitle}>Invitations to you</div>
           <StateNote>Loading invitations…</StateNote>
-        ) : invites.length === 0 ? (
-          <StateNote>No squad invitations yet.</StateNote>
-        ) : (
+        </section>
+      ) : pendingInvites.length > 0 ? (
+        <section style={{ marginTop: 26 }}>
+          <div style={sectionTitle}>Invitations to you</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(320px,1fr))", gap: 14 }}>
-            {invites.map((inv) => (
+            {pendingInvites.map((inv) => (
               <div key={inv.id} style={{ background: SQ.panel, border: `1px solid ${SQ.hairline}`, borderRadius: 9, padding: 16 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <div style={{ flex: 1, fontWeight: 700, fontSize: 15 }}>{inv.squadName || "Squad"}</div>
@@ -117,36 +129,57 @@ export function MyRegistrationsScreen() {
                     <span key={g} style={chip}>{g}</span>
                   ))}
                 </div>
-                {inv.status === "PENDING" ? (
-                  <div style={{ display: "flex", gap: 10 }}>
-                    <button
-                      type="button"
-                      disabled={respond.isPending}
-                      onClick={() => respond.mutate({ inviteId: inv.id, accept: true })}
-                      style={actionBtn(SQ.green, SQ.sidebar, false, respond.isPending)}
-                    >
-                      Accept
-                    </button>
-                    <button
-                      type="button"
-                      disabled={respond.isPending}
-                      onClick={() => respond.mutate({ inviteId: inv.id, accept: false })}
-                      style={actionBtn("transparent", SQ.ember, true, respond.isPending)}
-                    >
-                      Decline
-                    </button>
+
+                {/* Who's already on this squad — lets the invitee see the roster before accepting. */}
+                {inv.members && inv.members.length > 0 ? (
+                  <div style={{ margin: "0 0 12px" }}>
+                    <div style={{ fontFamily: FONT.mono, fontSize: 9.5, letterSpacing: ".1em", color: SQ.label, marginBottom: 6 }}>
+                      SQUAD SO FAR
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                      {inv.members.map((m, i) => (
+                        <div key={`${m.gamerTag}-${i}`} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                          <span style={{ flex: 1, fontWeight: m.isCaptain ? 700 : 500 }}>
+                            {m.gamerTag}
+                            {m.isCaptain ? (
+                              <span style={{ fontFamily: FONT.mono, fontSize: 9, color: SQ.ember, marginLeft: 6 }}>CAPTAIN</span>
+                            ) : null}
+                          </span>
+                          <span style={{ fontFamily: FONT.mono, fontSize: 9, letterSpacing: ".08em", color: memberColor(m.status) }}>
+                            {m.status}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ) : null}
+
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button
+                    type="button"
+                    disabled={respond.isPending}
+                    onClick={() => respond.mutate({ inviteId: inv.id, accept: true })}
+                    style={actionBtn(SQ.green, SQ.sidebar, false, respond.isPending)}
+                  >
+                    Accept
+                  </button>
+                  <button
+                    type="button"
+                    disabled={respond.isPending}
+                    onClick={() => respond.mutate({ inviteId: inv.id, accept: false })}
+                    style={actionBtn("transparent", SQ.ember, true, respond.isPending)}
+                  >
+                    Decline
+                  </button>
+                </div>
               </div>
             ))}
           </div>
-        )}
-        {pendingInvites.length > 0 ? (
           <div style={{ fontFamily: FONT.mono, fontSize: 11, color: SQ.mute, marginTop: 10 }}>
             {pendingInvites.length} awaiting your response.
           </div>
-        ) : null}
-      </section>
+        </section>
+      ) : null}
 
       {/* your registrations */}
       <section style={{ marginTop: 40 }}>
@@ -192,15 +225,22 @@ export function MyRegistrationsScreen() {
 
 function RegistrationCard({ r }: { r: RegistrationView }) {
   const invite = useInviteTeammate();
-  const submit = useSubmitSquad();
   const playersQ = usePlayers({ limit: 100 });
   const [tag, setTag] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const isSquad = r.type === "SQUAD";
   const isForming = r.status === "FORMING";
-  // Invites are only allowed while the squad is still assembling (FORMING). Once submitted for
-  // approval the roster is locked, so the invite UI disappears.
+  // Invites are only allowed while the squad is still assembling (FORMING). It auto-locks a few
+  // hours before the match (LOCKED), at which point the invite UI disappears.
   const canInvite = isSquad && isForming;
+
+  // Roster cap (invite cap) from the announcement. A slot is "occupied" by any member who is
+  // confirmed (ACCEPTED) or still pending — once those reach the cap the squad is full.
+  const teamSize = r.teamSize;
+  const occupied = r.members.filter(
+    (m) => m.status === "ACCEPTED" || m.status === "PENDING",
+  ).length;
+  const isFull = teamSize != null && occupied >= teamSize;
 
   // Live candidate list, mirroring the picker on the register screen: match players by gamer-tag
   // substring and drop anyone already on the roster (the captain + everyone already invited).
@@ -217,6 +257,7 @@ function RegistrationCard({ r }: { r: RegistrationView }) {
 
   const sendInvite = async (gamerTag: string) => {
     setErr(null);
+    if (isFull) return;
     const gt = gamerTag.trim();
     if (!gt) return;
     try {
@@ -226,10 +267,6 @@ function RegistrationCard({ r }: { r: RegistrationView }) {
       setErr(apiErrorMessage(e, "Couldn't send the invite."));
     }
   };
-
-  const submitErr = submit.isError
-    ? apiErrorMessage(submit.error, "Couldn't submit the squad for approval.")
-    : null;
 
   return (
     <div style={{ background: SQ.panel, border: `1px solid ${SQ.hairline}`, borderRadius: 9, padding: 18 }}>
@@ -286,7 +323,7 @@ function RegistrationCard({ r }: { r: RegistrationView }) {
       {isSquad ? (
         <>
           <div style={{ fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".1em", color: SQ.label, marginBottom: 8 }}>
-            ROSTER · {r.acceptedCount} CONFIRMED
+            {teamSize != null ? `ROSTER · ${r.acceptedCount}/${teamSize}` : `ROSTER · ${r.acceptedCount} CONFIRMED`}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 0 }}>
             {r.members.map((m) => (
@@ -313,7 +350,8 @@ function RegistrationCard({ r }: { r: RegistrationView }) {
                 <input
                   value={tag}
                   onChange={(e) => setTag(e.target.value)}
-                  placeholder="Search players to invite (e.g. Vortex)"
+                  disabled={isFull}
+                  placeholder={isFull ? "Squad is full" : "Search players to invite (e.g. Vortex)"}
                   style={{
                     flex: 1,
                     minWidth: 200,
@@ -324,13 +362,15 @@ function RegistrationCard({ r }: { r: RegistrationView }) {
                     fontSize: 13.5,
                     color: SQ.ink,
                     fontFamily: FONT.sans,
+                    opacity: isFull ? 0.6 : 1,
+                    cursor: isFull ? "not-allowed" : "text",
                   }}
                 />
                 <button
                   type="button"
-                  disabled={invite.isPending || !tag.trim()}
+                  disabled={invite.isPending || !tag.trim() || isFull}
                   onClick={() => sendInvite(tag)}
-                  style={actionBtn(SQ.red, SQ.sidebar, false, invite.isPending || !tag.trim())}
+                  style={actionBtn(SQ.red, SQ.sidebar, false, invite.isPending || !tag.trim() || isFull)}
                 >
                   {invite.isPending ? "Inviting…" : "Invite ▸"}
                 </button>
@@ -375,43 +415,20 @@ function RegistrationCard({ r }: { r: RegistrationView }) {
               {err ? (
                 <div style={{ fontFamily: FONT.mono, fontSize: 11.5, color: SQ.ember, marginTop: 8 }}>{err}</div>
               ) : null}
-              <div style={{ fontSize: 11.5, color: SQ.mute, marginTop: 8 }}>
-                If someone declines, just invite a different player here.
+              <div style={{ fontSize: 11.5, color: isFull ? SQ.amber : SQ.mute, marginTop: 8 }}>
+                {isFull
+                  ? `Squad full — the roster cap is ${teamSize}.`
+                  : "If someone declines, just invite a different player here."}
               </div>
             </div>
           ) : null}
 
           {isForming ? (
             <div style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${SQ.hairline}` }}>
-              <div style={{ fontSize: 12.5, color: SQ.mute, marginBottom: 10, lineHeight: 1.5 }}>
-                Invite your teammates, then submit for approval. Submitting locks the roster and sends it to the
-                league admins.
+              <div style={{ fontSize: 12.5, color: SQ.mute, lineHeight: 1.5 }}>
+                Your squad is registered. Invite teammates before it locks — pending invites are voided at
+                lock time.
               </div>
-              <button
-                type="button"
-                disabled={submit.isPending}
-                onClick={() => submit.mutate(r.id)}
-                style={{
-                  width: "100%",
-                  fontFamily: FONT.mono,
-                  fontSize: 11.5,
-                  letterSpacing: ".14em",
-                  textTransform: "uppercase",
-                  fontWeight: 700,
-                  color: SQ.sidebar,
-                  background: SQ.red,
-                  padding: "13px 16px",
-                  borderRadius: 5,
-                  border: "none",
-                  cursor: submit.isPending ? "not-allowed" : "pointer",
-                  opacity: submit.isPending ? 0.6 : 1,
-                }}
-              >
-                {submit.isPending ? "Submitting…" : "Submit squad for approval ▸"}
-              </button>
-              {submitErr ? (
-                <div style={{ fontFamily: FONT.mono, fontSize: 11.5, color: SQ.ember, marginTop: 8 }}>{submitErr}</div>
-              ) : null}
             </div>
           ) : null}
         </>

@@ -54,6 +54,7 @@ import type {
   SettingsView,
   StandingsResponse,
   StartSeasonRequest,
+  UpdateAuctionRequest,
   UpdateFranchiseRequest,
   UpdateGameRequest,
   UpdatePlayerRequest,
@@ -149,6 +150,8 @@ export const franchisesApi = {
     api.post<FranchiseDetail>(`/franchises/${id}/manager`, { playerId }).then((r) => r.data),
   discard: (id: string) =>
     api.post<FranchiseDetail>(`/franchises/${id}/discard`).then((r) => r.data),
+  restore: (id: string) =>
+    api.post<FranchiseDetail>(`/franchises/${id}/restore`).then((r) => r.data),
   eligibleOwners: (id: string) =>
     api.get<EligiblePlayer[]>(`/franchises/${id}/eligible-owners`).then((r) => r.data),
   mine: () =>
@@ -255,14 +258,11 @@ export const registrationsApi = {
   myInvites: () => api.get<InviteView[]>("/registrations/invites/mine").then((r) => r.data),
   invite: (id: string, body: InviteRequest) =>
     api.post<RegistrationView>(`/registrations/${id}/invite`, body).then((r) => r.data),
-  submit: (id: string) =>
-    api.post<RegistrationView>(`/registrations/${id}/submit`).then((r) => r.data),
   acceptInvite: (inviteId: string) =>
     api.post<InviteView>(`/registrations/invites/${inviteId}/accept`).then((r) => r.data),
   rejectInvite: (inviteId: string) =>
     api.post<InviteView>(`/registrations/invites/${inviteId}/reject`).then((r) => r.data),
-  approve: (id: string, reason?: string) =>
-    api.post<RegistrationView>(`/registrations/${id}/approve`, { reason }).then((r) => r.data),
+  // Discard a live registration or a FRANCHISE proposal. Reason is optional (body may be {}).
   reject: (id: string, reason?: string) =>
     api.post<RegistrationView>(`/registrations/${id}/reject`, { reason }).then((r) => r.data),
 };
@@ -317,6 +317,13 @@ export const auctionsApi = {
   get: (id: string) => api.get<AuctionView>(`/auctions/${id}`).then((r) => r.data),
   create: (body: CreateAuctionRequest) =>
     api.post<AuctionView>("/auctions", body).then((r) => r.data),
+  update: (id: string, body: UpdateAuctionRequest) =>
+    api.patch<AuctionView>(`/auctions/${id}`, body).then((r) => r.data),
+  openHall: (id: string) =>
+    api.post<AuctionView>(`/auctions/${id}/open-hall`).then((r) => r.data),
+  join: (id: string) => api.post<AuctionView>(`/auctions/${id}/join`).then((r) => r.data),
+  reschedule: (id: string, scheduledAt: string) =>
+    api.post<AuctionView>(`/auctions/${id}/reschedule`, { scheduledAt }).then((r) => r.data),
   start: (id: string) => api.post<AuctionView>(`/auctions/${id}/start`).then((r) => r.data),
   pause: (id: string) => api.post<AuctionView>(`/auctions/${id}/pause`).then((r) => r.data),
   resume: (id: string) => api.post<AuctionView>(`/auctions/${id}/resume`).then((r) => r.data),

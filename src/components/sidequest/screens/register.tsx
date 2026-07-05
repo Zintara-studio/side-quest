@@ -143,6 +143,8 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
         games,
         contact: contact || undefined,
         matchId: ann.data?.matchId || undefined,
+        // SQUAD sign-ups carry the announcement's configured roster cap (backend also enforces it).
+        teamSize: mode === "SQUAD" ? ann.data?.teamSize ?? undefined : undefined,
       });
       // Fire invites for any teammates added during sign-up (best-effort — manage the rest on My Team).
       if (mode === "SQUAD" && teammates.length) {
@@ -153,8 +155,8 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
         );
       }
       if (mode === "SQUAD") {
-        // A squad is created FORMING: the captain still has to finish the roster and submit it for
-        // approval. Route to My Team (instead of the generic success card) so they can do that.
+        // A squad is registered immediately as FORMING (open for invites). Route to My Team so the
+        // captain can finish the roster before the registration locks.
         setRedirecting(true);
         router.push("/my/registrations");
         return;
@@ -212,10 +214,10 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
           <div style={{ fontFamily: FONT.mono, fontSize: 11, letterSpacing: ".16em", color: SQ.green }}>
             ✓ SQUAD CREATED
           </div>
-          <div style={{ fontSize: 20, fontWeight: 700, marginTop: 10 }}>Squad created</div>
+          <div style={{ fontSize: 20, fontWeight: 700, marginTop: 10 }}>Squad registered</div>
           <p style={{ fontSize: 14, color: SQ.faint, lineHeight: 1.6, marginTop: 10 }}>
-            {squadName ? `“${squadName}” ` : "Your squad "}is being assembled. Invite your teammates and then
-            submit the squad for approval on My Team. Taking you there now…
+            {squadName ? `“${squadName}” ` : "Your squad "}is registered and open for invites. Add your teammates
+            on My Team before the registration locks — pending invites are voided at lock time. Taking you there now…
           </p>
           <div style={{ marginTop: 20 }}>
             <Link
@@ -254,22 +256,23 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
               color: SQ.green,
             }}
           >
-            ✓ SUBMITTED
+            {mode === "FRANCHISE" ? "✓ SUBMITTED" : "✓ REGISTERED"}
           </div>
           <div style={{ fontSize: 20, fontWeight: 700, marginTop: 10 }}>
-            Registration submitted
+            {mode === "FRANCHISE" ? "Proposal submitted" : "You're registered"}
           </div>
           <p style={{ fontSize: 14, color: SQ.faint, lineHeight: 1.6, marginTop: 10 }}>
-            The organizers will review your {mode === "SQUAD" ? "squad" : "player"} registration
-            {ann.data ? ` for “${ann.data.title}”` : ""}. You'll get a notification when it's
-            reviewed.
-            {mode === "SQUAD"
-              ? " Manage your roster and invite teammates from My Team."
-              : ""}
+            {mode === "FRANCHISE"
+              ? `League admins review franchise proposals${
+                  ann.data ? ` for “${ann.data.title}”` : ""
+                } before forming the franchises. You'll get a notification when it's reviewed.`
+              : `You're signed up${
+                  ann.data ? ` for “${ann.data.title}”` : ""
+                } — your registration is live. You'll be in the lobby when the match goes live.`}
           </p>
           <div style={{ display: "flex", gap: 12, marginTop: 20, flexWrap: "wrap" }}>
             <Link
-              href={mode === "SQUAD" ? "/my/registrations" : "/notifications"}
+              href="/notifications"
               style={{
                 fontFamily: FONT.mono,
                 fontSize: 11,
@@ -655,7 +658,7 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
                 <p style={{ margin: 0, fontSize: 14, lineHeight: 1.7, color: SQ.faint }}>
                   {mode === "FRANCHISE"
                     ? "Propose your franchise name and the games it will compete in. League admins review franchise bids before the season starts and form the franchises at their discretion."
-                    : "Submit the games you want to compete in and how to reach you. League admins review registrations and you'll get a notification when yours is reviewed."}
+                    : "Submit the games you want to compete in and how to reach you. Your registration goes live immediately — you'll be in the lobby when the match starts. Registration locks a few hours before match time."}
                 </p>
                 <p style={{ margin: "14px 0 0", fontSize: 13, lineHeight: 1.6, color: SQ.mute }}>
                   The registration mode is set by the organizer on the announcement you came from.

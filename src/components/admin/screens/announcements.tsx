@@ -34,7 +34,7 @@ const inputBox = {
   fontFamily: FONT.sans,
 } as const;
 
-const CATEGORIES = ["GENERAL", "RESULT", "RECAP", "MATCH", "ROSTER"];
+const CATEGORIES = ["GENERAL", "RESULT", "RECAP", "MATCH", "ROSTER", "AUCTION"];
 
 // One-line explainer shown under the KIND picker so admins know what each registration call opens.
 const KIND_HINTS: Record<RegistrationType, string> = {
@@ -164,7 +164,7 @@ const TEMPLATES: Template[] = [
   {
     id: "reg-auction",
     label: "Auction Call",
-    category: "GENERAL",
+    category: "AUCTION",
     registrationOpen: true,
     registrationType: "AUCTION",
     title: "Auction call",
@@ -220,6 +220,8 @@ export function AnnouncementsScreen() {
   const [registrationOpen, setRegistrationOpen] = useState(false);
   const [gameId, setGameId] = useState("");
   const [registrationType, setRegistrationType] = useState<RegistrationType>("PLAYER");
+  // Roster cap for SQUAD registration calls — squads registering from this post can invite up to this many.
+  const [teamSize, setTeamSize] = useState(5);
   const [err, setErr] = useState<string | null>(null);
 
   const items = list.data?.items ?? [];
@@ -260,6 +262,11 @@ export function AnnouncementsScreen() {
       setErr("Pick the match this post is for.");
       return;
     }
+    // The backend now rejects a RESULT post with no linked fixture — block it here too.
+    if (category === "RESULT" && !matchId) {
+      setErr("Pick the match this result is for.");
+      return;
+    }
     await create.mutateAsync({
       category,
       title: title.trim(),
@@ -268,6 +275,9 @@ export function AnnouncementsScreen() {
       registrationOpen,
       gameId: registrationOpen && gameId ? gameId : undefined,
       registrationType: registrationOpen ? registrationType : undefined,
+      // Only meaningful for SQUAD calls — the roster cap squads must respect.
+      teamSize:
+        registrationOpen && registrationType === "SQUAD" ? Math.max(2, teamSize) : undefined,
     });
     setTitle("");
     setBody("");
@@ -276,6 +286,7 @@ export function AnnouncementsScreen() {
     setRegistrationOpen(false);
     setGameId("");
     setRegistrationType("PLAYER");
+    setTeamSize(5);
   };
 
   return (
@@ -382,7 +393,7 @@ export function AnnouncementsScreen() {
             </button>
           </div>
           {showPreview ? (
-            <div style={{ ...inputBox, minHeight: 90, padding: "10px 14px" }}>
+            <div style={{ ...inputBox, minHeight: 260, padding: "10px 14px" }}>
               {body.trim() ? (
                 <MarkdownView content={body} />
               ) : (
@@ -392,7 +403,7 @@ export function AnnouncementsScreen() {
           ) : (
             <textarea
               className="sq-field"
-              style={{ ...inputBox, minHeight: 90, lineHeight: 1.5, resize: "vertical" }}
+              style={{ ...inputBox, minHeight: 260, lineHeight: 1.5, resize: "vertical" }}
               value={body}
               onChange={(e) => setBody(e.target.value)}
               placeholder="Write the announcement copy…  (Markdown supported)"
@@ -404,7 +415,7 @@ export function AnnouncementsScreen() {
 
           {/* tie to a match (any status) */}
           <div style={{ ...fieldLabel, margin: "18px 0 8px" }}>
-            LINKED MATCH{category === "MATCH" ? " (REQUIRED)" : " (OPTIONAL)"}
+            LINKED MATCH{category === "MATCH" || category === "RESULT" ? " (REQUIRED)" : " (OPTIONAL)"}
           </div>
           <SearchableSelect
             value={matchId}
@@ -472,6 +483,21 @@ export function AnnouncementsScreen() {
                   <option value="AUCTION">Auction (pre-season)</option>
                 </select>
               </div>
+              {registrationType === "SQUAD" ? (
+                <div style={{ flex: 1, minWidth: 140 }}>
+                  <div style={{ ...fieldLabel, marginBottom: 6 }}>SQUAD SIZE</div>
+                  <input
+                    className="sq-field"
+                    type="number"
+                    min={2}
+                    value={teamSize}
+                    onChange={(e) =>
+                      setTeamSize(Math.max(2, Math.floor(Number(e.target.value) || 0)))
+                    }
+                    style={inputBox}
+                  />
+                </div>
+              ) : null}
               <div
                 style={{
                   flexBasis: "100%",

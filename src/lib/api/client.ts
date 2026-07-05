@@ -23,17 +23,7 @@ const refreshClient = axios.create({
   headers: { "Content-Type": "application/json" },
 });
 
-api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
-  const token = authTokens.getAccess();
-  if (token) {
-    const headers = AxiosHeaders.from(config.headers);
-    headers.set("Authorization", `Bearer ${token}`);
-    config.headers = headers;
-  }
-  return config;
-});
-
-// Single in-flight refresh shared by all concurrent 401s.
+// Single in-flight refresh shared by all concurrent callers.
 let refreshing: Promise<string | null> | null = null;
 
 async function rotateRefreshToken(): Promise<string | null> {
@@ -50,6 +40,27 @@ async function rotateRefreshToken(): Promise<string | null> {
     return null;
   }
 }
+
+api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
+  let token = authTokens.getAccess();
+  // On a fresh page load the access token lives in memory only, so it's null until re-minted.
+  // If we have a refresh token, mint the access token FIRST (sharing the single in-flight refresh)
+  // rather than firing the request unauthenticated and eating a 401 + retry on every reload.
+  if (!token && authTokens.getRefresh()) {
+    if (!refreshing) {
+      refreshing = rotateRefreshToken().finally(() => {
+        refreshing = null;
+      });
+    }
+    token = await refreshing;
+  }
+  if (token) {
+    const headers = AxiosHeaders.from(config.headers);
+    headers.set("Authorization", `Bearer ${token}`);
+    config.headers = headers;
+  }
+  return config;
+});
 
 api.interceptors.response.use(
   (res) => res,

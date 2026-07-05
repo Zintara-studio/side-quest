@@ -171,7 +171,6 @@ export interface FranchiseDetail {
   rank: number;
   active: boolean;
   seasonId?: string;
-  igl: { playerId: string; gamerTag: string } | null;
   owner: FranchisePerson | null;
   manager: FranchisePerson | null;
   rosterSize: number;
@@ -183,7 +182,7 @@ export type FranchiseRole = "OWNER" | "MANAGER";
 /** The franchise the current user owns/manages/plays for, plus their role. Null body when none. */
 export interface FranchiseMineView {
   franchise: FranchiseDetail;
-  myRole: "OWNER" | "MANAGER" | "IGL" | "PLAYER";
+  myRole: "OWNER" | "MANAGER" | "PLAYER";
 }
 
 export interface FranchiseInviteRequest {
@@ -212,7 +211,6 @@ export interface UpdateFranchiseRequest {
   logoUrl?: string;
   points?: number;
   active?: boolean;
-  iglPlayerId?: string;
 }
 
 export interface RosterMember {
@@ -220,7 +218,7 @@ export interface RosterMember {
   gamerTag: string;
   avatarUrl?: string;
   status: string;
-  isIgl: boolean;
+  role: "OWNER" | "MANAGER" | "PLAYER";
 }
 
 export interface FranchiseMatchView {
@@ -443,6 +441,8 @@ export interface AnnouncementView {
   gameId?: string;
   gameName?: string;
   registrationType?: RegistrationType;
+  /** SQUAD registration calls: the configured roster cap for squads registering from this post. */
+  teamSize: number | null;
 }
 
 export interface CreateAnnouncementRequest {
@@ -453,11 +453,27 @@ export interface CreateAnnouncementRequest {
   registrationOpen?: boolean;
   gameId?: string;
   registrationType?: RegistrationType;
+  /** SQUAD registration calls: the roster cap squads registering from this post must respect. */
+  teamSize?: number;
 }
 
 // ---- registrations ---------------------------------------------------------
 
 export type RegistrationType = "PLAYER" | "SQUAD" | "FRANCHISE" | "AUCTION";
+
+/**
+ * Match registrations are live from creation: a SQUAD starts FORMING (open for invites), a solo
+ * PLAYER starts ACTIVE; both flip to LOCKED automatically N hours before the match (pending invites
+ * are voided). PENDING/APPROVED/REJECTED apply only to admin-curated FRANCHISE-creation proposals
+ * (REJECTED = discarded).
+ */
+export type RegistrationStatus =
+  | "FORMING"
+  | "ACTIVE"
+  | "LOCKED"
+  | "PENDING"
+  | "APPROVED"
+  | "REJECTED";
 
 /** One game's expertise line in an exhaustive auction self-registration. rating is 0-100. */
 export interface ProficiencyEntry {
@@ -478,9 +494,12 @@ export interface ApplyRequest {
   proficiencies?: ProficiencyEntry[];
   /** AUCTION registrations: a free-form note shown to admins. */
   note?: string;
+  /** SQUAD registrations: the invite/roster cap for the squad (from the announcement's teamSize). */
+  teamSize?: number;
 }
 
-export type InviteStatus = "PENDING" | "ACCEPTED" | "REJECTED";
+/** EXPIRED = a still-pending invite voided when the registration locked. */
+export type InviteStatus = "PENDING" | "ACCEPTED" | "REJECTED" | "EXPIRED";
 
 export interface RegistrationMemberView {
   playerId: string;
@@ -506,6 +525,8 @@ export interface RegistrationView {
   gameName?: string;
   members: RegistrationMemberView[];
   acceptedCount: number;
+  /** SQUAD registrations: the invite/roster cap (null = uncapped). */
+  teamSize: number | null;
 }
 
 export interface InviteView {
@@ -517,6 +538,8 @@ export interface InviteView {
   status: string;
   message?: string;
   createdAt: string;
+  /** The squad's confirmed/pending roster, so an invitee can see who's already on the team. */
+  members: { gamerTag: string; status: string; isCaptain: boolean }[];
 }
 
 export interface InviteRequest {
@@ -554,6 +577,8 @@ export interface SettingsView {
   pointsPerKill: number;
   placementPoints: string;
   registrationOpen: boolean;
+  /** Match registrations lock this many hours before the match starts. */
+  registrationLockHours: number;
   updatedAt: string;
 }
 
@@ -563,6 +588,7 @@ export interface UpdateSettingsRequest {
   pointsPerKill?: number;
   placementPoints?: string;
   registrationOpen?: boolean;
+  registrationLockHours?: number;
 }
 
 export type DisputeCategory = "RESULT" | "APPEAL" | "GENERAL";
@@ -650,7 +676,7 @@ export interface UnreadCountResponse {
 
 // ---- auction ---------------------------------------------------------------
 
-export type AuctionStatus = "DRAFT" | "LIVE" | "PAUSED" | "COMPLETED";
+export type AuctionStatus = "DRAFT" | "LOBBY" | "LIVE" | "PAUSED" | "COMPLETED";
 export type AuctionLotStatus = "QUEUED" | "ON_BLOCK" | "SOLD" | "UNSOLD";
 
 export interface AuctionLotView {
@@ -669,6 +695,12 @@ export interface AuctionLotView {
   /** When the current bid timer expires (server-authoritative). */
   bidDeadline?: string;
   lotOrder: number;
+  /** Games this player registered for the auction with. */
+  games: string[];
+  /** Per-game expertise the player self-reported at registration (rating 0-100). */
+  expertise: { game: string; rating: number; handle: string | null }[];
+  /** Free-form contact the player supplied at registration; null if none. */
+  contact: string | null;
 }
 
 export interface AuctionFranchiseView {
@@ -678,6 +710,8 @@ export interface AuctionFranchiseView {
   budget: number;
   balance: number;
   acquiredCount: number;
+  /** Whether this franchise has joined the auction hall / is present. */
+  joined: boolean;
 }
 
 export interface AuctionBidView {
@@ -699,6 +733,10 @@ export interface AuctionView {
   raiseIncrements: number[];
   /** Authoritative server clock — reconcile the countdown against this each poll. */
   serverTime: string;
+  /** When the auction is scheduled to open, if set; null otherwise (ISO instant). */
+  scheduledAt: string | null;
+  /** When set and in the future, a lot just sold and the room is in a brief SOLD intermission. */
+  intermissionUntil: string | null;
   currentLot: AuctionLotView | null;
   franchises: AuctionFranchiseView[];
   lots: AuctionLotView[];
@@ -715,6 +753,20 @@ export interface CreateAuctionRequest {
   defaultBudget: number;
   participantFranchiseIds: string[];
   playerIds?: string[];
+  /** Optional scheduled open time (ISO instant). */
+  scheduledAt?: string;
+}
+
+/** Edit an auction's config while DRAFT/LOBBY (all fields optional; only non-null applied). */
+export interface UpdateAuctionRequest {
+  basePrice?: number;
+  bidTimerSeconds?: number;
+  antiSnipeSeconds?: number;
+  raiseIncrements?: number[];
+  defaultBudget?: number;
+  intermissionSeconds?: number;
+  scheduledAt?: string;
+  participantFranchiseIds?: string[];
 }
 
 export interface PlaceBidRequest {

@@ -6,7 +6,7 @@ import { SQ, FONT } from "../tokens";
 import { StateNote } from "../state-note";
 import { Modal } from "../modal";
 import { useAuth, apiErrorMessage } from "@/lib/auth/context";
-import { useMyFranchise, useActiveAuction, useAuction, usePlaceBid } from "@/lib/query/hooks";
+import { useMyFranchise, useActiveAuction, useAuction, usePlaceBid, useJoinAuction } from "@/lib/query/hooks";
 import type { AuctionView, AuctionLotView, AuctionFranchiseView } from "@/lib/api/types";
 
 const sectionTitle = {
@@ -25,8 +25,28 @@ const subLabel = {
   marginBottom: 8,
 } as const;
 
+const eyebrow = {
+  fontFamily: FONT.mono,
+  fontSize: 10.5,
+  letterSpacing: ".16em",
+  color: SQ.label,
+} as const;
+
 /** Auction credits — neutral thousands-separated integer, no currency symbol. */
 const money = (n: number) => n.toLocaleString("en-US");
+const pct = (n: number) => Math.max(0, Math.min(100, n));
+const fmtWhen = (iso: string) => {
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+};
 
 // ---- entry point / gating --------------------------------------------------
 
@@ -65,7 +85,9 @@ export function AuctionBidScreen() {
     );
   }
 
-  if (!auction || auction.status === "COMPLETED") {
+  // No auction at all (a just-COMPLETED board still held in cache falls through to the war room's
+  // Results view — the active-auction poll drops it on the next reload).
+  if (!auction) {
     return (
       <div>
         <Header />
@@ -106,12 +128,7 @@ export function AuctionBidScreen() {
     );
   }
 
-  return (
-    <div>
-      <Header />
-      <BidRoom auction={auction} myAF={myAF} myFranchiseId={myFranchiseId} canBid={canBid} />
-    </div>
-  );
+  return <BidRoom auction={auction} myAF={myAF} myFranchiseId={myFranchiseId} canBid={canBid} />;
 }
 
 // ---- the live bidding room -------------------------------------------------
@@ -128,12 +145,23 @@ function BidRoom({
   canBid: boolean;
 }) {
   const placeBid = usePlaceBid();
+  const joinAuction = useJoinAuction();
   const [bidErr, setBidErr] = useState<string | null>(null);
+  const [joinErr, setJoinErr] = useState<string | null>(null);
   const [customOpen, setCustomOpen] = useState(false);
 
   const currentLot = auction.currentLot;
   const iAmTop = !!currentLot && currentLot.currentBidderFranchiseId === myFranchiseId;
   const minNext = currentLot?.minNextBid ?? 0;
+
+  // Brief "SOLD!" intermission after a lot closes — reconcile against server-clock skew the same
+  // way the bid countdown does, then hold the celebratory card until it elapses.
+  const intermissionLeft = useCountdown(
+    auction.serverTime,
+    auction.intermissionUntil ?? undefined,
+    auction.status === "LIVE",
+  );
+  const inIntermission = intermissionLeft != null && intermissionLeft > 0;
 
   // A new player on the block (or a status flip) clears any stale bid error.
   useEffect(() => {
@@ -166,6 +194,17 @@ function BidRoom({
     }
   };
 
+  const onJoin = async () => {
+    setJoinErr(null);
+    try {
+      await joinAuction.mutateAsync(auction.id);
+    } catch (e) {
+      setJoinErr(apiErrorMessage(e, "Couldn't join the auction."));
+    }
+  };
+
+  // My won players, oldest first (player + price rows are lot-derived; per-franchise counts in the
+  // standings rail come straight off AuctionFranchiseView.acquiredCount).
   const acquired = useMemo(
     () =>
       auction.lots
@@ -174,138 +213,113 @@ function BidRoom({
     [auction.lots, myFranchiseId],
   );
 
-  const spent = myAF.budget - myAF.balance;
-  const budgetPct = myAF.budget > 0 ? Math.max(0, Math.min(100, (myAF.balance / myAF.budget) * 100)) : 0;
+  // The most recently sold lot drives the SOLD intermission card.
+  const justSold = useMemo(
+    () =>
+      auction.lots
+        .filter((l) => l.status === "SOLD")
+        .sort((a, b) => b.lotOrder - a.lotOrder)[0] ?? null,
+    [auction.lots],
+  );
 
+  const queuedCount = auction.lots.filter((l) => l.status === "QUEUED").length;
+  const soldCount = auction.lots.filter((l) => l.status === "SOLD").length;
+
+  // ---- LOBBY / DRAFT: the hall, before bidding opens -----------------------
+  if (auction.status === "LOBBY" || auction.status === "DRAFT") {
+    return (
+      <div>
+        <WarStyles />
+        <Lobby
+          auction={auction}
+          myAF={myAF}
+          hallOpen={auction.status === "LOBBY"}
+          onJoin={onJoin}
+          joining={joinAuction.isPending}
+          joinErr={joinErr}
+        />
+      </div>
+    );
+  }
+
+  // ---- COMPLETED: calm results summary -------------------------------------
+  if (auction.status === "COMPLETED") {
+    return (
+      <div>
+        <WarStyles />
+        <Results auction={auction} myAF={myAF} myFranchiseId={myFranchiseId} acquired={acquired} />
+      </div>
+    );
+  }
+
+  // ---- LIVE / PAUSED: the war room -----------------------------------------
   return (
-    <div style={{ marginTop: 26 }}>
-      {/* my franchise wallet header */}
+    <div>
+      <WarStyles />
+
+      {/* top strip: identity + status + remaining */}
       <div
         style={{
           display: "flex",
-          flexWrap: "wrap",
           alignItems: "flex-end",
-          gap: 20,
           justifyContent: "space-between",
-          padding: "18px 20px",
-          background: SQ.panel,
-          border: `1px solid ${SQ.hairline}`,
-          borderRadius: 10,
+          flexWrap: "wrap",
+          gap: "12px 20px",
+          marginBottom: 20,
         }}
       >
-        <div>
-          <div style={{ fontFamily: FONT.mono, fontSize: 10.5, letterSpacing: ".16em", color: SQ.label }}>
-            YOUR FRANCHISE
-          </div>
-          <div style={{ fontFamily: FONT.display, fontSize: "clamp(26px,4vw,40px)", lineHeight: 0.95, marginTop: 6 }}>
-            {myAF.name}
-            {myAF.tag ? <span style={{ color: SQ.mute }}> · {myAF.tag}</span> : null}
-          </div>
-          <div style={{ fontFamily: FONT.mono, fontSize: 11.5, color: SQ.mute, marginTop: 8 }}>
-            {myAF.acquiredCount} acquired · {money(spent)} spent
+        <div style={{ minWidth: 0 }}>
+          <div style={{ ...eyebrow, color: SQ.red, letterSpacing: ".22em" }}>LIVE BIDDING ROOM</div>
+          <div
+            style={{
+              fontFamily: FONT.display,
+              fontSize: "clamp(26px,4vw,44px)",
+              lineHeight: 0.95,
+              letterSpacing: "-.02em",
+              marginTop: 8,
+            }}
+          >
+            {auction.title}
           </div>
         </div>
-        <div style={{ textAlign: "right", minWidth: 180 }}>
-          <div style={{ fontFamily: FONT.mono, fontSize: 10.5, letterSpacing: ".16em", color: SQ.label }}>
-            REMAINING BALANCE
-          </div>
-          <div style={{ fontFamily: FONT.display, fontSize: "clamp(30px,5vw,48px)", color: SQ.green, lineHeight: 0.95, marginTop: 4 }}>
-            {money(myAF.balance)}
-          </div>
-          <div style={{ fontFamily: FONT.mono, fontSize: 11, color: SQ.mute, marginTop: 4 }}>
-            of {money(myAF.budget)} budget
-          </div>
-          <div style={{ marginTop: 8, height: 4, borderRadius: 3, background: SQ.track, overflow: "hidden" }}>
-            <div style={{ width: `${budgetPct}%`, height: "100%", background: SQ.green }} />
-          </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <StatusPill status={auction.status} />
+          <RemainingChips queued={queuedCount} sold={soldCount} />
         </div>
       </div>
 
-      {/* status + auction title strip */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", margin: "22px 0 14px" }}>
-        <StatusPill status={auction.status} />
-        <div style={{ fontSize: 14.5, fontWeight: 700 }}>{auction.title}</div>
+      {/* two columns on wide (sticky hero + scrolling rail), stacked on narrow */}
+      <div className="sqar-grid">
+        <div className="sqar-hero">
+          <WalletBar af={myAF} />
+          {inIntermission && justSold ? (
+            <SoldCard lot={justSold} secondsLeft={intermissionLeft} />
+          ) : currentLot ? (
+            <HeroLot
+              auction={auction}
+              lot={currentLot}
+              iAmTop={iAmTop}
+              canBid={canBid}
+              balance={myAF.balance}
+              blockReason={bidBlockReason}
+              pending={placeBid.isPending}
+              bidErr={bidErr}
+              onBid={submitBid}
+              onCustom={() => setCustomOpen(true)}
+            />
+          ) : auction.status === "LIVE" && queuedCount === 0 ? (
+            <IdleLot />
+          ) : (
+            <WaitingLot />
+          )}
+        </div>
+
+        <aside className="sqar-rail">
+          <StandingsRail auction={auction} myFranchiseId={myFranchiseId} />
+          <RecentBidsPanel auction={auction} myTag={myAF.tag} />
+          <AcquiredPanel acquired={acquired} />
+        </aside>
       </div>
-
-      {/* current lot / on-the-block card */}
-      {currentLot ? (
-        <CurrentLotCard
-          auction={auction}
-          lot={currentLot}
-          iAmTop={iAmTop}
-          canBid={canBid}
-          balance={myAF.balance}
-          blockReason={bidBlockReason}
-          pending={placeBid.isPending}
-          bidErr={bidErr}
-          onBid={submitBid}
-          onCustom={() => setCustomOpen(true)}
-        />
-      ) : (
-        <StateNote>
-          No player is on the block right now. Bidding opens the moment the auctioneer nominates the next
-          player.
-        </StateNote>
-      )}
-
-      {/* my acquired players */}
-      <section style={{ marginTop: 40 }}>
-        <div style={sectionTitle}>My acquired players</div>
-        {acquired.length === 0 ? (
-          <div style={{ fontFamily: FONT.mono, fontSize: 11.5, color: SQ.mute }}>
-            You haven&rsquo;t won any players yet.
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-            {acquired.map((l) => (
-              <div
-                key={l.id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: "12px 0",
-                  borderTop: `1px solid ${SQ.hairlineCell}`,
-                }}
-              >
-                <span style={{ fontSize: 14, fontWeight: 600 }}>{l.gamerTag}</span>
-                <span style={{ fontFamily: FONT.mono, fontSize: 13, color: SQ.green }}>{money(l.soldPrice)}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* compact recent bids feed */}
-      {auction.recentBids.length > 0 ? (
-        <section style={{ marginTop: 34 }}>
-          <div style={sectionTitle}>Recent bids</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-            {auction.recentBids.slice(0, 8).map((b, i) => {
-              const mine = b.franchiseTag === myAF.tag;
-              return (
-                <div
-                  key={`${b.lotId}-${b.at}-${i}`}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    padding: "10px 0",
-                    borderTop: i === 0 ? "none" : `1px solid ${SQ.hairlineCell}`,
-                  }}
-                >
-                  <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: SQ.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    <span style={{ fontWeight: 600, color: mine ? SQ.ember : SQ.ink }}>{b.franchiseTag}</span>
-                    <span style={{ color: SQ.mute }}> on </span>
-                    {b.playerGamerTag}
-                  </span>
-                  <span style={{ fontFamily: FONT.mono, fontSize: 12.5, color: SQ.ink }}>{money(b.amount)}</span>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      ) : null}
 
       <CustomBidModal
         open={customOpen}
@@ -320,9 +334,194 @@ function BidRoom({
   );
 }
 
-// ---- current lot card + raise controls -------------------------------------
+// ---- LOBBY -----------------------------------------------------------------
 
-function CurrentLotCard({
+function Lobby({
+  auction,
+  myAF,
+  hallOpen,
+  onJoin,
+  joining,
+  joinErr,
+}: {
+  auction: AuctionView;
+  myAF: AuctionFranchiseView;
+  hallOpen: boolean;
+  onJoin: () => void;
+  joining: boolean;
+  joinErr: string | null;
+}) {
+  const joinedCount = auction.franchises.filter((f) => f.joined).length;
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 22 }}>
+        <StatusPill status={auction.status} />
+        <div style={{ fontSize: 15, fontWeight: 700 }}>{auction.title}</div>
+      </div>
+
+      <div
+        style={{
+          background: SQ.panel,
+          border: `1px solid ${SQ.hairline}`,
+          borderRadius: 14,
+          padding: "clamp(24px,5vw,44px)",
+          textAlign: "center",
+        }}
+      >
+        <div style={{ ...eyebrow, color: hallOpen ? SQ.green : SQ.amber, letterSpacing: ".22em" }}>
+          {hallOpen ? "THE HALL IS OPEN" : "GET READY"}
+        </div>
+
+        {!hallOpen ? (
+          <>
+            <div style={{ fontFamily: FONT.display, fontSize: "clamp(26px,4vw,40px)", lineHeight: 1, marginTop: 12 }}>
+              The room opens soon
+            </div>
+            <div style={{ fontSize: 13.5, color: SQ.mute, marginTop: 12, maxWidth: 440, marginInline: "auto", lineHeight: 1.5 }}>
+              The league hasn&rsquo;t opened the hall yet. Hang tight — you&rsquo;ll be able to join the
+              moment doors open.
+            </div>
+          </>
+        ) : myAF.joined ? (
+          <>
+            <div style={{ fontFamily: FONT.display, fontSize: "clamp(26px,4vw,40px)", lineHeight: 1, marginTop: 12 }}>
+              You&rsquo;re in the room
+            </div>
+            <div style={{ fontSize: 13.5, color: SQ.mute, marginTop: 12, maxWidth: 440, marginInline: "auto", lineHeight: 1.5 }}>
+              Waiting for the admin to start the auction. Bidding opens the instant the first player hits
+              the block.
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ fontFamily: FONT.display, fontSize: "clamp(28px,4.4vw,46px)", lineHeight: 1, marginTop: 12 }}>
+              Take your seat
+            </div>
+            <div style={{ fontSize: 13.5, color: SQ.mute, marginTop: 12, maxWidth: 440, marginInline: "auto", lineHeight: 1.5 }}>
+              Join the hall so you&rsquo;re ready to bid the moment the first player is nominated.
+            </div>
+            <button
+              type="button"
+              onClick={onJoin}
+              disabled={joining}
+              className="sqar-cta"
+              style={{
+                marginTop: 22,
+                fontFamily: FONT.mono,
+                fontSize: 13,
+                letterSpacing: ".14em",
+                textTransform: "uppercase",
+                fontWeight: 700,
+                padding: "14px 30px",
+                borderRadius: 8,
+                cursor: joining ? "not-allowed" : "pointer",
+                color: SQ.league,
+                background: SQ.red,
+                border: "none",
+                opacity: joining ? 0.6 : 1,
+              }}
+            >
+              {joining ? "Joining…" : "Join auction ▸"}
+            </button>
+            {joinErr ? (
+              <div style={{ fontFamily: FONT.mono, fontSize: 11.5, color: SQ.ember, marginTop: 12 }}>{joinErr}</div>
+            ) : null}
+          </>
+        )}
+
+        {auction.scheduledAt ? (
+          <div style={{ fontFamily: FONT.mono, fontSize: 11.5, color: SQ.mute, marginTop: 18 }}>
+            Scheduled to open · {fmtWhen(auction.scheduledAt)}
+          </div>
+        ) : null}
+      </div>
+
+      {/* who has joined the hall */}
+      <section style={{ marginTop: 28 }}>
+        <div style={sectionTitle}>
+          In the hall · {joinedCount}/{auction.franchises.length}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+          {auction.franchises.map((f, i) => (
+            <div
+              key={f.franchiseId}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+                padding: "12px 0",
+                borderTop: i === 0 ? "none" : `1px solid ${SQ.hairlineCell}`,
+                opacity: f.joined ? 1 : 0.6,
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <span style={{ fontFamily: FONT.mono, fontSize: 12.5, fontWeight: 700, color: SQ.ink }}>{f.tag}</span>
+                <span style={{ fontSize: 13, color: SQ.mute, marginLeft: 10 }}>{f.name}</span>
+              </div>
+              <span
+                style={{
+                  fontFamily: FONT.mono,
+                  fontSize: 10,
+                  letterSpacing: ".12em",
+                  color: f.joined ? SQ.green : SQ.mute,
+                  border: `1px solid ${f.joined ? SQ.green : SQ.inputBorder}`,
+                  borderRadius: 999,
+                  padding: "3px 10px",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {f.joined ? "● JOINED" : "○ NOT YET"}
+              </span>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+// ---- wallet bar (compact, pinned with the hero) ----------------------------
+
+function WalletBar({ af }: { af: AuctionFranchiseView }) {
+  const spent = af.budget - af.balance;
+  const barPct = af.budget > 0 ? pct((af.balance / af.budget) * 100) : 0;
+  return (
+    <div
+      style={{
+        background: SQ.panel,
+        border: `1px solid ${SQ.hairline}`,
+        borderRadius: 12,
+        padding: "14px 16px",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ ...eyebrow, letterSpacing: ".14em" }}>YOUR WALLET</div>
+          <div style={{ fontSize: 15, fontWeight: 700, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {af.name}
+            {af.tag ? <span style={{ color: SQ.mute }}> · {af.tag}</span> : null}
+          </div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontFamily: FONT.display, fontSize: "clamp(24px,3.6vw,34px)", color: SQ.green, lineHeight: 0.95 }}>
+            {money(af.balance)}
+          </div>
+          <div style={{ fontFamily: FONT.mono, fontSize: 10.5, color: SQ.mute, marginTop: 4 }}>
+            of {money(af.budget)} · {money(spent)} spent · {af.acquiredCount} won
+          </div>
+        </div>
+      </div>
+      <div style={{ marginTop: 10, height: 4, borderRadius: 3, background: SQ.track, overflow: "hidden" }}>
+        <div style={{ width: `${barPct}%`, height: "100%", background: SQ.green }} />
+      </div>
+    </div>
+  );
+}
+
+// ---- hero lot card + raise controls ----------------------------------------
+
+function HeroLot({
   auction,
   lot,
   iAmTop,
@@ -347,55 +546,69 @@ function CurrentLotCard({
 }) {
   const remaining = useCountdown(auction.serverTime, lot.bidDeadline, auction.status === "LIVE");
   const showRaises = canBid && auction.status === "LIVE";
+  const timerColor: string =
+    remaining == null ? SQ.mute : remaining <= 5 ? SQ.red : remaining <= 10 ? SQ.amber : SQ.ink;
+  const urgent = remaining != null && remaining <= 5 && auction.status === "LIVE";
 
   return (
     <div
+      className={iAmTop ? "sqar-lead" : undefined}
       style={{
         background: SQ.panel,
         border: `1px solid ${iAmTop ? SQ.green : SQ.hairline}`,
-        borderRadius: 12,
+        borderRadius: 14,
         padding: 22,
-        boxShadow: iAmTop ? `0 0 0 1px ${SQ.green} inset` : undefined,
       }}
     >
+      {/* identity + timer */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 18, justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontFamily: FONT.mono, fontSize: 10.5, letterSpacing: ".16em", color: SQ.ember }}>
-            ON THE BLOCK
-          </div>
-          <div style={{ fontFamily: FONT.display, fontSize: "clamp(30px,5vw,52px)", lineHeight: 0.95, marginTop: 8 }}>
-            {lot.gamerTag}
-          </div>
-          <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 8 }}>
-            <span style={{ fontFamily: FONT.mono, fontSize: 10.5, letterSpacing: ".1em", color: SQ.label }}>
-              CURRENT BID
-            </span>
-            <span style={{ fontFamily: FONT.display, fontSize: 26, color: lot.currentBid > 0 ? SQ.ink : SQ.mute }}>
-              {lot.currentBid > 0 ? money(lot.currentBid) : "—"}
-            </span>
-            {lot.currentBidderTag ? (
-              <span style={{ fontFamily: FONT.mono, fontSize: 12, color: SQ.mute }}>
-                by {lot.currentBidderTag}
-              </span>
-            ) : (
-              <span style={{ fontFamily: FONT.mono, fontSize: 12, color: SQ.mute }}>no bids yet</span>
-            )}
-          </div>
-          <div style={{ fontFamily: FONT.mono, fontSize: 11.5, color: SQ.mute, marginTop: 6 }}>
-            Next bid must reach {money(lot.minNextBid)}
-          </div>
-        </div>
-
-        {/* countdown clock */}
-        <div style={{ textAlign: "center", minWidth: 96 }}>
-          <div style={{ fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".16em", color: SQ.label }}>TIMER</div>
+        <div style={{ minWidth: 0, flex: "1 1 220px" }}>
+          <div style={{ ...eyebrow, color: SQ.ember }}>ON THE BLOCK</div>
           <div
             style={{
               fontFamily: FONT.display,
-              fontSize: 44,
+              fontSize: "clamp(30px,5vw,52px)",
+              lineHeight: 0.92,
+              marginTop: 8,
+              wordBreak: "break-word",
+            }}
+          >
+            {lot.gamerTag}
+          </div>
+          {lot.games.length > 0 ? (
+            <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {lot.games.map((g) => (
+                <span
+                  key={g}
+                  style={{
+                    fontFamily: FONT.mono,
+                    fontSize: 10.5,
+                    letterSpacing: ".06em",
+                    color: SQ.faint,
+                    background: SQ.inset,
+                    border: `1px solid ${SQ.hairline}`,
+                    borderRadius: 999,
+                    padding: "4px 10px",
+                  }}
+                >
+                  {g}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+
+        {/* countdown clock */}
+        <div style={{ textAlign: "center", minWidth: 92 }}>
+          <div style={{ ...eyebrow, fontSize: 10, letterSpacing: ".16em" }}>TIMER</div>
+          <div
+            className={urgent ? "sqar-tick" : undefined}
+            style={{
+              fontFamily: FONT.display,
+              fontSize: 48,
               lineHeight: 1,
               marginTop: 6,
-              color: remaining == null ? SQ.mute : remaining <= 5 ? SQ.red : remaining <= 10 ? SQ.amber : SQ.ink,
+              color: timerColor,
             }}
           >
             {auction.status === "PAUSED" ? "PAUSED" : remaining == null ? "—" : `${remaining}s`}
@@ -403,27 +616,105 @@ function CurrentLotCard({
         </div>
       </div>
 
-      {iAmTop ? (
-        <div
-          style={{
-            marginTop: 16,
-            fontFamily: FONT.mono,
-            fontSize: 11.5,
-            letterSpacing: ".12em",
-            color: SQ.green,
-            border: `1px solid ${SQ.green}`,
-            borderRadius: 6,
-            padding: "8px 12px",
-            textAlign: "center",
-          }}
-        >
-          ★ YOU ARE TOP BID
+      {/* current bid + who leads */}
+      <div
+        style={{
+          marginTop: 16,
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "flex-end",
+          justifyContent: "space-between",
+          gap: "10px 18px",
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <div style={{ ...eyebrow, fontSize: 10, letterSpacing: ".1em" }}>CURRENT BID</div>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 4, flexWrap: "wrap" }}>
+            <span style={{ fontFamily: FONT.display, fontSize: 30, color: lot.currentBid > 0 ? SQ.ink : SQ.mute }}>
+              {lot.currentBid > 0 ? money(lot.currentBid) : "—"}
+            </span>
+            <span style={{ fontFamily: FONT.mono, fontSize: 12, color: SQ.mute }}>
+              {lot.currentBidderTag ? `led by ${lot.currentBidderTag}` : "no bids yet"}
+            </span>
+          </div>
+          <div style={{ fontFamily: FONT.mono, fontSize: 11.5, color: SQ.mute, marginTop: 6 }}>
+            Next bid must reach {money(lot.minNextBid)}
+          </div>
+        </div>
+        {iAmTop ? (
+          <div
+            style={{
+              fontFamily: FONT.mono,
+              fontSize: 11.5,
+              letterSpacing: ".14em",
+              color: SQ.green,
+              border: `1px solid ${SQ.green}`,
+              borderRadius: 7,
+              padding: "7px 13px",
+              whiteSpace: "nowrap",
+            }}
+          >
+            ★ YOU LEAD
+          </div>
+        ) : null}
+      </div>
+
+      {/* expertise */}
+      {lot.expertise.length > 0 ? (
+        <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${SQ.hairlineSoft}` }}>
+          <div style={subLabel}>EXPERTISE</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {lot.expertise.map((e) => (
+              <div key={e.game} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span
+                  style={{
+                    width: 96,
+                    flexShrink: 0,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {e.game}
+                </span>
+                <div style={{ flex: 1, minWidth: 50, height: 6, borderRadius: 4, background: SQ.track, overflow: "hidden" }}>
+                  <div style={{ width: `${pct(e.rating)}%`, height: "100%", background: SQ.blue }} />
+                </div>
+                <span style={{ fontFamily: FONT.mono, fontSize: 11.5, color: SQ.faint, width: 30, textAlign: "right" }}>
+                  {Math.round(e.rating)}
+                </span>
+                {e.handle ? (
+                  <span
+                    style={{
+                      fontFamily: FONT.mono,
+                      fontSize: 11,
+                      color: SQ.mute,
+                      maxWidth: 110,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    @{e.handle}
+                  </span>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {lot.contact ? (
+        <div style={{ fontFamily: FONT.mono, fontSize: 10.5, color: SQ.mute, marginTop: 12 }}>
+          Contact · {lot.contact}
         </div>
       ) : null}
 
       {/* raise controls */}
       {showRaises ? (
-        <div style={{ marginTop: 20, paddingTop: 18, borderTop: `1px solid ${SQ.hairlineSoft}` }}>
+        <div style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${SQ.hairlineSoft}` }}>
           <div style={subLabel}>PLACE A BID</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
             {auction.raiseIncrements.map((inc) => {
@@ -462,12 +753,401 @@ function CurrentLotCard({
           ) : null}
         </div>
       ) : (
-        <div style={{ marginTop: 20, paddingTop: 18, borderTop: `1px solid ${SQ.hairlineSoft}` }}>
+        <div style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${SQ.hairlineSoft}` }}>
           <div style={{ fontFamily: FONT.mono, fontSize: 11.5, color: SQ.amber }}>
             {blockReason ?? "Bidding isn't open right now."}
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ---- SOLD intermission card ------------------------------------------------
+
+function SoldCard({ lot, secondsLeft }: { lot: AuctionLotView; secondsLeft: number | null }) {
+  return (
+    <div
+      className="sqar-sold"
+      style={{
+        background: SQ.panel,
+        border: `1px solid ${SQ.green}`,
+        borderRadius: 14,
+        padding: "clamp(26px,5vw,44px) 22px",
+        textAlign: "center",
+        boxShadow: "0 0 0 1px var(--sq-green) inset",
+      }}
+    >
+      <div
+        className="sqar-badge"
+        style={{
+          display: "inline-block",
+          fontFamily: FONT.display,
+          fontSize: "clamp(40px,8vw,72px)",
+          lineHeight: 0.9,
+          letterSpacing: "-.02em",
+          color: SQ.green,
+        }}
+      >
+        SOLD!
+      </div>
+      <div style={{ fontFamily: FONT.display, fontSize: "clamp(24px,4vw,40px)", lineHeight: 1, marginTop: 16, wordBreak: "break-word" }}>
+        {lot.gamerTag}
+      </div>
+      <div style={{ fontFamily: FONT.mono, fontSize: 12, letterSpacing: ".08em", color: SQ.mute, marginTop: 14 }}>
+        WON BY
+      </div>
+      <div style={{ fontFamily: FONT.display, fontSize: "clamp(20px,3.4vw,30px)", marginTop: 4, color: SQ.ember }}>
+        {lot.soldToTag ?? "—"}
+      </div>
+      <div style={{ fontFamily: FONT.display, fontSize: "clamp(26px,4.6vw,40px)", color: SQ.green, marginTop: 12 }}>
+        {money(lot.soldPrice)}
+      </div>
+      <div style={{ fontFamily: FONT.mono, fontSize: 11, color: SQ.mute, marginTop: 18 }}>
+        {secondsLeft != null && secondsLeft > 0 ? `Next player in ${secondsLeft}s…` : "Next player incoming…"}
+      </div>
+    </div>
+  );
+}
+
+// ---- between-lots / idle hero states ---------------------------------------
+
+function WaitingLot() {
+  return (
+    <div
+      style={{
+        background: SQ.panel,
+        border: `1px dashed ${SQ.inputBorder}`,
+        borderRadius: 14,
+        padding: "clamp(30px,6vw,52px) 22px",
+        textAlign: "center",
+      }}
+    >
+      <div style={{ ...eyebrow, color: SQ.ember, letterSpacing: ".2em" }}>STANDING BY</div>
+      <div style={{ fontFamily: FONT.display, fontSize: "clamp(22px,3.6vw,32px)", lineHeight: 1, marginTop: 12 }}>
+        Next player incoming
+      </div>
+      <div style={{ fontSize: 13, color: SQ.mute, marginTop: 12, maxWidth: 360, marginInline: "auto", lineHeight: 1.5 }}>
+        Bidding opens the moment the auctioneer nominates the next player. Keep your eyes on the block.
+      </div>
+    </div>
+  );
+}
+
+function IdleLot() {
+  return (
+    <div
+      style={{
+        background: SQ.panel,
+        border: `1px dashed ${SQ.inputBorder}`,
+        borderRadius: 14,
+        padding: "clamp(30px,6vw,52px) 22px",
+        textAlign: "center",
+      }}
+    >
+      <div style={{ ...eyebrow, color: SQ.amber, letterSpacing: ".2em" }}>ALL LOTS DONE</div>
+      <div style={{ fontFamily: FONT.display, fontSize: "clamp(22px,3.6vw,32px)", lineHeight: 1, marginTop: 12 }}>
+        Waiting for the admin
+      </div>
+      <div style={{ fontSize: 13, color: SQ.mute, marginTop: 12, maxWidth: 380, marginInline: "auto", lineHeight: 1.5 }}>
+        Every player has been through the block. The admin is deciding whether to re-auction unsold
+        players or wrap up. Review the standings while you wait.
+      </div>
+    </div>
+  );
+}
+
+// ---- COMPLETED results -----------------------------------------------------
+
+function Results({
+  auction,
+  myAF,
+  myFranchiseId,
+  acquired,
+}: {
+  auction: AuctionView;
+  myAF: AuctionFranchiseView;
+  myFranchiseId: string;
+  acquired: AuctionLotView[];
+}) {
+  const spent = myAF.budget - myAF.balance;
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
+        <StatusPill status={auction.status} />
+        <div style={{ fontSize: 15, fontWeight: 700 }}>{auction.title}</div>
+      </div>
+      <div style={{ ...eyebrow, color: SQ.green, letterSpacing: ".22em" }}>AUCTION COMPLETE</div>
+      <div
+        style={{
+          fontFamily: FONT.display,
+          fontSize: "clamp(30px,5vw,52px)",
+          lineHeight: 0.92,
+          letterSpacing: "-.02em",
+          marginTop: 8,
+        }}
+      >
+        Your final squad
+      </div>
+
+      <div className="sqar-grid" style={{ marginTop: 22 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 18, minWidth: 0 }}>
+          <WalletBar af={myAF} />
+          <div
+            style={{
+              background: SQ.panel,
+              border: `1px solid ${SQ.hairline}`,
+              borderRadius: 12,
+              padding: 20,
+            }}
+          >
+            <div style={sectionTitle}>Players you won · {money(spent)} spent</div>
+            {acquired.length === 0 ? (
+              <div style={{ fontFamily: FONT.mono, fontSize: 11.5, color: SQ.mute }}>
+                You didn&rsquo;t win any players this auction.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+                {acquired.map((l, i) => (
+                  <div
+                    key={l.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      padding: "12px 0",
+                      borderTop: i === 0 ? "none" : `1px solid ${SQ.hairlineCell}`,
+                    }}
+                  >
+                    <span style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {l.gamerTag}
+                    </span>
+                    <span style={{ fontFamily: FONT.mono, fontSize: 13, color: SQ.green, whiteSpace: "nowrap" }}>
+                      {money(l.soldPrice)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <aside className="sqar-rail">
+          <StandingsRail auction={auction} myFranchiseId={myFranchiseId} title="Final standings" />
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+// ---- franchise standings rail ----------------------------------------------
+
+function StandingsRail({
+  auction,
+  myFranchiseId,
+  title = "Franchise standings",
+}: {
+  auction: AuctionView;
+  myFranchiseId: string;
+  title?: string;
+}) {
+  const topBidderId = auction.currentLot?.currentBidderFranchiseId;
+  const rows = useMemo(
+    () =>
+      [...auction.franchises].sort(
+        (a, b) => b.acquiredCount - a.acquiredCount || (b.budget - b.balance) - (a.budget - a.balance),
+      ),
+    [auction.franchises],
+  );
+
+  return (
+    <section
+      style={{
+        background: SQ.panel,
+        border: `1px solid ${SQ.hairline}`,
+        borderRadius: 12,
+        padding: "16px 16px 6px",
+      }}
+    >
+      <div style={sectionTitle}>{title}</div>
+      <div className="sqar-scroll" style={{ maxHeight: 340, display: "flex", flexDirection: "column", gap: 8 }}>
+        {rows.map((f) => {
+          const isMe = f.franchiseId === myFranchiseId;
+          const isTop = topBidderId != null && f.franchiseId === topBidderId;
+          const spent = f.budget - f.balance;
+          const barPct = f.budget > 0 ? pct((f.balance / f.budget) * 100) : 0;
+          return (
+            <div
+              key={f.franchiseId}
+              style={{
+                padding: "9px 11px",
+                borderRadius: 8,
+                border: `1px solid ${isMe ? SQ.green : isTop ? SQ.ember : SQ.hairlineCell}`,
+                background: isMe ? "rgba(31,157,99,.08)" : isTop ? "rgba(232,96,44,.08)" : "transparent",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
+                  {isTop ? (
+                    <span className="sqar-dot" style={{ width: 7, height: 7, borderRadius: "50%", background: SQ.ember, flexShrink: 0 }} />
+                  ) : null}
+                  <span
+                    style={{
+                      fontFamily: FONT.mono,
+                      fontSize: 12,
+                      fontWeight: 700,
+                      color: isMe ? SQ.green : SQ.ink,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {f.tag}
+                    {isMe ? <span style={{ color: SQ.mute, fontWeight: 400 }}> · you</span> : null}
+                  </span>
+                </div>
+                <span style={{ fontFamily: FONT.mono, fontSize: 12.5, color: SQ.ink, whiteSpace: "nowrap" }}>
+                  {money(f.balance)}
+                </span>
+              </div>
+              <div style={{ marginTop: 7, height: 3, borderRadius: 2, background: SQ.track, overflow: "hidden" }}>
+                <div style={{ width: `${barPct}%`, height: "100%", background: isMe ? SQ.green : SQ.mute }} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontFamily: FONT.mono, fontSize: 9.5, color: SQ.mute }}>
+                <span>{f.acquiredCount} won</span>
+                <span>{money(spent)} spent</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+// ---- recent bids feed ------------------------------------------------------
+
+function RecentBidsPanel({ auction, myTag }: { auction: AuctionView; myTag: string }) {
+  if (auction.recentBids.length === 0) return null;
+  return (
+    <section
+      style={{
+        background: SQ.panel,
+        border: `1px solid ${SQ.hairline}`,
+        borderRadius: 12,
+        padding: "16px 16px 4px",
+      }}
+    >
+      <div style={sectionTitle}>Recent bids</div>
+      <div className="sqar-scroll" style={{ maxHeight: 260, display: "flex", flexDirection: "column", gap: 0 }}>
+        {auction.recentBids.slice(0, 12).map((b, i) => {
+          const isMine = b.franchiseTag === myTag;
+          return (
+            <div
+              key={`${b.lotId}-${b.at}-${i}`}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "9px 0",
+                borderTop: i === 0 ? "none" : `1px solid ${SQ.hairlineCell}`,
+              }}
+            >
+              <span
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  fontSize: 12.5,
+                  color: SQ.faint,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <span style={{ fontWeight: 700, color: isMine ? SQ.ember : SQ.ink }}>{b.franchiseTag}</span>
+                <span style={{ color: SQ.mute }}> on </span>
+                {b.playerGamerTag}
+              </span>
+              <span style={{ fontFamily: FONT.mono, fontSize: 12, color: SQ.ink, whiteSpace: "nowrap" }}>{money(b.amount)}</span>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+// ---- my acquired players (rail) --------------------------------------------
+
+function AcquiredPanel({ acquired }: { acquired: AuctionLotView[] }) {
+  return (
+    <section
+      style={{
+        background: SQ.panel,
+        border: `1px solid ${SQ.hairline}`,
+        borderRadius: 12,
+        padding: "16px 16px 6px",
+      }}
+    >
+      <div style={sectionTitle}>My acquired players</div>
+      {acquired.length === 0 ? (
+        <div style={{ fontFamily: FONT.mono, fontSize: 11.5, color: SQ.mute, paddingBottom: 10 }}>
+          You haven&rsquo;t won any players yet.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+          {acquired.map((l, i) => (
+            <div
+              key={l.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+                padding: "10px 0",
+                borderTop: i === 0 ? "none" : `1px solid ${SQ.hairlineCell}`,
+              }}
+            >
+              <span style={{ fontSize: 13.5, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {l.gamerTag}
+              </span>
+              <span style={{ fontFamily: FONT.mono, fontSize: 12.5, color: SQ.green, whiteSpace: "nowrap" }}>{money(l.soldPrice)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ---- remaining counter -----------------------------------------------------
+
+function RemainingChips({ queued, sold }: { queued: number; sold: number }) {
+  const chip = (n: number, label: string, color: string): React.ReactNode => (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "baseline",
+        gap: 5,
+        fontFamily: FONT.mono,
+        fontSize: 10,
+        letterSpacing: ".12em",
+        color: SQ.mute,
+        border: `1px solid ${SQ.hairline}`,
+        borderRadius: 999,
+        padding: "4px 11px",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <span style={{ fontSize: 13, fontWeight: 700, color }}>{n}</span>
+      {label}
+    </span>
+  );
+  return (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      {chip(queued, "LEFT", SQ.ink)}
+      {chip(sold, "SOLD", SQ.green)}
     </div>
   );
 }
@@ -590,8 +1270,16 @@ function useCountdown(serverTime: string, deadline: string | undefined, active: 
 
 // ---- bits ------------------------------------------------------------------
 
+const STATUS_COLOR: Record<AuctionView["status"], string> = {
+  LIVE: SQ.red,
+  PAUSED: SQ.amber,
+  LOBBY: SQ.blue,
+  DRAFT: SQ.mute,
+  COMPLETED: SQ.green,
+};
+
 function StatusPill({ status }: { status: AuctionView["status"] }) {
-  const color = status === "LIVE" ? SQ.red : status === "PAUSED" ? SQ.amber : SQ.mute;
+  const color = STATUS_COLOR[status];
   return (
     <span
       style={{
@@ -640,6 +1328,35 @@ function Header() {
         for auction. The server clock is authoritative — bid before the timer runs out.
       </div>
     </div>
+  );
+}
+
+/** Local, self-contained keyframes for the war room (no external animation libs). */
+function WarStyles() {
+  return (
+    <style>{`
+      .sqar-grid { display: grid; grid-template-columns: minmax(0,1.6fr) minmax(288px,1fr); gap: 22px; align-items: start; }
+      .sqar-hero { position: sticky; top: 84px; align-self: start; display: flex; flex-direction: column; gap: 16px; }
+      .sqar-rail { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+      .sqar-scroll { overflow-y: auto; }
+      @media (max-width: 920px) {
+        .sqar-grid { grid-template-columns: 1fr; }
+        .sqar-hero { position: static; top: auto; }
+      }
+      @keyframes sqar-soldin { 0% { transform: scale(.92); opacity: 0; } 60% { transform: scale(1.02); } 100% { transform: scale(1); opacity: 1; } }
+      @keyframes sqar-badge { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+      @keyframes sqar-lead { 0%, 100% { box-shadow: 0 0 0 1px var(--sq-green) inset, 0 0 0 0 rgba(31,157,99,0); } 50% { box-shadow: 0 0 0 1px var(--sq-green) inset, 0 0 22px 2px rgba(31,157,99,.32); } }
+      @keyframes sqar-tick { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.12); } }
+      @keyframes sqar-dot { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+      .sqar-sold { animation: sqar-soldin .5s cubic-bezier(.2,.8,.2,1) both; }
+      .sqar-badge { animation: sqar-badge 1s ease-in-out infinite; }
+      .sqar-lead { animation: sqar-lead 1.8s ease-in-out infinite; }
+      .sqar-tick { display: inline-block; animation: sqar-tick 1s ease-in-out infinite; }
+      .sqar-dot { animation: sqar-dot 1.1s ease-in-out infinite; }
+      @media (prefers-reduced-motion: reduce) {
+        .sqar-sold, .sqar-badge, .sqar-lead, .sqar-tick, .sqar-dot { animation: none; }
+      }
+    `}</style>
   );
 }
 

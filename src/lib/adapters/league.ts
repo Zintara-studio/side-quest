@@ -107,6 +107,7 @@ const CATEGORY_TAG: Record<string, Announcement["tag"]> = {
   GENERAL: "LEAGUE",
   MATCH: "LEAGUE",
   ROSTER: "LEAGUE",
+  AUCTION: "AUCTION",
 };
 
 /** Map a backend AnnouncementCategory to the prototype's tag (RESULT / LEAGUE / RECAP). */

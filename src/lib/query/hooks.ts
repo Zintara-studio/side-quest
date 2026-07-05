@@ -37,6 +37,7 @@ import type {
   PlaceBidRequest,
   ResolveDisputeRequest,
   StartSeasonRequest,
+  UpdateAuctionRequest,
   UpdateFranchiseRequest,
   UpdateGameRequest,
   UpdatePlayerRequest,
@@ -176,6 +177,14 @@ export const useDiscardFranchise = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => franchisesApi.discard(id),
+    onSuccess: () => invalidateFranchises(qc),
+  });
+};
+
+export const useRestoreFranchise = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => franchisesApi.restore(id),
     onSuccess: () => invalidateFranchises(qc),
   });
 };
@@ -432,15 +441,6 @@ export const useInviteTeammate = () => {
   });
 };
 
-/** Captain submits a formed squad for admin review (FORMING → PENDING). */
-export const useSubmitSquad = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => registrationsApi.submit(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["registrations"] }),
-  });
-};
-
 export const useRespondInvite = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -452,25 +452,6 @@ export const useRespondInvite = () => {
       qc.invalidateQueries({ queryKey: ["registrations"] });
       qc.invalidateQueries({ queryKey: ["notifications"] });
     },
-  });
-};
-
-export const useReviewRegistration = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      id,
-      action,
-      reason,
-    }: {
-      id: string;
-      action: "approve" | "reject";
-      reason?: string;
-    }) =>
-      action === "approve"
-        ? registrationsApi.approve(id, reason)
-        : registrationsApi.reject(id, reason),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["registrations"] }),
   });
 };
 
@@ -602,7 +583,11 @@ export const useUnreadCount = (enabled = true) =>
     queryKey: ["notifications", "unread"],
     queryFn: () => notificationsApi.unreadCount(),
     enabled,
-    refetchInterval: enabled ? 60_000 : false,
+    // Poll briskly and keep polling in a backgrounded tab, then snap fresh the
+    // moment the user refocuses the tab — the bell badge should feel live.
+    refetchInterval: enabled ? 15_000 : false,
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: true,
   });
 
 export const useMarkNotificationRead = () => {
@@ -611,6 +596,8 @@ export const useMarkNotificationRead = () => {
     mutationFn: (id: string) => notificationsApi.markRead(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["notifications"] });
+      // Clear the bell badge immediately rather than waiting for the next poll.
+      qc.invalidateQueries({ queryKey: ["notifications", "unread"] });
     },
   });
 };
@@ -621,6 +608,7 @@ export const useMarkAllNotificationsRead = () => {
     mutationFn: () => notificationsApi.markAllRead(),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["notifications"] });
+      qc.invalidateQueries({ queryKey: ["notifications", "unread"] });
     },
   });
 };
@@ -635,7 +623,7 @@ const applyAuction = (qc: ReturnType<typeof useQueryClient>, view: AuctionView) 
   qc.invalidateQueries({ queryKey: ["players"] });
 };
 
-/** The current DRAFT/LIVE/PAUSED auction (or null). Light poll so nav/CTA notice a live auction. */
+/** The current DRAFT/LOBBY/LIVE/PAUSED auction (or null). Light poll so nav/CTA notice a live auction. */
 export const useActiveAuction = (enabled = true) =>
   useQuery({
     queryKey: ["auctions", "active"],
@@ -645,9 +633,10 @@ export const useActiveAuction = (enabled = true) =>
   });
 
 /**
- * The live auction board. Polls fast (1.5s) while LIVE, keeps a slower poll (4s) for non-terminal
- * states (DRAFT/PAUSED) so the board notices a Start/Resume, and stops only at COMPLETED. Must NOT
- * stop on PAUSED — otherwise a watcher's board freezes and never sees the auction resume.
+ * The live auction board. Polls fast (1.5s) while LIVE, keeps a slower poll (4s) for every other
+ * non-terminal state (DRAFT/LOBBY/PAUSED) so the board notices an Open-hall/Start/Resume/join, and
+ * stops only at COMPLETED. Must NOT stop on LOBBY or PAUSED — otherwise a watcher's board freezes
+ * and never sees the auction advance.
  */
 export const useAuction = (id: string | undefined) =>
   useQuery({
@@ -670,18 +659,40 @@ export const useCreateAuction = () => {
   });
 };
 
+/** Admin edits an auction's config while it is DRAFT or LOBBY (409 once LIVE). */
+export const useUpdateAuction = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: UpdateAuctionRequest }) =>
+      auctionsApi.update(id, body),
+    onSuccess: (v) => applyAuction(qc, v),
+  });
+};
+
 /** Shared factory for the id-only auction admin actions (start/pause/resume/finalize/unsold/complete). */
 function useAuctionAction(fn: (id: string) => Promise<AuctionView>) {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (id: string) => fn(id), onSuccess: (v) => applyAuction(qc, v) });
 }
 
+export const useOpenHall = () => useAuctionAction(auctionsApi.openHall);
+export const useJoinAuction = () => useAuctionAction(auctionsApi.join);
 export const useStartAuction = () => useAuctionAction(auctionsApi.start);
 export const usePauseAuction = () => useAuctionAction(auctionsApi.pause);
 export const useResumeAuction = () => useAuctionAction(auctionsApi.resume);
 export const useFinalizeLot = () => useAuctionAction(auctionsApi.finalize);
 export const useUnsoldLot = () => useAuctionAction(auctionsApi.unsold);
 export const useCompleteAuction = () => useAuctionAction(auctionsApi.complete);
+
+/** Admin reschedules the auction's open time (DRAFT/LOBBY). */
+export const useRescheduleAuction = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, scheduledAt }: { id: string; scheduledAt: string }) =>
+      auctionsApi.reschedule(id, scheduledAt),
+    onSuccess: (v) => applyAuction(qc, v),
+  });
+};
 
 export const useNominateLot = () => {
   const qc = useQueryClient();

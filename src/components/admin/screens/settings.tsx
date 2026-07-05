@@ -1,11 +1,23 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { SQ, FONT } from "../tokens";
 import { ScreenHeader } from "../screen-header";
 import { Toggle } from "../toggle";
 import { StateNote } from "@/components/sidequest/state-note";
-import { useSettings } from "@/lib/query/hooks";
+import { useSettings, useUpdateSettings } from "@/lib/query/hooks";
+
+const numberInput = {
+  width: 88,
+  background: SQ.inset,
+  border: `1px solid ${SQ.inputBorder}`,
+  borderRadius: 5,
+  padding: "8px 10px",
+  fontSize: 13,
+  color: SQ.ink,
+  fontFamily: FONT.mono,
+  textAlign: "right",
+} as const;
 
 const cardHeader = {
   fontFamily: FONT.mono,
@@ -45,6 +57,19 @@ function Row({ label, children, center }: { label: string; children: ReactNode; 
 
 export function SettingsScreen() {
   const { data: s, isLoading, isError } = useSettings();
+  const update = useUpdateSettings();
+
+  // Local, editable copy of the registration lock window; re-synced whenever settings load/refresh.
+  const [lockHours, setLockHours] = useState("");
+  useEffect(() => {
+    if (s) setLockHours(String(s.registrationLockHours));
+  }, [s]);
+
+  const lockDirty = !!s && lockHours.trim() !== String(s.registrationLockHours);
+  const saveLockHours = () => {
+    if (!lockDirty) return;
+    update.mutate({ registrationLockHours: Math.max(0, Math.floor(Number(lockHours) || 0)) });
+  };
 
   return (
     <div>
@@ -76,6 +101,42 @@ export function SettingsScreen() {
             <Row label="Registration open" center>
               <Toggle on={s.registrationOpen} />
             </Row>
+            <Row label="Registration lock (hours)" center>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input
+                  type="number"
+                  min={0}
+                  value={lockHours}
+                  onChange={(e) => setLockHours(e.target.value)}
+                  style={numberInput}
+                />
+                <button
+                  type="button"
+                  onClick={saveLockHours}
+                  disabled={!lockDirty || update.isPending}
+                  style={{
+                    fontFamily: FONT.mono,
+                    fontSize: 10.5,
+                    letterSpacing: ".1em",
+                    textTransform: "uppercase",
+                    fontWeight: 700,
+                    color: SQ.sidebar,
+                    background: SQ.red,
+                    border: "none",
+                    padding: "8px 12px",
+                    borderRadius: 5,
+                    cursor: !lockDirty || update.isPending ? "not-allowed" : "pointer",
+                    opacity: !lockDirty || update.isPending ? 0.5 : 1,
+                  }}
+                >
+                  {update.isPending ? "Saving…" : "Save"}
+                </button>
+              </div>
+            </Row>
+            <div style={{ fontFamily: FONT.mono, fontSize: 10.5, color: SQ.mute, marginTop: 8, lineHeight: 1.5 }}>
+              Match registrations lock this many hours before the match starts — pending squad invites
+              are voided at lock time.
+            </div>
           </div>
 
           <div style={cardStyle}>

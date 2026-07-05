@@ -100,38 +100,66 @@ function AnnouncementRow({ a }: { a: AnnouncementView }) {
           )
         ) : null}
       </div>
+      {/* Date + action live in one right-aligned stack (date on top, action
+          below) so the button never shoves the date around; the whole stack
+          wraps under the copy on narrow screens. */}
       <div
         style={{
-          fontFamily: FONT.mono,
-          fontSize: 11,
-          letterSpacing: ".1em",
-          color: SQ.mute,
-          whiteSpace: "nowrap",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "flex-end",
+          gap: 8,
+          marginLeft: "auto",
           marginTop: 2,
         }}
       >
-        {shortDate(a.publishedAt)}
-      </div>
-      {a.registrationOpen ? (
-        <Link
-          href={`/register?announcement=${a.id}`}
+        <div
           style={{
             fontFamily: FONT.mono,
             fontSize: 11,
-            letterSpacing: ".14em",
-            textTransform: "uppercase",
-            color: SQ.league,
-            background: SQ.red,
-            padding: "9px 15px",
-            borderRadius: 5,
-            fontWeight: 700,
-            textDecoration: "none",
+            letterSpacing: ".1em",
+            color: SQ.mute,
             whiteSpace: "nowrap",
           }}
         >
-          {a.gameName ? `Register · ${a.gameName} ▸` : "Register ▸"}
-        </Link>
-      ) : null}
+          {shortDate(a.publishedAt)}
+        </div>
+        {a.registrationOpen ? (
+          <Link
+            href={`/register?announcement=${a.id}`}
+            style={{
+              fontFamily: FONT.mono,
+              fontSize: 11,
+              letterSpacing: ".14em",
+              textTransform: "uppercase",
+              color: SQ.league,
+              background: SQ.red,
+              padding: "9px 15px",
+              borderRadius: 5,
+              fontWeight: 700,
+              textDecoration: "none",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {a.gameName ? `Register · ${a.gameName} ▸` : "Register ▸"}
+          </Link>
+        ) : a.category === "RESULT" && a.matchId ? (
+          <Link
+            href={`/match/${a.matchId}`}
+            style={{
+              fontFamily: FONT.mono,
+              fontSize: 11,
+              letterSpacing: ".12em",
+              textTransform: "uppercase",
+              color: SQ.ember,
+              textDecoration: "none",
+              whiteSpace: "nowrap",
+            }}
+          >
+            View result ▸
+          </Link>
+        ) : null}
+      </div>
     </div>
   );
 }

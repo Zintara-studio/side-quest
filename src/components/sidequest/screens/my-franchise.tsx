@@ -68,7 +68,8 @@ export function MyFranchiseScreen() {
     );
   }
 
-  const invites = invitesQ.data ?? [];
+  // Only surface invites still awaiting a response; once accepted/rejected they drop off the list.
+  const invites = (invitesQ.data ?? []).filter((inv) => inv.status === "PENDING");
   const mine = mineQ.data ?? null;
 
   return (
@@ -333,7 +334,6 @@ function FranchisePanel({ mine }: { mine: FranchiseMineView }) {
               const badges: { label: string; color: string }[] = [];
               if (f.owner?.playerId === p.playerId) badges.push({ label: "OWNER", color: SQ.red });
               if (f.manager?.playerId === p.playerId) badges.push({ label: "MANAGER", color: SQ.amber });
-              if (f.igl?.playerId === p.playerId || p.isIgl) badges.push({ label: "IGL", color: SQ.ember });
               return (
                 <Link
                   key={p.playerId}

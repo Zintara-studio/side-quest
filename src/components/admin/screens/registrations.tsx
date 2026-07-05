@@ -5,7 +5,7 @@ import Link from "next/link";
 import { SQ, FONT } from "../tokens";
 import { ScreenHeader } from "../screen-header";
 import { StateNote } from "@/components/sidequest/state-note";
-import { useRegistrations, useReviewRegistration, useMatches } from "@/lib/query/hooks";
+import { useRegistrations, useRejectRegistration, useMatches } from "@/lib/query/hooks";
 import { shortDate } from "@/lib/adapters/league";
 import type { RegistrationView } from "@/lib/api/types";
 
@@ -43,25 +43,30 @@ const TAB_LABEL: Record<Tab, string> = { ALL: "ALL", PLAYER: "SOLO", SQUAD: "SQU
 
 export function RegistrationsScreen() {
   const [tab, setTab] = useState<Tab>("ALL");
+  // Fetch without a status filter — match registrations are live from creation, so we want the
+  // whole set and narrow to the live ones below (FORMING / ACTIVE / LOCKED).
   const { data, isLoading, isError } = useRegistrations({
-    status: "PENDING",
     type: tab === "ALL" ? undefined : tab,
     limit: 100,
   });
   // Matches supply richer section-header context (fixture / schedule) than the
   // registration alone carries. Registration still falls back to its own gameName.
   const matchesQ = useMatches({ limit: 100 });
-  const review = useReviewRegistration();
+  const discard = useRejectRegistration();
 
-  const onApprove = (id: string) => review.mutate({ id, action: "approve" });
-  const onReject = (id: string) => {
-    const reason = window.prompt("Reason for rejection?");
-    if (reason && reason.trim()) review.mutate({ id, action: "reject", reason: reason.trim() });
+  const onDiscard = (id: string) => {
+    // Discard removes the registration from the match. Reason is optional — we omit it here.
+    if (window.confirm("Discard this registration? The player/squad is removed from this match.")) {
+      discard.mutate({ id });
+    }
   };
 
-  // FRANCHISE proposals live on the admin Franchises page — never surface them here,
-  // even in the ALL tab (which fetches every pending type).
-  const items = (data?.items ?? []).filter((r) => r.type !== "FRANCHISE");
+  // Only the live match registrations belong here: a SQUAD forming, a solo PLAYER active, or either
+  // once auto-locked. FRANCHISE proposals (PENDING/APPROVED) live on the admin Franchises page, and
+  // discarded (REJECTED) registrations drop off entirely.
+  const items = (data?.items ?? []).filter(
+    (r) => r.type !== "FRANCHISE" && ["FORMING", "ACTIVE", "LOCKED"].includes(r.status),
+  );
 
   const matchById = new Map((matchesQ.data?.items ?? []).map((m) => [m.id, m] as const));
 
@@ -201,7 +206,11 @@ export function RegistrationsScreen() {
                         fontSize: 9.5,
                         letterSpacing: ".08em",
                         color:
-                          m.status === "ACCEPTED" ? SQ.green : m.status === "REJECTED" ? SQ.ember : SQ.amber,
+                          m.status === "ACCEPTED"
+                            ? SQ.green
+                            : m.status === "REJECTED" || m.status === "EXPIRED"
+                              ? SQ.mute
+                              : SQ.amber,
                       }}
                     >
                       {m.status}
@@ -216,25 +225,17 @@ export function RegistrationsScreen() {
         <div style={{ display: "flex", gap: 10 }}>
           <button
             type="button"
-            disabled={review.isPending}
-            onClick={() => onApprove(r.id)}
-            style={{ ...cardBtn, color: SQ.sidebar, background: SQ.green, border: "none", opacity: review.isPending ? 0.6 : 1 }}
-          >
-            Approve
-          </button>
-          <button
-            type="button"
-            disabled={review.isPending}
-            onClick={() => onReject(r.id)}
+            disabled={discard.isPending}
+            onClick={() => onDiscard(r.id)}
             style={{
               ...cardBtn,
               color: SQ.ember,
               background: "transparent",
               border: "1px solid rgba(232,96,44,.45)",
-              opacity: review.isPending ? 0.6 : 1,
+              opacity: discard.isPending ? 0.6 : 1,
             }}
           >
-            Reject
+            Discard
           </button>
         </div>
       </div>
@@ -243,7 +244,7 @@ export function RegistrationsScreen() {
 
   return (
     <div>
-      <ScreenHeader eyebrow="Approval queue" title="REGISTRATIONS" />
+      <ScreenHeader eyebrow="Registered players" title="REGISTRATIONS" />
 
       <div
         style={{
@@ -258,7 +259,7 @@ export function RegistrationsScreen() {
         }}
       >
         <div style={{ fontFamily: FONT.mono, fontSize: 12, letterSpacing: ".1em", color: SQ.mute }}>
-          {items.length} PENDING · {TAB_LABEL[tab]}
+          {items.length} REGISTERED · {TAB_LABEL[tab]}
           {matchSections.length > 0 ? ` · ${matchSections.length} MATCH${matchSections.length > 1 ? "ES" : ""}` : ""}
           {general.length > 0 ? ` · ${general.length} GENERAL` : ""}
         </div>
@@ -304,7 +305,7 @@ export function RegistrationsScreen() {
         <StateNote tone={isError ? "error" : "muted"}>
           {isError
             ? "Couldn't load registrations (admin sign-in required)."
-            : `No pending ${
+            : `No live ${
                 tab === "PLAYER" ? "solo player " : tab === "SQUAD" ? "squad " : ""
               }registrations.`}
         </StateNote>
@@ -358,7 +359,7 @@ export function RegistrationsScreen() {
                       color: SQ.faint,
                     }}
                   >
-                    {regs.length} PENDING
+                    {regs.length} REGISTERED
                   </span>
                 </div>
                 <div style={gridStyle}>{regs.map(renderCard)}</div>
@@ -401,7 +402,7 @@ export function RegistrationsScreen() {
                     color: SQ.faint,
                   }}
                 >
-                  {general.length} PENDING
+                  {general.length} REGISTERED
                 </span>
               </div>
               <div style={gridStyle}>{general.map(renderCard)}</div>

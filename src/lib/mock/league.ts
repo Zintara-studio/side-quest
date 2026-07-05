@@ -2,7 +2,7 @@
 // Mirrors the design prototype — visual prototype, no live backend.
 import { SQ } from "@/components/sidequest/tokens";
 
-export type AnnouncementTag = "RESULT" | "LEAGUE" | "RECAP";
+export type AnnouncementTag = "RESULT" | "LEAGUE" | "RECAP" | "AUCTION";
 
 export interface Standing {
   rank: string;
@@ -207,7 +207,7 @@ export const franchiseStats: LabelValue[] = [
 ];
 
 export const roster = [
-  { name: "Raghavan", role: "IGL · VALORANT", pts: "224" },
+  { name: "Raghavan", role: "CAPTAIN · VALORANT", pts: "224" },
   { name: "Sora X", role: "DUELIST", pts: "198" },
   { name: "Neo", role: "CONTROLLER", pts: "176" },
   { name: "Vex", role: "SENTINEL", pts: "154" },

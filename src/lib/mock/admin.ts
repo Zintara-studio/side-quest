@@ -3,7 +3,7 @@
 
 export type MatchStatus = "Live" | "Scheduled" | "Awaiting result" | "Completed";
 export type PlayerStatus = "Verified" | "Pending" | "Flagged";
-export type AnnouncementTag = "RESULT" | "LEAGUE" | "RECAP";
+export type AnnouncementTag = "RESULT" | "LEAGUE" | "RECAP" | "AUCTION";
 
 export interface AdminKpi {
   label: string;
@@ -54,7 +54,6 @@ export interface AdminFranchise {
   rank: string;
   name: string;
   sub: string;
-  igl: string;
   players: number;
   pts: number;
 }
@@ -189,12 +188,12 @@ export const adminPending: PendingReg[] = [
 ];
 
 export const adminFranchises: AdminFranchise[] = [
-  { rank: "01", name: "RXG", sub: "RAGING X", igl: "Raghavan", players: 5, pts: 224 },
-  { rank: "02", name: "MOTICHOOR", sub: "", igl: "Aarav S.", players: 5, pts: 218 },
-  { rank: "03", name: "NIGHTFALL", sub: "", igl: "Sora", players: 5, pts: 205 },
-  { rank: "04", name: "COBRA UNIT", sub: "", igl: "Devang", players: 5, pts: 197 },
-  { rank: "05", name: "LOTUS ESPORTS", sub: "", igl: "Khel", players: 4, pts: 188 },
-  { rank: "06", name: "VIPERS GC", sub: "", igl: "Rohit V.", players: 5, pts: 176 },
+  { rank: "01", name: "RXG", sub: "RAGING X", players: 5, pts: 224 },
+  { rank: "02", name: "MOTICHOOR", sub: "", players: 5, pts: 218 },
+  { rank: "03", name: "NIGHTFALL", sub: "", players: 5, pts: 205 },
+  { rank: "04", name: "COBRA UNIT", sub: "", players: 5, pts: 197 },
+  { rank: "05", name: "LOTUS ESPORTS", sub: "", players: 4, pts: 188 },
+  { rank: "06", name: "VIPERS GC", sub: "", players: 5, pts: 176 },
 ];
 
 export const adminPlayers: AdminPlayer[] = [

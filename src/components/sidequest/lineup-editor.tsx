@@ -113,9 +113,6 @@ export function LineupEditor({
                 </span>
                 <span style={{ flex: 1, fontSize: 14, fontWeight: on ? 700 : 500, color: SQ.ink }}>
                   {m.gamerTag}
-                  {m.isIgl ? (
-                    <span style={{ fontFamily: FONT.mono, fontSize: 9.5, color: SQ.ember, marginLeft: 6 }}>IGL</span>
-                  ) : null}
                 </span>
               </button>
             );

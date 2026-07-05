@@ -12,6 +12,7 @@ import {
   useFranchise,
   useCreateFranchise,
   useDiscardFranchise,
+  useRestoreFranchise,
   useSetFranchiseOwner,
   useSetFranchiseManager,
   useRegistrations,
@@ -355,6 +356,8 @@ function ManagePanel({ franchiseId }: { franchiseId: string }) {
   const setOwner = useSetFranchiseOwner();
   const setManager = useSetFranchiseManager();
   const discard = useDiscardFranchise();
+  const restore = useRestoreFranchise();
+  const [lifecycleMsg, setLifecycleMsg] = useState<string | null>(null);
   const d = detailQ.data;
   const eligible = eligibleQ.data ?? [];
 
@@ -428,23 +431,46 @@ function ManagePanel({ franchiseId }: { franchiseId: string }) {
           ) : null}
         </div>
 
-        {d?.active !== false ? (
-          <div style={{ alignSelf: "flex-start" }}>
-            <div style={{ ...rowLabel, marginBottom: 6, visibility: "hidden" }}>—</div>
+        <div style={{ alignSelf: "flex-start" }}>
+          <div style={{ ...rowLabel, marginBottom: 6, visibility: "hidden" }}>—</div>
+          {d?.active !== false ? (
             <button
               type="button"
               disabled={discard.isPending}
-              onClick={() => {
-                if (window.confirm("Discard this franchise? It will stop competing (history is kept).")) {
-                  discard.mutate(franchiseId);
+              onClick={async () => {
+                setLifecycleMsg(null);
+                if (!window.confirm("Discard this franchise? It will stop competing (history is kept). Only allowed between seasons.")) return;
+                try {
+                  await discard.mutateAsync(franchiseId);
+                } catch (e) {
+                  setLifecycleMsg(apiErrorMessage(e, "Couldn't discard this franchise."));
                 }
               }}
               style={{ ...smallBtn, color: SQ.ember, background: "transparent", border: "1px solid rgba(232,96,44,.45)" }}
             >
               {discard.isPending ? "Discarding…" : "Discard franchise"}
             </button>
-          </div>
-        ) : null}
+          ) : (
+            <button
+              type="button"
+              disabled={restore.isPending}
+              onClick={async () => {
+                setLifecycleMsg(null);
+                try {
+                  await restore.mutateAsync(franchiseId);
+                } catch (e) {
+                  setLifecycleMsg(apiErrorMessage(e, "Couldn't restore this franchise."));
+                }
+              }}
+              style={{ ...smallBtn, color: SQ.green, background: "transparent", border: "1px solid rgba(74,158,106,.5)" }}
+            >
+              {restore.isPending ? "Restoring…" : "Restore franchise"}
+            </button>
+          )}
+          {lifecycleMsg ? (
+            <div style={{ fontFamily: FONT.mono, fontSize: 11, lineHeight: 1.5, color: SQ.ember, marginTop: 6, maxWidth: 220 }}>{lifecycleMsg}</div>
+          ) : null}
+        </div>
       </div>
 
       {noEligible ? (

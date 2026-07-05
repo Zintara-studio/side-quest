@@ -22,8 +22,8 @@ import java.util.List;
  * @param gameName   the resolved game name, so the frontend can label the entry without a lookup, nullable
  * @param members    the squad roster (captain + invited players with their invite status); empty for
  *                   solo (PLAYER) registrations
- * @param acceptedCount number of confirmed members (captain + accepted invites), so admins can verify
- *                   team size and choose to approve undersized squads
+ * @param acceptedCount number of confirmed members (captain + accepted invites)
+ * @param teamSize   desired squad size (invite cap) for SQUAD registrations, nullable
  */
 public record RegistrationView(
         String id,
@@ -40,7 +40,8 @@ public record RegistrationView(
         String gameId,
         String gameName,
         List<MemberView> members,
-        int acceptedCount
+        int acceptedCount,
+        Integer teamSize
 ) {
 
     /** Minimal applicant-player reference. */

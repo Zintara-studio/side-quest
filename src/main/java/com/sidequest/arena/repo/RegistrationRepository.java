@@ -18,9 +18,15 @@ public interface RegistrationRepository extends JpaRepository<Registration, UUID
 
     List<Registration> findByStatusAndTypeOrderByCreatedAtDesc(RegistrationStatus status, RegistrationType type);
 
+    List<Registration> findByTypeAndStatus(RegistrationType type, RegistrationStatus status);
+
     List<Registration> findByPlayerId(UUID playerId);
 
+    List<Registration> findByPlayerIdAndTypeOrderByCreatedAtDesc(UUID playerId, RegistrationType type);
+
     List<Registration> findByMatchIdAndStatus(UUID matchId, RegistrationStatus status);
+
+    List<Registration> findByMatchId(UUID matchId);
 
     List<Registration> findByPlayerIdAndMatchId(UUID playerId, UUID matchId);
 

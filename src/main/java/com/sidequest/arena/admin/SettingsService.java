@@ -59,6 +59,10 @@ public class SettingsService {
             settings.setRegistrationOpen(request.registrationOpen());
             changes.add("registrationOpen=" + request.registrationOpen());
         }
+        if (request.registrationLockHours() != null) {
+            settings.setRegistrationLockHours(Math.max(0, request.registrationLockHours()));
+            changes.add("registrationLockHours=" + settings.getRegistrationLockHours());
+        }
 
         LeagueSettings saved = leagueSettingsRepository.save(settings);
 
@@ -81,6 +85,7 @@ public class SettingsService {
                 settings.getPointsPerKill(),
                 settings.getPlacementPoints(),
                 settings.isRegistrationOpen(),
+                settings.getRegistrationLockHours(),
                 settings.getUpdatedAt());
     }
 }

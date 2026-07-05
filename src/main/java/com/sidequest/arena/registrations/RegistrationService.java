@@ -6,6 +6,7 @@ import com.sidequest.arena.common.Cursors;
 import com.sidequest.arena.common.PageResponse;
 import com.sidequest.arena.model.Game;
 import com.sidequest.arena.model.InviteStatus;
+import com.sidequest.arena.model.LeagueSettings;
 import com.sidequest.arena.model.Match;
 import com.sidequest.arena.model.NotificationType;
 import com.sidequest.arena.model.Player;
@@ -26,6 +27,7 @@ import com.sidequest.arena.registrations.dto.InviteView;
 import com.sidequest.arena.registrations.dto.RegistrationView;
 import com.sidequest.arena.registrations.dto.ReviewRequest;
 import com.sidequest.arena.repo.GameRepository;
+import com.sidequest.arena.repo.LeagueSettingsRepository;
 import com.sidequest.arena.repo.MatchRepository;
 import com.sidequest.arena.repo.PlayerGameProficiencyRepository;
 import com.sidequest.arena.repo.PlayerGameUsernameRepository;
@@ -54,6 +56,9 @@ import java.util.UUID;
 @Service
 public class RegistrationService {
 
+    /** Fallback squad size when a SQUAD registration/announcement did not specify one. */
+    private static final int DEFAULT_SQUAD_SIZE = 5;
+
     private final RegistrationRepository registrationRepository;
     private final PlayerRepository playerRepository;
     private final UserRepository userRepository;
@@ -62,6 +67,7 @@ public class RegistrationService {
     private final GameRepository gameRepository;
     private final PlayerGameProficiencyRepository proficiencyRepository;
     private final PlayerGameUsernameRepository usernameRepository;
+    private final LeagueSettingsRepository leagueSettingsRepository;
     private final RealtimeService realtimeService;
     private final NotificationService notificationService;
     private final AuditService auditService;
@@ -74,6 +80,7 @@ public class RegistrationService {
                                GameRepository gameRepository,
                                PlayerGameProficiencyRepository proficiencyRepository,
                                PlayerGameUsernameRepository usernameRepository,
+                               LeagueSettingsRepository leagueSettingsRepository,
                                RealtimeService realtimeService,
                                NotificationService notificationService,
                                AuditService auditService) {
@@ -85,15 +92,20 @@ public class RegistrationService {
         this.gameRepository = gameRepository;
         this.proficiencyRepository = proficiencyRepository;
         this.usernameRepository = usernameRepository;
+        this.leagueSettingsRepository = leagueSettingsRepository;
         this.realtimeService = realtimeService;
         this.notificationService = notificationService;
         this.auditService = auditService;
     }
 
     /**
-     * Apply to the league as a player or squad on behalf of the current user. SQUAD applications
-     * require a non-blank squad name. The new registration starts PENDING. Notifies the applicant
-     * (confirmation) and every admin (a new application to review).
+     * Apply to the league on behalf of the current user. Match registrations (PLAYER solo / SQUAD) are
+     * live immediately — a SQUAD starts FORMING (captain invites teammates until the lock), a solo entry
+     * starts ACTIVE — with no admin approval step. AUCTION entries go ACTIVE into the standing pool.
+     * FRANCHISE-creation proposals stay PENDING for admin curation. AUCTION and FRANCHISE require a
+     * VERIFIED account (non-verified players may only enter FFA/solo/squad games); current franchise
+     * members can't enter the auction. A player can't open their own team for a match they've already
+     * joined another team for.
      */
     @Transactional
     public RegistrationView apply(ApplyRequest request) {
@@ -109,39 +121,64 @@ public class RegistrationService {
 
         Player player = currentPlayer();
 
+        // Verification gate: auctions and franchise creation are for verified accounts only; anyone may
+        // still enter FFA/solo/squad games. (Verification will be automated via email; today it's set by
+        // an admin on the player's status.)
+        if ((request.type() == RegistrationType.AUCTION || request.type() == RegistrationType.FRANCHISE)
+                && player.getStatus() != PlayerStatus.VERIFIED) {
+            throw ApiException.forbidden(request.type() == RegistrationType.AUCTION
+                    ? "Only verified accounts can enter the auction — verify your account first."
+                    : "Only verified accounts can create a franchise — verify your account first.");
+        }
+        // A current franchise owner/manager/rostered player cannot enter the auction pool.
+        if (request.type() == RegistrationType.AUCTION && player.getFranchise() != null) {
+            throw ApiException.badRequest(
+                    "You're already on a franchise — franchise members can't enter the auction.");
+        }
+
         Registration registration = new Registration();
         registration.setType(request.type());
         registration.setPlayer(player);
         registration.setSquadName(request.squadName());
         registration.setGames(new ArrayList<>(request.games()));
         registration.setContact(request.contact());
+        if (request.type() == RegistrationType.SQUAD) {
+            registration.setTeamSize(request.teamSize());
+        }
         // Keep the applicant's free-form note where admins can see it.
         if (request.note() != null && !request.note().isBlank()) {
             registration.setReason(request.note().trim());
         }
-        // Squads are FORMED first (captain invites teammates) and only submitted for admin review once
-        // the roster is ready. Solo / franchise / auction applications go straight to the queue.
+        // SQUAD → FORMING (open for invites); PLAYER/AUCTION → ACTIVE (registered); FRANCHISE → PENDING.
         boolean forming = request.type() == RegistrationType.SQUAD;
-        registration.setStatus(forming ? RegistrationStatus.FORMING : RegistrationStatus.PENDING);
+        registration.setStatus(switch (request.type()) {
+            case SQUAD -> RegistrationStatus.FORMING;
+            case FRANCHISE -> RegistrationStatus.PENDING;
+            default -> RegistrationStatus.ACTIVE;
+        });
 
         Game game = null;
         if (request.matchId() != null && !request.matchId().isBlank()) {
             Match match = matchRepository.findById(parseId(request.matchId(), "Match"))
                     .orElseThrow(() -> ApiException.notFound("Match", request.matchId()));
 
-            // Prevent duplicate entries: a player may only have one live (non-rejected) registration per match.
+            // Prevent duplicate entries: a player may only have one live registration per match.
             boolean alreadyEntered = registrationRepository
                     .findByPlayerIdAndMatchId(player.getId(), match.getId()).stream()
-                    .anyMatch(r -> r.getStatus() != RegistrationStatus.REJECTED);
+                    .anyMatch(r -> isLive(r.getStatus()));
             if (alreadyEntered) {
                 throw ApiException.conflict("You have already registered for this match");
             }
+            // Single-team exclusivity: can't open your own team for a match you've already joined.
+            if (hasAcceptedTeamFor(player.getId(), match.getId(), null)) {
+                throw ApiException.conflict(
+                        "You've already joined a team for this match — you can't register another entry.");
+            }
 
-            // Registration locks 3 hours before the scheduled start.
-            if (match.getScheduledAt() != null
-                    && Instant.now().isAfter(match.getScheduledAt().minus(Duration.ofHours(3)))) {
+            // Registration locks a configurable number of hours before the scheduled start.
+            if (matchLocked(match)) {
                 throw ApiException.badRequest(
-                        "Registration is closed — it locks 3 hours before match time");
+                        "Registration is closed — it locks " + lockHours() + " hours before match time");
             }
 
             registration.setMatch(match);
@@ -160,23 +197,26 @@ public class RegistrationService {
         String what = describe(saved);
 
         if (forming) {
-            // A squad is still being assembled — prompt the captain to build the roster and submit.
+            // A squad is live and open for invites — prompt the captain to build the roster before it locks.
             notificationService.create(player.getUser(), NotificationType.REGISTRATION,
-                    "Squad started",
+                    "Squad registered",
                     "Invite your teammates to '" + saved.getSquadName()
-                            + "', then submit the squad for approval.", "/my/registrations");
-        } else {
-            // Confirmation to the applicant.
+                            + "' before the roster locks.", "/my/registrations");
+        } else if (request.type() == RegistrationType.FRANCHISE) {
+            // Franchise proposals are still admin-curated — confirm to the applicant and notify admins.
             notificationService.create(player.getUser(), NotificationType.REGISTRATION,
-                    "Registration received",
-                    "Your " + what + " registration is pending review.", "/my/registrations");
-
-            // Fan out to admins so they pick it up in the approval queue.
+                    "Franchise proposal received",
+                    "Your " + what + " proposal is awaiting admin review.", "/my/registrations");
             for (User admin : userRepository.findByRole(Role.ADMIN)) {
                 notificationService.create(admin, NotificationType.REGISTRATION,
-                        "New registration",
-                        player.getGamerTag() + " registered (" + what + ").", "/admin/registrations");
+                        "New franchise proposal",
+                        player.getGamerTag() + " proposed " + what + ".", "/admin/franchises");
             }
+        } else {
+            // Solo / auction entries are registered immediately — a simple confirmation, no approval queue.
+            notificationService.create(player.getUser(), NotificationType.REGISTRATION,
+                    "You're registered",
+                    "Your " + what + " registration is confirmed.", "/my/registrations");
         }
 
         // Upsert any self-reported per-game proficiency / handles onto the player's profile so the
@@ -292,52 +332,8 @@ public class RegistrationService {
             return List.of();
         }
         return teamInviteRepository.findByInvitedPlayerIdOrderByCreatedAtDesc(player.getId()).stream()
-                .map(RegistrationService::toInviteView)
+                .map(this::toInviteView)
                 .toList();
-    }
-
-    /**
-     * The captain submits a fully-formed squad for admin review: FORMING → PENDING. Only the captain
-     * may submit, the squad must still be forming, and (for match-tied squads) the 3-hour registration
-     * lock is re-checked at submit time. Admins are notified so it appears in their approval queue.
-     */
-    @Transactional
-    public RegistrationView submitForApproval(String registrationId) {
-        Registration registration = load(registrationId);
-        Player captain = registration.getPlayer();
-
-        if (registration.getType() != RegistrationType.SQUAD) {
-            throw ApiException.badRequest("Only squad registrations are submitted for approval");
-        }
-        if (captain == null || !captain.getUser().getId().equals(SecurityUtils.currentUserId())) {
-            throw ApiException.forbidden("Only the squad captain can submit the squad");
-        }
-        if (registration.getStatus() != RegistrationStatus.FORMING) {
-            throw ApiException.conflict("This squad has already been submitted");
-        }
-        Match match = registration.getMatch();
-        if (match != null && match.getScheduledAt() != null
-                && Instant.now().isAfter(match.getScheduledAt().minus(Duration.ofHours(3)))) {
-            throw ApiException.badRequest(
-                    "Registration is closed — it locks 3 hours before match time");
-        }
-
-        registration.setStatus(RegistrationStatus.PENDING);
-        Registration saved = registrationRepository.save(registration);
-
-        String what = describe(saved);
-        notificationService.create(captain.getUser(), NotificationType.REGISTRATION,
-                "Squad submitted",
-                "'" + saved.getSquadName() + "' was submitted for approval.", "/my/registrations");
-        for (User admin : userRepository.findByRole(Role.ADMIN)) {
-            notificationService.create(admin, NotificationType.REGISTRATION,
-                    "New squad registration",
-                    captain.getGamerTag() + " submitted '" + saved.getSquadName() + "' (" + what + ").",
-                    "/admin/registrations");
-        }
-        auditService.record("registration.submit", "Registration", saved.getId().toString(),
-                captain.getGamerTag() + " submitted " + what);
-        return toView(saved);
     }
 
     /**
@@ -373,6 +369,19 @@ public class RegistrationService {
         if (invite != null && invite.getStatus() != InviteStatus.REJECTED) {
             throw ApiException.conflict(invitee.getGamerTag() + " has already been invited");
         }
+
+        // Invite cap: the captain plus outstanding (accepted + pending) invites must stay under the
+        // squad's target size, so a captain can't over-invite past the allowed roster.
+        int cap = registration.getTeamSize() != null ? registration.getTeamSize() : DEFAULT_SQUAD_SIZE;
+        long committed = 1 + teamInviteRepository
+                .findByRegistrationIdOrderByCreatedAtAsc(registration.getId()).stream()
+                .filter(t -> t.getStatus() == InviteStatus.ACCEPTED || t.getStatus() == InviteStatus.PENDING)
+                .count();
+        if (committed >= cap) {
+            throw ApiException.conflict("Squad is full — the roster cap is " + cap
+                    + ". Wait for a decline before inviting anyone else.");
+        }
+
         if (invite == null) {
             invite = new TeamInvite();
             invite.setRegistration(registration);
@@ -399,7 +408,11 @@ public class RegistrationService {
 
     /**
      * The invited player accepts or declines a squad invite. Only the invited player may respond, and
-     * only while the invite is still pending. The captain is notified of the response.
+     * only while the invite is still pending. Accepting enforces single-team exclusivity for the match:
+     * you can't accept once the registration has locked, you can't be confirmed on two teams for the
+     * same match, and accepting auto-discards your own forming squad for that match when it has no other
+     * confirmed players (but is blocked if you've already built a team with confirmed members). The
+     * captain is notified of the response.
      */
     @Transactional
     public InviteView respondToInvite(String inviteId, boolean accept) {
@@ -413,10 +426,44 @@ public class RegistrationService {
             throw ApiException.conflict("This invitation has already been answered");
         }
 
+        Registration registration = invite.getRegistration();
+        Match match = registration != null ? registration.getMatch() : null;
+
+        if (accept && match != null) {
+            UUID matchId = match.getId();
+            if (matchLocked(match)) {
+                throw ApiException.conflict(
+                        "Registration for this match has locked — you can no longer join this squad.");
+            }
+            if (hasAcceptedTeamFor(invitee.getId(), matchId, registration.getId())) {
+                throw ApiException.conflict("You're already confirmed on a team for this match.");
+            }
+            // Accepting supersedes the invitee's own entry for this match: a solo entry is auto-withdrawn,
+            // and their own forming squad is auto-discarded — but only if it has no other confirmed
+            // players. Otherwise they must discard that team deliberately first.
+            for (Registration own : registrationRepository.findByPlayerIdAndMatchId(invitee.getId(), matchId)) {
+                if (!isLive(own.getStatus())) {
+                    continue;
+                }
+                if (own.getType() == RegistrationType.SQUAD) {
+                    long othersConfirmed = teamInviteRepository
+                            .findByRegistrationIdOrderByCreatedAtAsc(own.getId()).stream()
+                            .filter(t -> t.getStatus() == InviteStatus.ACCEPTED)
+                            .count();
+                    if (othersConfirmed > 0) {
+                        throw ApiException.conflict("You already have a team with confirmed players for "
+                                + "this match — discard it before joining another team.");
+                    }
+                    voidRegistration(own, "Auto-discarded — you joined another team for this match.");
+                } else if (own.getType() == RegistrationType.PLAYER) {
+                    voidRegistration(own, "Auto-withdrawn — you joined a team for this match.");
+                }
+            }
+        }
+
         invite.setStatus(accept ? InviteStatus.ACCEPTED : InviteStatus.REJECTED);
         TeamInvite saved = teamInviteRepository.save(invite);
 
-        Registration registration = saved.getRegistration();
         Player captain = saved.getInvitedBy();
         if (captain != null && captain.getUser() != null) {
             notificationService.create(captain.getUser(), NotificationType.REGISTRATION,
@@ -437,77 +484,38 @@ public class RegistrationService {
     }
 
     /**
-     * Approve a registration: mark APPROVED, attribute the reviewer, verify the applicant player
-     * (if any), notify the applicant, push a realtime event and record an audit entry. Already-reviewed
-     * registrations conflict.
-     */
-    @Transactional
-    public RegistrationView approve(String id, ReviewRequest request) {
-        Registration registration = load(id);
-        ensurePending(registration);
-
-        registration.setStatus(RegistrationStatus.APPROVED);
-        registration.setReviewedBy(currentReviewer());
-        registration.setReason(request == null ? null : request.note());
-
-        Player player = registration.getPlayer();
-        if (player != null) {
-            player.setStatus(PlayerStatus.VERIFIED);
-            playerRepository.save(player);
-        }
-
-        Registration saved = registrationRepository.save(registration);
-
-        if (player != null) {
-            notificationService.create(player.getUser(), NotificationType.REGISTRATION,
-                    "Registration approved",
-                    "Your " + describe(saved) + " registration was approved.", "/my/registrations");
-            realtimeService.publishToUser(player.getUser().getId(), "registration.approved",
-                    Map.of("registrationId", saved.getId().toString(), "status", "APPROVED"));
-        }
-        notifyAcceptedMembers(saved, true, null);
-        auditService.record("registration.approve", "Registration", saved.getId().toString(),
-                "Approved " + describe(saved));
-
-        return toView(saved);
-    }
-
-    /**
-     * Reject a registration: mark REJECTED with a required non-blank reason, attribute the
-     * reviewer, notify the applicant, push a realtime event and record an audit entry. Already-reviewed
-     * registrations conflict.
+     * Admin: discard a registration (or a franchise proposal). Marks it REJECTED, voids any still-pending
+     * squad invites, notifies the applicant and any confirmed members, and records an audit entry. A
+     * reason is optional (a default is used); already-discarded/approved registrations are left alone.
      */
     @Transactional
     public RegistrationView reject(String id, ReviewRequest request) {
-        if (request == null || request.reason() == null || request.reason().isBlank()) {
-            throw ApiException.badRequest("reason is required to reject a registration");
-        }
-
         Registration registration = load(id);
-        ensurePending(registration);
+        if (registration.getStatus() == RegistrationStatus.REJECTED
+                || registration.getStatus() == RegistrationStatus.APPROVED) {
+            throw ApiException.conflict("This registration has already been finalized");
+        }
+        String reason = request != null && request.reason() != null && !request.reason().isBlank()
+                ? request.reason().trim() : "Discarded by an admin.";
 
-        registration.setStatus(RegistrationStatus.REJECTED);
         registration.setReviewedBy(currentReviewer());
-        registration.setReason(request.reason());
+        voidRegistration(registration, reason);
 
-        Registration saved = registrationRepository.save(registration);
-
-        Player player = saved.getPlayer();
-        if (player != null) {
+        Player player = registration.getPlayer();
+        if (player != null && player.getUser() != null) {
             notificationService.create(player.getUser(), NotificationType.REGISTRATION,
-                    "Registration rejected",
-                    "Your " + describe(saved) + " registration was rejected. Reason: " + request.reason(),
+                    "Registration discarded",
+                    "Your " + describe(registration) + " registration was discarded. Reason: " + reason,
                     "/my/registrations");
             realtimeService.publishToUser(player.getUser().getId(), "registration.rejected",
-                    Map.of("registrationId", saved.getId().toString(),
-                            "status", "REJECTED",
-                            "reason", request.reason()));
+                    Map.of("registrationId", registration.getId().toString(),
+                            "status", "REJECTED", "reason", reason));
         }
-        notifyAcceptedMembers(saved, false, request.reason());
-        auditService.record("registration.reject", "Registration", saved.getId().toString(),
-                "Rejected " + describe(saved) + ": " + request.reason());
+        notifyAcceptedMembers(registration, false, reason);
+        auditService.record("registration.discard", "Registration", registration.getId().toString(),
+                "Discarded " + describe(registration) + ": " + reason);
 
-        return toView(saved);
+        return toView(registration);
     }
 
     // ---- helpers ----
@@ -574,14 +582,73 @@ public class RegistrationService {
                 .orElseThrow(() -> ApiException.notFound("TeamInvite", id));
     }
 
-    private static void ensurePending(Registration registration) {
-        // Only a submitted (PENDING) registration may be approved/rejected. A FORMING squad has not been
-        // submitted yet, so it must not be actionable from the admin queue.
-        if (registration.getStatus() != RegistrationStatus.PENDING) {
-            throw ApiException.conflict(registration.getStatus() == RegistrationStatus.FORMING
-                    ? "This squad has not been submitted for approval yet"
-                    : "Registration already reviewed");
+    /** Whether a status still counts as a live entry for a match (not discarded / not a proposal). */
+    private static boolean isLive(RegistrationStatus s) {
+        return s == RegistrationStatus.FORMING
+                || s == RegistrationStatus.ACTIVE
+                || s == RegistrationStatus.LOCKED;
+    }
+
+    /** The configured registration-lock window in hours (falls back to 3 if settings are missing). */
+    int lockHours() {
+        LeagueSettings s = leagueSettingsRepository.findById(LeagueSettings.SINGLETON_ID).orElse(null);
+        return s != null ? Math.max(0, s.getRegistrationLockHours()) : 3;
+    }
+
+    /** Whether a match's registration window has closed (within the lock window of the scheduled start). */
+    private boolean matchLocked(Match match) {
+        return match.getScheduledAt() != null
+                && Instant.now().isAfter(match.getScheduledAt().minus(Duration.ofHours(lockHours())));
+    }
+
+    /**
+     * Whether the player is already an ACCEPTED member of some team for this match, optionally excluding
+     * one registration (so a captain checking from within their own squad isn't counted against itself).
+     */
+    private boolean hasAcceptedTeamFor(UUID playerId, UUID matchId, UUID excludeRegistrationId) {
+        return teamInviteRepository.findByInvitedPlayerIdOrderByCreatedAtDesc(playerId).stream()
+                .filter(t -> t.getStatus() == InviteStatus.ACCEPTED)
+                .map(TeamInvite::getRegistration)
+                .filter(r -> r != null && r.getMatch() != null && matchId.equals(r.getMatch().getId()))
+                .anyMatch(r -> excludeRegistrationId == null || !excludeRegistrationId.equals(r.getId()));
+    }
+
+    /** Void a registration: mark it REJECTED and expire any still-pending invites so they can't be accepted. */
+    private void voidRegistration(Registration reg, String reason) {
+        reg.setStatus(RegistrationStatus.REJECTED);
+        reg.setReason(reason);
+        registrationRepository.save(reg);
+        for (TeamInvite t : teamInviteRepository.findByRegistrationIdOrderByCreatedAtAsc(reg.getId())) {
+            if (t.getStatus() == InviteStatus.PENDING) {
+                t.setStatus(InviteStatus.EXPIRED);
+                teamInviteRepository.save(t);
+            }
         }
+    }
+
+    /**
+     * Lock a match's registrations at the deadline: FORMING/ACTIVE squads and solo entries become
+     * LOCKED (roster frozen) and their still-pending invites are voided. Called by the lock sweep.
+     * Returns the number of registrations locked.
+     */
+    @Transactional
+    public int lockMatchRegistrations(UUID matchId) {
+        int locked = 0;
+        for (Registration reg : registrationRepository.findByMatchId(matchId)) {
+            if (reg.getStatus() == RegistrationStatus.FORMING
+                    || reg.getStatus() == RegistrationStatus.ACTIVE) {
+                reg.setStatus(RegistrationStatus.LOCKED);
+                registrationRepository.save(reg);
+                for (TeamInvite t : teamInviteRepository.findByRegistrationIdOrderByCreatedAtAsc(reg.getId())) {
+                    if (t.getStatus() == InviteStatus.PENDING) {
+                        t.setStatus(InviteStatus.EXPIRED);
+                        teamInviteRepository.save(t);
+                    }
+                }
+                locked++;
+            }
+        }
+        return locked;
     }
 
     private User currentReviewer() {
@@ -671,12 +738,32 @@ public class RegistrationService {
                 gameId,
                 gameName,
                 members,
-                acceptedCount);
+                acceptedCount,
+                registration.getTeamSize());
     }
 
-    private static InviteView toInviteView(TeamInvite invite) {
+    /**
+     * Build the invite view including the squad's current roster (captain + invitees with their status)
+     * so the invited player can see who's already confirmed before deciding.
+     */
+    private InviteView toInviteView(TeamInvite invite) {
         Registration registration = invite.getRegistration();
         Player captain = invite.getInvitedBy();
+
+        List<InviteView.MemberView> members = new ArrayList<>();
+        if (registration != null) {
+            Player regCaptain = registration.getPlayer();
+            if (regCaptain != null) {
+                members.add(new InviteView.MemberView(regCaptain.getGamerTag(), "ACCEPTED", true));
+            }
+            for (TeamInvite t : teamInviteRepository
+                    .findByRegistrationIdOrderByCreatedAtAsc(registration.getId())) {
+                Player p = t.getInvitedPlayer();
+                members.add(new InviteView.MemberView(
+                        p == null ? null : p.getGamerTag(), t.getStatus().name(), false));
+            }
+        }
+
         return new InviteView(
                 invite.getId().toString(),
                 registration == null ? null : registration.getId().toString(),
@@ -685,6 +772,7 @@ public class RegistrationService {
                 registration == null ? List.of() : List.copyOf(registration.getGames()),
                 invite.getStatus().name(),
                 invite.getMessage(),
-                invite.getCreatedAt());
+                invite.getCreatedAt(),
+                members);
     }
 }

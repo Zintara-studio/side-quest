@@ -65,9 +65,21 @@ public class Registration extends BaseEntity {
     @Column(name = "contact")
     private String contact;
 
+    /** Desired roster size for a SQUAD registration — caps how many teammates can be invited. Null → default. */
+    @Column(name = "team_size")
+    private Integer teamSize;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 16)
     private RegistrationStatus status = RegistrationStatus.PENDING;
+
+    /**
+     * Whether this AUCTION registration has been drawn into a completed auction. Consumed registrations
+     * are excluded from the pool of a later auction, so each auction starts empty until new
+     * auction-call sign-ups arrive.
+     */
+    @Column(name = "consumed", nullable = false)
+    private boolean consumed = false;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "reviewed_by")

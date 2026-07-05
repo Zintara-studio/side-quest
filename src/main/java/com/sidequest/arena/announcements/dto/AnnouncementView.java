@@ -24,6 +24,7 @@ public record AnnouncementView(
         boolean registrationOpen,
         String gameId,
         String gameName,
-        String registrationType
+        String registrationType,
+        Integer teamSize
 ) {
 }

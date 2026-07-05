@@ -175,10 +175,6 @@ public class FranchiseService {
         if (req.active() != null) {
             franchise.setActive(req.active());
         }
-        if (req.iglPlayerId() != null) {
-            Player igl = requirePlayer(req.iglPlayerId());
-            franchise.setIglPlayer(igl);
-        }
 
         Franchise saved = franchiseRepository.save(franchise);
         auditService.record("franchise.update", "Franchise", saved.getId().toString(), saved.getName());
@@ -236,11 +232,14 @@ public class FranchiseService {
         requireBetweenSeasons(franchise.getOwnerPlayer());
         requireEligible(player, franchise);
 
+        Player outgoing = franchise.getOwnerPlayer();
         franchise.setOwnerPlayer(player);
         player.setFranchise(franchise);
         playerRepository.save(player);
         elevateRole(player, Role.FRANCHISE_OWNER);
         Franchise saved = franchiseRepository.save(franchise);
+        // Transferring ownership removes the previous owner from the roster (not a silent demotion).
+        demoteOutgoingLeader(saved, outgoing, player);
 
         notify(player, "You're now a franchise owner",
                 "You were made owner of " + franchise.getName() + ".");
@@ -258,12 +257,15 @@ public class FranchiseService {
         requireBetweenSeasons(franchise.getManagerPlayer());
         requireEligible(player, franchise);
 
+        Player outgoing = franchise.getManagerPlayer();
         franchise.setManagerPlayer(player);
         player.setFranchise(franchise);
         playerRepository.save(player);
         // Raise-only: leaves an owner/admin acting as manager at their higher role.
         elevateRole(player, Role.FRANCHISE_MANAGER);
         Franchise saved = franchiseRepository.save(franchise);
+        // Replacing the manager removes the previous manager from the roster (not a silent demotion).
+        demoteOutgoingLeader(saved, outgoing, player);
 
         notify(player, "You're now a franchise manager",
                 "You were made manager of " + franchise.getName() + ".");
@@ -272,15 +274,71 @@ public class FranchiseService {
         return saved;
     }
 
-    /** Admin: discard (deactivate) a franchise so it no longer competes; history is preserved. */
+    /**
+     * When a leadership slot changes hands, the outgoing owner/manager is removed from the roster
+     * entirely and their platform role is dropped back to {@code PLAYER}. They are kept only if they
+     * still hold the franchise's other leadership slot (e.g. an owner who remains manager); admins are
+     * never demoted. This is called after the new holder is set, so the slots already reflect the swap.
+     */
+    private void demoteOutgoingLeader(Franchise franchise, Player outgoing, Player replacement) {
+        if (outgoing == null || outgoing.getId().equals(replacement.getId())) {
+            return;
+        }
+        boolean stillLeads = matchesPlayer(franchise.getOwnerPlayer(), outgoing.getId())
+                || matchesPlayer(franchise.getManagerPlayer(), outgoing.getId());
+        if (stillLeads) {
+            return;
+        }
+        outgoing.setFranchise(null);
+        playerRepository.save(outgoing);
+        demoteRole(outgoing);
+        if (outgoing.getUser() != null) {
+            notificationService.create(outgoing.getUser(), NotificationType.GENERAL,
+                    "Franchise role ended",
+                    "You are no longer part of " + franchise.getName() + ".", "/my/franchise");
+        }
+        auditService.record("franchise.leader.remove", "Franchise", franchise.getId().toString(),
+                outgoing.getGamerTag() + " was removed from " + franchise.getName());
+    }
+
+    /** Drop a removed leader's platform role back to PLAYER (never an admin, never re-raises). */
+    private void demoteRole(Player player) {
+        User user = player.getUser();
+        if (user != null && user.getRole() != Role.ADMIN && user.getRole() != Role.PLAYER) {
+            user.setRole(Role.PLAYER);
+            userRepository.save(user);
+        }
+    }
+
+    /**
+     * Admin: discard (deactivate) a franchise so it no longer competes; history is preserved. Only
+     * allowed between seasons — a franchise cannot be pulled out mid-season. A discarded franchise can
+     * be brought back with {@link #restore(String)} (useful when a franchise sits out a single season).
+     */
     @CacheEvict(cacheNames = {CacheConfig.FRANCHISES, CacheConfig.PLAYERS}, allEntries = true)
     @Transactional
     public FranchiseDetail discard(String id) {
         Franchise franchise = require(id);
+        if (seasonService.current() != null) {
+            throw ApiException.badRequest(
+                    "A franchise can't be discarded during an active season — finish the season first");
+        }
         franchise.setActive(false);
         Franchise saved = franchiseRepository.save(franchise);
         auditService.record("franchise.discard", "Franchise", saved.getId().toString(),
                 "Discarded " + saved.getName());
+        return toDetail(saved);
+    }
+
+    /** Admin: bring a previously discarded franchise back into the league (between seasons). */
+    @CacheEvict(cacheNames = {CacheConfig.FRANCHISES, CacheConfig.PLAYERS}, allEntries = true)
+    @Transactional
+    public FranchiseDetail restore(String id) {
+        Franchise franchise = require(id);
+        franchise.setActive(true);
+        Franchise saved = franchiseRepository.save(franchise);
+        auditService.record("franchise.restore", "Franchise", saved.getId().toString(),
+                "Restored " + saved.getName());
         return toDetail(saved);
     }
 
@@ -531,7 +589,7 @@ public class FranchiseService {
         throw ApiException.badRequest("Provide a gamerTag or playerId to invite");
     }
 
-    /** The caller's role on a franchise: OWNER &gt; MANAGER &gt; IGL &gt; PLAYER. */
+    /** The caller's role on a franchise: OWNER &gt; MANAGER &gt; PLAYER. */
     private static String roleOf(Player player, Franchise franchise) {
         UUID pid = player.getId();
         if (matchesPlayer(franchise.getOwnerPlayer(), pid)) {
@@ -539,9 +597,6 @@ public class FranchiseService {
         }
         if (matchesPlayer(franchise.getManagerPlayer(), pid)) {
             return "MANAGER";
-        }
-        if (matchesPlayer(franchise.getIglPlayer(), pid)) {
-            return "IGL";
         }
         return "PLAYER";
     }
@@ -664,16 +719,24 @@ public class FranchiseService {
     }
 
     private List<RosterMember> rosterOf(Franchise franchise) {
-        Player igl = franchise.getIglPlayer();
-        UUID iglId = igl != null ? igl.getId() : null;
         return playerRepository.findByFranchiseId(franchise.getId()).stream()
                 .map(p -> new RosterMember(
                         p.getId().toString(),
                         p.getGamerTag(),
                         p.getAvatarUrl(),
                         p.getStatus() != null ? p.getStatus().name() : null,
-                        iglId != null && iglId.equals(p.getId())))
+                        roleOf(p, franchise)))
+                // Leaders first (OWNER, then MANAGER), then the rest.
+                .sorted(Comparator.comparingInt(FranchiseService::rosterRoleOrder))
                 .toList();
+    }
+
+    private static int rosterRoleOrder(RosterMember m) {
+        return switch (m.role() == null ? "" : m.role()) {
+            case "OWNER" -> 0;
+            case "MANAGER" -> 1;
+            default -> 2;
+        };
     }
 
     private FranchiseSummary toSummary(Franchise f) {
@@ -690,12 +753,6 @@ public class FranchiseService {
     }
 
     private FranchiseDetail toDetail(Franchise f) {
-        Player igl = f.getIglPlayer();
-        FranchiseDetail.IglView iglView = igl != null
-                ? new FranchiseDetail.IglView(igl.getId().toString(), igl.getGamerTag())
-                : null;
-        FranchiseDetail.PersonView ownerView = personView(f.getOwnerPlayer());
-        FranchiseDetail.PersonView managerView = personView(f.getManagerPlayer());
         return new FranchiseDetail(
                 f.getId().toString(),
                 f.getName(),
@@ -705,9 +762,8 @@ public class FranchiseService {
                 f.getRank(),
                 f.isActive(),
                 f.getSeasonId(),
-                iglView,
-                ownerView,
-                managerView,
+                personView(f.getOwnerPlayer()),
+                personView(f.getManagerPlayer()),
                 playerRepository.countByFranchiseId(f.getId()),
                 matchParticipantRepository.findByFranchiseId(f.getId()).size());
     }

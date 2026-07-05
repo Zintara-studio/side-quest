@@ -185,27 +185,24 @@ public class SeasonService {
     }
 
     /**
-     * Admin: start a new season. Any active season is finished (and snapshotted) first. The new season
-     * becomes current, league settings are repointed to it, and every franchise is carried forward with
-     * points/rank reset to zero (season-scoped points). 409 if the code already exists.
+     * Admin: start a new season. The current season must be finished first — this deliberately does
+     * NOT silently end a running season, so the intended off-season workflow (finish → keep/discard
+     * franchises → auction → rosters set → start) is preserved. The new season becomes current, league
+     * settings are repointed to it, and every franchise is carried forward with points/rank reset to
+     * zero (season-scoped points). 409 if a season is still running, or the code already exists.
      */
     @CacheEvict(cacheNames = {CacheConfig.STANDINGS, CacheConfig.FRANCHISES, CacheConfig.PLAYERS,
             CacheConfig.LEADERBOARD_PLAYERS}, allEntries = true)
     @Transactional
     public SeasonView start(StartSeasonRequest req) {
         String code = req.code().trim();
+        if (activeOrNull() != null) {
+            throw ApiException.conflict(
+                    "Finish the current season before starting a new one");
+        }
         if (seasonRepository.existsByCodeIgnoreCase(code)) {
             throw ApiException.conflict("A season with code '" + code + "' already exists");
         }
-
-        // Finalize the outgoing season, if any.
-        seasonRepository.findFirstByStatusOrderByStartedAtDesc(SeasonStatus.ACTIVE).ifPresent(active -> {
-            snapshot(active.getCode());
-            archiveAndResetRosters(active.getCode());
-            active.setStatus(SeasonStatus.FINISHED);
-            active.setEndedAt(Instant.now());
-            seasonRepository.save(active);
-        });
 
         Season season = new Season();
         season.setCode(code);
@@ -243,21 +240,20 @@ public class SeasonService {
 
     /**
      * Archive every franchise's current roster into {@link PlayerFranchiseHistory} for the given
-     * season (tagging each player OWNER / MANAGER / IGL / PLAYER), then reset the playing rosters for
-     * the next season's auction: the regular players are detached from their franchise, while the
-     * franchise LEADERSHIP (owner / manager / IGL) PERSISTS across seasons and stays on the roster.
-     * Leaders change only between seasons via the owner/manager invite flow, not on the reset. The
-     * prior season's full memberships remain browsable in history.
+     * season (tagging each player OWNER / MANAGER / PLAYER), then reset the playing rosters for the
+     * next season's auction: the regular players are detached from their franchise, while the
+     * franchise LEADERSHIP (owner / manager) PERSISTS across seasons and stays on the roster. Leaders
+     * change only between seasons via the owner/manager invite flow, not on the reset. The prior
+     * season's full memberships remain browsable in history.
      */
     private void archiveAndResetRosters(String seasonCode) {
         List<Franchise> franchises = franchiseRepository.findAll();
 
-        // Leaders (owner / manager / IGL of any franchise) are protected — they carry over unchanged.
+        // Leaders (owner / manager of any franchise) are protected — they carry over unchanged.
         Set<UUID> protectedLeaders = new HashSet<>();
         for (Franchise f : franchises) {
             if (f.getOwnerPlayer() != null) protectedLeaders.add(f.getOwnerPlayer().getId());
             if (f.getManagerPlayer() != null) protectedLeaders.add(f.getManagerPlayer().getId());
-            if (f.getIglPlayer() != null) protectedLeaders.add(f.getIglPlayer().getId());
         }
 
         // (a) One history row per roster player, tagged with the role they held.
@@ -265,18 +261,14 @@ public class SeasonService {
         for (Franchise f : franchises) {
             Player owner = f.getOwnerPlayer();
             Player manager = f.getManagerPlayer();
-            Player igl = f.getIglPlayer();
             UUID ownerId = owner != null ? owner.getId() : null;
             UUID managerId = manager != null ? manager.getId() : null;
-            UUID iglId = igl != null ? igl.getId() : null;
             for (Player p : playerRepository.findByFranchiseId(f.getId())) {
                 String role;
                 if (ownerId != null && ownerId.equals(p.getId())) {
                     role = "OWNER";
                 } else if (managerId != null && managerId.equals(p.getId())) {
                     role = "MANAGER";
-                } else if (iglId != null && iglId.equals(p.getId())) {
-                    role = "IGL";
                 } else {
                     role = "PLAYER";
                 }

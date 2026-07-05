@@ -14,6 +14,8 @@ import java.util.List;
  * @param status          {@link com.sidequest.arena.model.InviteStatus} name
  * @param message         optional note from the captain, nullable
  * @param createdAt       when the invite was sent
+ * @param members         the squad's current roster (captain + invitees with their status), so the
+ *                        invited player can see who's already confirmed before accepting
  */
 public record InviteView(
         String id,
@@ -23,6 +25,15 @@ public record InviteView(
         List<String> games,
         String status,
         String message,
-        Instant createdAt
+        Instant createdAt,
+        List<MemberView> members
 ) {
+
+    /** A squad member row shown to an invitee: the captain, or another invited player. */
+    public record MemberView(
+            String gamerTag,
+            String status,
+            boolean isCaptain
+    ) {
+    }
 }

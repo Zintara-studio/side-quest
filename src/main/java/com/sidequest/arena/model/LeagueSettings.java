@@ -49,6 +49,13 @@ public class LeagueSettings {
     @Column(name = "registration_open", nullable = false)
     private boolean registrationOpen = true;
 
+    /**
+     * How many hours before a match its registration locks: past this point no new entries or invites,
+     * the confirmed roster is frozen, and any still-pending invites are voided.
+     */
+    @Column(name = "registration_lock_hours", nullable = false)
+    private int registrationLockHours = 3;
+
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt = Instant.now();
 

@@ -9,12 +9,14 @@ package com.sidequest.arena.admin.dto;
  * @param pointsPerKill    new points-per-kill, or {@code null} to leave unchanged
  * @param placementPoints  new placement points csv, or {@code null} to leave unchanged
  * @param registrationOpen new registration switch, or {@code null} to leave unchanged
+ * @param registrationLockHours new registration-lock window in hours, or {@code null} to leave unchanged
  */
 public record UpdateSettingsRequest(
         String seasonId,
         String seasonName,
         Integer pointsPerKill,
         String placementPoints,
-        Boolean registrationOpen
+        Boolean registrationOpen,
+        Integer registrationLockHours
 ) {
 }

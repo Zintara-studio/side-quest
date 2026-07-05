@@ -22,6 +22,7 @@ import java.util.UUID;
  * @param proficiencies optional per-game self-rating + in-game handle, upserted onto the player's
  *                      profile (used by AUCTION entries so franchises can scout the pool), nullable
  * @param note          optional free-form note stored on the registration for admins, nullable
+ * @param teamSize      desired squad size for a SQUAD registration (caps invites); nullable → default
  */
 public record ApplyRequest(
         @NotNull RegistrationType type,
@@ -31,7 +32,8 @@ public record ApplyRequest(
         String matchId,
         UUID gameId,
         List<ProficiencyEntry> proficiencies,
-        String note
+        String note,
+        Integer teamSize
 ) {
 
     /**

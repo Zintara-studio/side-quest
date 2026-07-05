@@ -61,12 +61,6 @@ public class RegistrationController {
         return registrationService.invite(id, request);
     }
 
-    /** The captain submits a formed squad for admin review (authenticated; captain-only in service). */
-    @PostMapping("/{id}/submit")
-    public RegistrationView submit(@PathVariable String id) {
-        return registrationService.submitForApproval(id);
-    }
-
     /** The invited player accepts a squad invite (authenticated; invitee-only in service). */
     @PostMapping("/invites/{inviteId}/accept")
     public InviteView acceptInvite(@PathVariable String inviteId) {
@@ -97,19 +91,11 @@ public class RegistrationController {
         return registrationService.get(id);
     }
 
-    /** Approve a registration (admin only). */
-    @PostMapping("/{id}/approve")
-    @PreAuthorize("hasRole('ADMIN')")
-    public RegistrationView approve(@PathVariable String id,
-                                    @RequestBody(required = false) ReviewRequest request) {
-        return registrationService.approve(id, request);
-    }
-
-    /** Reject a registration with a required reason (admin only). */
+    /** Discard a registration or franchise proposal (admin only); reason optional. */
     @PostMapping("/{id}/reject")
     @PreAuthorize("hasRole('ADMIN')")
     public RegistrationView reject(@PathVariable String id,
-                                   @RequestBody ReviewRequest request) {
+                                   @RequestBody(required = false) ReviewRequest request) {
         return registrationService.reject(id, request);
     }
 }

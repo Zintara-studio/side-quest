@@ -7,11 +7,13 @@ import com.sidequest.arena.auctions.dto.CreateAuctionRequest;
 import com.sidequest.arena.auctions.dto.NominateRequest;
 import com.sidequest.arena.auctions.dto.PlaceBidRequest;
 import com.sidequest.arena.auctions.dto.ReAuctionRequest;
+import com.sidequest.arena.auctions.dto.RescheduleRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -56,7 +58,36 @@ public class AuctionController {
         return ResponseEntity.status(HttpStatus.CREATED).body(auctionService.create(request));
     }
 
-    /** DRAFT -> LIVE and nominate the first lot (admin only). */
+    /** Edit auction config while DRAFT/LOBBY — base price, timers, raises, budget, participants (admin). */
+    @PatchMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public AuctionView update(@PathVariable String id,
+                             @RequestBody com.sidequest.arena.auctions.dto.UpdateAuctionRequest request) {
+        return auctionService.updateConfig(id, request);
+    }
+
+    /** DRAFT -> LOBBY: open the hall for participating franchises to join (admin only). */
+    @PostMapping("/{id}/open-hall")
+    @PreAuthorize("hasRole('ADMIN')")
+    public AuctionView openHall(@PathVariable String id) {
+        return auctionService.openHall(id);
+    }
+
+    /** Mark the caller's participating franchise present in the hall (admin/franchise owner/manager). */
+    @PostMapping("/{id}/join")
+    @PreAuthorize("hasAnyRole('ADMIN','FRANCHISE_OWNER','FRANCHISE_MANAGER')")
+    public AuctionView join(@PathVariable String id) {
+        return auctionService.join(id);
+    }
+
+    /** Set/change the scheduled go-live time and notify participants (admin only). */
+    @PostMapping("/{id}/reschedule")
+    @PreAuthorize("hasRole('ADMIN')")
+    public AuctionView reschedule(@PathVariable String id, @Valid @RequestBody RescheduleRequest request) {
+        return auctionService.reschedule(id, request.scheduledAt());
+    }
+
+    /** LOBBY -> LIVE and nominate the first lot (admin only). */
     @PostMapping("/{id}/start")
     @PreAuthorize("hasRole('ADMIN')")
     public AuctionView start(@PathVariable String id) {

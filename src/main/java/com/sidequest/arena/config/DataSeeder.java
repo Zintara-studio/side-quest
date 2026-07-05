@@ -161,7 +161,6 @@ public class DataSeeder {
             r6.setEnabled(false);
             games.save(r6);
             // Additional college titles.
-            games.save(game("CSGO", "5v5 Tactical", GameType.TACTICAL, 58));
             games.save(game("FIFA", "1v1 · Sports", GameType.SPORTS, 62));
             games.save(game("Free Fire", "Battle Royale · Squads", GameType.BATTLE_ROYALE, 78));
             games.save(game("Marvel Rivals", "6v6 Hero Shooter", GameType.TACTICAL, 70));
@@ -183,18 +182,10 @@ public class DataSeeder {
             // ---- players ----
             Player raghavan = player(users, players, "Raghavan", "raghavan@sidequest.gg",
                     pw, rxg, PlayerStatus.VERIFIED);
-            rxg.setIglPlayer(raghavan);
-            franchises.save(rxg);
             Player vortex = player(users, players, "Vortex", "vortex@sidequest.gg", pw, rxg, PlayerStatus.VERIFIED);
             Player blaze = player(users, players, "Blaze", "blaze@sidequest.gg", pw, moti, PlayerStatus.VERIFIED);
-            moti.setIglPlayer(blaze);
-            franchises.save(moti);
             Player specter = player(users, players, "Specter", "specter@sidequest.gg", pw, night, PlayerStatus.VERIFIED);
-            night.setIglPlayer(specter);
-            franchises.save(night);
             Player nova = player(users, players, "Nova", "nova@sidequest.gg", pw, titans, PlayerStatus.VERIFIED);
-            titans.setIglPlayer(nova);
-            franchises.save(titans);
             Player rookie = player(users, players, "Rookie", "rookie@sidequest.gg", pw, null, PlayerStatus.PENDING);
 
             // ---- frozen S03 history (final standings, with real franchise ids) ----
@@ -394,7 +385,8 @@ public class DataSeeder {
             squadReg.setGames(new ArrayList<>(List.of("Valorant", "CS2")));
             squadReg.setContact("discord: phantom#0001");
             squadReg.setGame(valorant);
-            squadReg.setStatus(RegistrationStatus.PENDING);
+            squadReg.setTeamSize(5);
+            squadReg.setStatus(RegistrationStatus.FORMING);
             Registration savedSquad = registrations.save(squadReg);
 
             // ---- squad invites (captain rookie builds the Phantom Five roster) ----
@@ -410,6 +402,7 @@ public class DataSeeder {
             formingSquad.setGames(new ArrayList<>(List.of("Valorant")));
             formingSquad.setContact("discord: neonwolves#0007");
             formingSquad.setGame(valorant);
+            formingSquad.setTeamSize(5);
             formingSquad.setStatus(RegistrationStatus.FORMING);
             Registration savedForming = registrations.save(formingSquad);
             teamInvites.save(teamInvite(savedForming, drift, rookie, InviteStatus.ACCEPTED));
@@ -421,10 +414,10 @@ public class DataSeeder {
             ffaReg.setGames(new ArrayList<>(List.of("Smashkarts")));
             ffaReg.setContact("whatsapp: +91 98765 43210");
             ffaReg.setGame(smash);
-            ffaReg.setStatus(RegistrationStatus.PENDING);
+            ffaReg.setStatus(RegistrationStatus.ACTIVE);
             registrations.save(ffaReg);
 
-            // ---- an approved FFA entry tied to the future Valorant showmatch (game derived from match) ----
+            // ---- a registered FFA solo entry tied to the future Valorant showmatch (game from match) ----
             Registration ffaMatchReg = new Registration();
             ffaMatchReg.setType(RegistrationType.PLAYER);
             ffaMatchReg.setPlayer(drift);
@@ -432,7 +425,7 @@ public class DataSeeder {
             ffaMatchReg.setContact("discord: drift#1234");
             ffaMatchReg.setMatch(futureFfa);
             ffaMatchReg.setGame(valorant);
-            ffaMatchReg.setStatus(RegistrationStatus.APPROVED);
+            ffaMatchReg.setStatus(RegistrationStatus.ACTIVE);
             registrations.save(ffaMatchReg);
 
             // ---- a pending FRANCHISE proposal so the admin can approve it into a franchise ----
@@ -818,7 +811,7 @@ public class DataSeeder {
         return n;
     }
 
-    /** A PENDING AUCTION-type registration for a free agent entering the auction pool. */
+    /** An ACTIVE AUCTION-type registration for a free agent entering the auction pool. */
     private static Registration auctionRegistration(Player player, Game game, List<String> games,
                                                     String contact, String note) {
         Registration r = new Registration();
@@ -828,7 +821,7 @@ public class DataSeeder {
         r.setContact(contact);
         r.setGame(game);
         r.setReason(note);
-        r.setStatus(RegistrationStatus.PENDING);
+        r.setStatus(RegistrationStatus.ACTIVE);
         return r;
     }
 

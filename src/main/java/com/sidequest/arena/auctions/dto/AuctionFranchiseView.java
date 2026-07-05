@@ -9,6 +9,7 @@ package com.sidequest.arena.auctions.dto;
  * @param budget        original allotment for this auction
  * @param balance       remaining spendable balance
  * @param acquiredCount number of players won so far
+ * @param joined        whether this franchise's leadership has joined the auction hall
  */
 public record AuctionFranchiseView(
         String franchiseId,
@@ -16,6 +17,7 @@ public record AuctionFranchiseView(
         String tag,
         long budget,
         long balance,
-        int acquiredCount
+        int acquiredCount,
+        boolean joined
 ) {
 }

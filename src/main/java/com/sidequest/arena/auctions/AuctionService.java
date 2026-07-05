@@ -20,6 +20,8 @@ import com.sidequest.arena.model.AuctionStatus;
 import com.sidequest.arena.model.Franchise;
 import com.sidequest.arena.model.NotificationType;
 import com.sidequest.arena.model.Player;
+import com.sidequest.arena.model.PlayerGameProficiency;
+import com.sidequest.arena.model.PlayerGameUsername;
 import com.sidequest.arena.model.Registration;
 import com.sidequest.arena.model.RegistrationStatus;
 import com.sidequest.arena.model.RegistrationType;
@@ -31,6 +33,8 @@ import com.sidequest.arena.repo.AuctionFranchiseRepository;
 import com.sidequest.arena.repo.AuctionLotRepository;
 import com.sidequest.arena.repo.AuctionRepository;
 import com.sidequest.arena.repo.FranchiseRepository;
+import com.sidequest.arena.repo.PlayerGameProficiencyRepository;
+import com.sidequest.arena.repo.PlayerGameUsernameRepository;
 import com.sidequest.arena.repo.PlayerRepository;
 import com.sidequest.arena.repo.RegistrationRepository;
 import com.sidequest.arena.repo.UserRepository;
@@ -42,9 +46,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
@@ -71,6 +77,8 @@ public class AuctionService {
     private final AuctionBidRepository auctionBidRepository;
     private final FranchiseRepository franchiseRepository;
     private final PlayerRepository playerRepository;
+    private final PlayerGameProficiencyRepository proficiencyRepository;
+    private final PlayerGameUsernameRepository usernameRepository;
     private final UserRepository userRepository;
     private final RegistrationRepository registrationRepository;
     private final NotificationService notificationService;
@@ -85,6 +93,8 @@ public class AuctionService {
                           AuctionBidRepository auctionBidRepository,
                           FranchiseRepository franchiseRepository,
                           PlayerRepository playerRepository,
+                          PlayerGameProficiencyRepository proficiencyRepository,
+                          PlayerGameUsernameRepository usernameRepository,
                           UserRepository userRepository,
                           RegistrationRepository registrationRepository,
                           NotificationService notificationService,
@@ -95,6 +105,8 @@ public class AuctionService {
         this.auctionBidRepository = auctionBidRepository;
         this.franchiseRepository = franchiseRepository;
         this.playerRepository = playerRepository;
+        this.proficiencyRepository = proficiencyRepository;
+        this.usernameRepository = usernameRepository;
         this.userRepository = userRepository;
         this.registrationRepository = registrationRepository;
         this.notificationService = notificationService;
@@ -121,6 +133,7 @@ public class AuctionService {
                         ? DEFAULT_ANTI_SNIPE : req.antiSnipeSeconds());
         auction.setRaiseIncrements(incrementsCsv(req.raiseIncrements()));
         auction.setDefaultBudget(req.defaultBudget());
+        auction.setScheduledAt(req.scheduledAt());
         auction.setCreatedBy(currentUser());
         Auction saved = auctionRepository.save(auction);
 
@@ -137,7 +150,7 @@ public class AuctionService {
             }
         }
 
-        // Lot pool — explicit players, else non-rejected AUCTION registrations.
+        // Lot pool — explicit players, else ACTIVE/unconsumed/un-rostered AUCTION registrations.
         List<Player> pool = resolvePool(req);
         int order = 0;
         for (Player player : pool) {
@@ -150,6 +163,15 @@ public class AuctionService {
             auctionLotRepository.save(lot);
         }
 
+        // Nice-to-have: tell participating leadership when a scheduled time is set up front.
+        if (saved.getScheduledAt() != null) {
+            for (AuctionFranchise af : auctionFranchiseRepository.findByAuctionId(saved.getId())) {
+                notifyLeadership(af.getFranchise(), "Auction scheduled",
+                        saved.getTitle() + " is scheduled for " + saved.getScheduledAt() + ".",
+                        "/auctions/" + saved.getId());
+            }
+        }
+
         return viewOf(saved);
     }
 
@@ -159,25 +181,169 @@ public class AuctionService {
         return viewOf(require(id));
     }
 
-    /** The single "active" auction (most recent DRAFT/PAUSED/LIVE), or {@code null} when none. */
+    /** The single "active" auction (most recent DRAFT/LOBBY/PAUSED/LIVE), or {@code null} when none. */
     @Transactional(readOnly = true)
     public AuctionView activeAuction() {
         Auction auction = auctionRepository.findFirstByStatusInOrderByCreatedAtDesc(
-                List.of(AuctionStatus.DRAFT, AuctionStatus.LIVE, AuctionStatus.PAUSED)).orElse(null);
+                List.of(AuctionStatus.DRAFT, AuctionStatus.LOBBY, AuctionStatus.LIVE, AuctionStatus.PAUSED))
+                .orElse(null);
         return auction == null ? null : viewOf(auction);
     }
 
     // ==== lifecycle (admin) ================================================
 
-    /** DRAFT -> LIVE and nominate the first queued lot. */
+    /** DRAFT -> LOBBY: open the hall so participating franchises can join before bidding starts. */
+    @Transactional
+    public AuctionView openHall(String id) {
+        ReentrantLock lock = lockFor(parseId(id, "Auction"));
+        lock.lock();
+        try {
+            Auction auction = require(id);
+            if (auction.getStatus() != AuctionStatus.DRAFT) {
+                throw ApiException.conflict("Only a DRAFT auction can open its hall");
+            }
+            auction.setStatus(AuctionStatus.LOBBY);
+            auctionRepository.save(auction);
+            for (AuctionFranchise af : auctionFranchiseRepository.findByAuctionId(auction.getId())) {
+                notifyLeadership(af.getFranchise(), "Auction hall is open",
+                        "The hall for " + auction.getTitle() + " is open — join before bidding starts.",
+                        "/auctions/" + auction.getId());
+            }
+            return publishAndView(auction);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** Owner/manager: mark the caller's participating franchise present in the hall. */
+    @Transactional
+    public AuctionView join(String id) {
+        ReentrantLock lock = lockFor(parseId(id, "Auction"));
+        lock.lock();
+        try {
+            Auction auction = require(id);
+            if (auction.getStatus() != AuctionStatus.LOBBY && auction.getStatus() != AuctionStatus.LIVE) {
+                throw ApiException.conflict("The hall is not open");
+            }
+            AuctionFranchise af = callerFranchise(auction.getId());
+            af.setJoined(true);
+            af.setJoinedAt(Instant.now());
+            auctionFranchiseRepository.save(af);
+            return publishAndView(auction);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** Admin: set/change the scheduled go-live time (DRAFT/LOBBY) and notify participating leadership. */
+    @Transactional
+    public AuctionView reschedule(String id, Instant scheduledAt) {
+        ReentrantLock lock = lockFor(parseId(id, "Auction"));
+        lock.lock();
+        try {
+            Auction auction = require(id);
+            if (auction.getStatus() != AuctionStatus.DRAFT && auction.getStatus() != AuctionStatus.LOBBY) {
+                throw ApiException.conflict("Only a DRAFT or LOBBY auction can be rescheduled");
+            }
+            auction.setScheduledAt(scheduledAt);
+            auctionRepository.save(auction);
+            for (AuctionFranchise af : auctionFranchiseRepository.findByAuctionId(auction.getId())) {
+                notifyLeadership(af.getFranchise(), "Auction rescheduled",
+                        auction.getTitle() + " is now scheduled for "
+                                + (scheduledAt == null ? "an unspecified time" : scheduledAt) + ".",
+                        "/auctions/" + auction.getId());
+            }
+            return publishAndView(auction);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Admin: edit auction configuration while it is still DRAFT or LOBBY (never once bidding is live).
+     * Only non-null fields are applied. Changing {@code defaultBudget} resets every participant's purse
+     * (nothing is spent before LIVE); changing the participant set adds/removes purses.
+     */
+    @Transactional
+    public AuctionView updateConfig(String id, com.sidequest.arena.auctions.dto.UpdateAuctionRequest req) {
+        ReentrantLock lock = lockFor(parseId(id, "Auction"));
+        lock.lock();
+        try {
+            Auction auction = require(id);
+            if (auction.getStatus() != AuctionStatus.DRAFT && auction.getStatus() != AuctionStatus.LOBBY) {
+                throw ApiException.conflict(
+                        "Auction settings can only be changed before it goes live (DRAFT or LOBBY)");
+            }
+            if (req.basePrice() != null && req.basePrice() >= 0) {
+                auction.setBasePrice(req.basePrice());
+            }
+            if (req.bidTimerSeconds() != null && req.bidTimerSeconds() > 0) {
+                auction.setBidTimerSeconds(req.bidTimerSeconds());
+            }
+            if (req.antiSnipeSeconds() != null && req.antiSnipeSeconds() > 0) {
+                auction.setAntiSnipeSeconds(req.antiSnipeSeconds());
+            }
+            if (req.intermissionSeconds() != null && req.intermissionSeconds() >= 0) {
+                auction.setIntermissionSeconds(req.intermissionSeconds());
+            }
+            if (req.raiseIncrements() != null && !req.raiseIncrements().isEmpty()) {
+                auction.setRaiseIncrements(incrementsCsv(req.raiseIncrements()));
+            }
+            if (req.scheduledAt() != null) {
+                auction.setScheduledAt(req.scheduledAt());
+            }
+            // Budget change → reset every participant's purse (nothing is spent pre-LIVE).
+            if (req.defaultBudget() != null && req.defaultBudget() > 0) {
+                auction.setDefaultBudget(req.defaultBudget());
+                for (AuctionFranchise af : auctionFranchiseRepository.findByAuctionId(auction.getId())) {
+                    af.setBudget(req.defaultBudget());
+                    af.setBalance(req.defaultBudget());
+                    auctionFranchiseRepository.save(af);
+                }
+            }
+            // Participant set change → add new purses, drop removed franchises.
+            if (req.participantFranchiseIds() != null) {
+                long budget = auction.getDefaultBudget();
+                java.util.Map<UUID, Franchise> wanted = new java.util.LinkedHashMap<>();
+                for (String fid : req.participantFranchiseIds()) {
+                    Franchise f = requireFranchise(fid);
+                    wanted.put(f.getId(), f);
+                }
+                java.util.Set<UUID> have = new java.util.HashSet<>();
+                for (AuctionFranchise af : auctionFranchiseRepository.findByAuctionId(auction.getId())) {
+                    UUID fid = af.getFranchise().getId();
+                    have.add(fid);
+                    if (!wanted.containsKey(fid)) {
+                        auctionFranchiseRepository.delete(af);
+                    }
+                }
+                for (Franchise f : wanted.values()) {
+                    if (!have.contains(f.getId())) {
+                        AuctionFranchise af = new AuctionFranchise();
+                        af.setAuction(auction);
+                        af.setFranchise(f);
+                        af.setBudget(budget);
+                        af.setBalance(budget);
+                        auctionFranchiseRepository.save(af);
+                    }
+                }
+            }
+            auctionRepository.save(auction);
+            return publishAndView(auction);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** LOBBY -> LIVE and nominate the first queued lot. */
     @Transactional
     public AuctionView start(String id) {
         ReentrantLock lock = lockFor(parseId(id, "Auction"));
         lock.lock();
         try {
             Auction auction = require(id);
-            if (auction.getStatus() != AuctionStatus.DRAFT) {
-                throw ApiException.conflict("Only a DRAFT auction can be started");
+            if (auction.getStatus() != AuctionStatus.LOBBY) {
+                throw ApiException.conflict("Only a LOBBY auction can be started (open the hall first)");
             }
             AuctionLot first = auctionLotRepository
                     .findFirstByAuctionIdAndStatusOrderByLotOrderAsc(auction.getId(), AuctionLotStatus.QUEUED)
@@ -220,6 +386,11 @@ public class AuctionService {
                 throw ApiException.conflict("Only a PAUSED auction can be resumed");
             }
             auction.setStatus(AuctionStatus.LIVE);
+            // If a deadline or intermission elapsed while paused, push it forward so nothing instantly fires.
+            if (auction.getIntermissionUntil() != null
+                    && Instant.now().isAfter(auction.getIntermissionUntil())) {
+                auction.setIntermissionUntil(Instant.now().plusSeconds(auction.getIntermissionSeconds()));
+            }
             auctionRepository.save(auction);
             AuctionLot onBlock = onBlock(auction);
             if (onBlock != null && onBlock.getBidDeadline() != null
@@ -252,7 +423,10 @@ public class AuctionService {
                 }
             }
             auction.setStatus(AuctionStatus.COMPLETED);
+            auction.setIntermissionUntil(null);
             auctionRepository.save(auction);
+            consumeAuctionPool();
+            notifyAuctionSummary(auction);
             return publishAndView(auction);
         } finally {
             lock.unlock();
@@ -293,7 +467,6 @@ public class AuctionService {
                 throw ApiException.conflict("You are already the top bidder");
             }
 
-            AuctionFranchise previous = lot.getCurrentBidder();
             lot.setCurrentBid(req.amount());
             lot.setCurrentBidder(bidder);
             lot.setBidDeadline(Instant.now().plusSeconds(auction.getBidTimerSeconds()));
@@ -306,11 +479,7 @@ public class AuctionService {
             bid.setAmount(req.amount());
             auctionBidRepository.save(bid);
 
-            if (previous != null && !previous.getId().equals(bidder.getId())) {
-                notifyOwner(auction, previous, "You were outbid",
-                        bidder.getFranchise().getName() + " outbid you on "
-                                + lot.getPlayer().getGamerTag() + " (" + req.amount() + ").");
-            }
+            // Per-event "outbid" pings are gone — a single summary is sent when the auction completes.
             return publishAndView(auction);
         } finally {
             lock.unlock();
@@ -466,17 +635,17 @@ public class AuctionService {
     }
 
     /**
-     * The auto-advance engine, driven by {@link AuctionSweepService}. For every LIVE auction whose
-     * on-block lot has an expired deadline, take the per-auction lock and finalize + advance. PAUSED
-     * auctions are skipped. Runs in its own transaction (called from another bean, so the proxy
-     * applies and the private helpers execute inside it).
+     * The auto-advance engine, driven by {@link AuctionSweepService}. For every LIVE auction it either
+     * (a) finalizes an on-block lot whose deadline expired (which starts an intermission), or (b) once
+     * the intermission elapses and no lot is on the block, nominates the next queued lot. When the
+     * queue is empty it does nothing — the auction idles LIVE until the admin acts (it never
+     * auto-completes). PAUSED auctions are skipped. Runs in its own transaction (called from another
+     * bean, so the proxy applies and the private helpers execute inside it).
      */
     @Transactional
     public void finalizeExpiredLots() {
         for (Auction candidate : auctionRepository.findByStatus(AuctionStatus.LIVE)) {
-            AuctionLot lot = onBlock(candidate);
-            if (lot == null || lot.getBidDeadline() == null
-                    || !Instant.now().isAfter(lot.getBidDeadline())) {
+            if (!needsSweep(candidate)) {
                 continue;
             }
             ReentrantLock lock = lockFor(candidate.getId());
@@ -488,16 +657,46 @@ public class AuctionService {
                     continue;
                 }
                 AuctionLot fresh = onBlock(auction);
-                if (fresh == null || fresh.getBidDeadline() == null
-                        || !Instant.now().isAfter(fresh.getBidDeadline())) {
-                    continue;
+                if (fresh != null) {
+                    // (a) finalize an expired on-block lot — this starts the intermission.
+                    if (fresh.getBidDeadline() != null && Instant.now().isAfter(fresh.getBidDeadline())) {
+                        finalizeOnBlock(auction, fresh);
+                        publishSnapshot(auction);
+                    }
+                } else if (intermissionElapsed(auction)) {
+                    // (b) intermission over and nothing on the block — nominate the next queued lot.
+                    AuctionLot next = auctionLotRepository
+                            .findFirstByAuctionIdAndStatusOrderByLotOrderAsc(
+                                    auction.getId(), AuctionLotStatus.QUEUED)
+                            .orElse(null);
+                    if (next != null) {
+                        nominateLot(auction, next);
+                        publishSnapshot(auction);
+                    }
                 }
-                finalizeOnBlock(auction, fresh);
-                publishSnapshot(auction);
             } finally {
                 lock.unlock();
             }
         }
+    }
+
+    /** Cheap pre-check (outside the lock): is there sweep work for this LIVE auction? */
+    private boolean needsSweep(Auction auction) {
+        AuctionLot onBlock = onBlock(auction);
+        if (onBlock != null) {
+            return onBlock.getBidDeadline() != null && Instant.now().isAfter(onBlock.getBidDeadline());
+        }
+        return intermissionElapsed(auction)
+                && auctionLotRepository
+                        .findFirstByAuctionIdAndStatusOrderByLotOrderAsc(
+                                auction.getId(), AuctionLotStatus.QUEUED)
+                        .isPresent();
+    }
+
+    /** True when the auction is not (or no longer) waiting out a between-lots intermission. */
+    private static boolean intermissionElapsed(Auction auction) {
+        return auction.getIntermissionUntil() == null
+                || !Instant.now().isBefore(auction.getIntermissionUntil());
     }
 
     // ==== private helpers (run inside the locked + transactional context) ==
@@ -514,7 +713,7 @@ public class AuctionService {
         advanceQueue(auction);
     }
 
-    /** Mark a lot SOLD to a participant, debit their balance, attach the player, notify the owner. */
+    /** Mark a lot SOLD to a participant, debit their balance, attach the player (no per-sale ping). */
     private void sell(AuctionLot lot, AuctionFranchise winner, long price) {
         lot.setStatus(AuctionLotStatus.SOLD);
         lot.setSoldTo(winner);
@@ -530,31 +729,30 @@ public class AuctionService {
         Player player = lot.getPlayer();
         player.setFranchise(winner.getFranchise());
         playerRepository.save(player);
-
-        notifyOwner(lot.getAuction(), winner, "You won " + player.getGamerTag(),
-                "You won " + player.getGamerTag() + " for " + price + ".");
+        // Per-sale "you won" pings are gone — a single summary is sent when the auction completes.
     }
 
-    /** Nominate the next queued lot, or complete the auction when the pool is exhausted. */
+    /**
+     * Begin the between-lots intermission instead of nominating instantly. The sweep nominates the
+     * next queued lot once the intermission elapses; the auction NEVER auto-completes when the queue
+     * empties — it idles LIVE until the admin re-auctions or completes it manually.
+     */
     private void advanceQueue(Auction auction) {
-        AuctionLot next = auctionLotRepository
-                .findFirstByAuctionIdAndStatusOrderByLotOrderAsc(auction.getId(), AuctionLotStatus.QUEUED)
-                .orElse(null);
-        if (next != null) {
-            nominateLot(auction, next);
-        } else {
-            auction.setStatus(AuctionStatus.COMPLETED);
-            auctionRepository.save(auction);
-        }
+        auction.setIntermissionUntil(Instant.now().plusSeconds(auction.getIntermissionSeconds()));
+        auctionRepository.save(auction);
     }
 
-    /** Put a lot on the block with a fresh countdown and cleared bid state. */
+    /** Put a lot on the block with a fresh countdown and cleared bid state; ends any intermission. */
     private void nominateLot(Auction auction, AuctionLot lot) {
         lot.setStatus(AuctionLotStatus.ON_BLOCK);
         lot.setCurrentBid(0);
         lot.setCurrentBidder(null);
         lot.setBidDeadline(Instant.now().plusSeconds(auction.getBidTimerSeconds()));
         auctionLotRepository.save(lot);
+        if (auction.getIntermissionUntil() != null) {
+            auction.setIntermissionUntil(null);
+            auctionRepository.save(auction);
+        }
     }
 
     /** The lot currently on the block for an auction, or {@code null}. */
@@ -584,7 +782,11 @@ public class AuctionService {
         return player != null && player.getUser() != null && player.getUser().getId().equals(userId);
     }
 
-    /** The players that seed the pool: explicit ids, else distinct non-rejected AUCTION registrants. */
+    /**
+     * The players that seed the pool: explicit ids, else the distinct standing pool — AUCTION
+     * registrations that are ACTIVE, not yet consumed by a prior auction, and whose player is not
+     * already on a franchise roster.
+     */
     private List<Player> resolvePool(CreateAuctionRequest req) {
         if (req.playerIds() != null && !req.playerIds().isEmpty()) {
             List<Player> players = new ArrayList<>();
@@ -596,26 +798,81 @@ public class AuctionService {
         Map<UUID, Player> distinct = new LinkedHashMap<>();
         for (Registration reg : registrationRepository
                 .findByTypeOrderByCreatedAtDesc(RegistrationType.AUCTION)) {
-            if (reg.getStatus() == RegistrationStatus.REJECTED) {
+            if (reg.getStatus() != RegistrationStatus.ACTIVE || reg.isConsumed()) {
                 continue;
             }
             Player player = reg.getPlayer();
-            if (player != null) {
+            if (player != null && player.getFranchise() == null) {
                 distinct.putIfAbsent(player.getId(), player);
             }
         }
         return new ArrayList<>(distinct.values());
     }
 
-    /** Notify a participant's franchise owner (best-effort — a missing owner/user is skipped). */
-    private void notifyOwner(Auction auction, AuctionFranchise af, String title, String body) {
-        Franchise franchise = af.getFranchise();
-        if (franchise == null || franchise.getOwnerPlayer() == null
-                || franchise.getOwnerPlayer().getUser() == null) {
+    /**
+     * Reset the standing auction pool after an auction completes: mark every ACTIVE, unconsumed
+     * AUCTION registration as consumed so the next auction starts empty until new sign-ups arrive.
+     */
+    private void consumeAuctionPool() {
+        List<Registration> pool = registrationRepository
+                .findByTypeAndStatus(RegistrationType.AUCTION, RegistrationStatus.ACTIVE);
+        List<Registration> toConsume = new ArrayList<>();
+        for (Registration reg : pool) {
+            if (!reg.isConsumed()) {
+                reg.setConsumed(true);
+                toConsume.add(reg);
+            }
+        }
+        if (!toConsume.isEmpty()) {
+            registrationRepository.saveAll(toConsume);
+        }
+    }
+
+    /**
+     * Send ONE end-of-auction summary to each participating franchise's leadership: what they won and
+     * what they spent, or that they signed no one.
+     */
+    private void notifyAuctionSummary(Auction auction) {
+        String link = "/auctions/" + auction.getId();
+        for (AuctionFranchise af : auctionFranchiseRepository.findByAuctionId(auction.getId())) {
+            List<String> won = new ArrayList<>();
+            long spent = 0;
+            for (AuctionLot lot : auctionLotRepository.findByAuctionIdOrderByLotOrderAsc(auction.getId())) {
+                if (lot.getStatus() == AuctionLotStatus.SOLD && lot.getSoldTo() != null
+                        && lot.getSoldTo().getId().equals(af.getId())) {
+                    Player player = lot.getPlayer();
+                    won.add(player == null ? "a player" : player.getGamerTag());
+                    spent += lot.getSoldPrice();
+                }
+            }
+            String body = won.isEmpty()
+                    ? "You didn't sign any players."
+                    : "You won: " + String.join(", ", won) + " (spent " + spent + ").";
+            notifyLeadership(af.getFranchise(), "Auction complete", body, link);
+        }
+    }
+
+    /**
+     * Notify a franchise's leadership — owner AND manager users — best-effort (missing owner/manager or
+     * user is skipped; the same user is not notified twice when they hold both seats).
+     */
+    private void notifyLeadership(Franchise franchise, String title, String body, String link) {
+        if (franchise == null) {
             return;
         }
-        notificationService.create(franchise.getOwnerPlayer().getUser(), NotificationType.AUCTION,
-                title, body, "/auctions/" + auction.getId());
+        Set<UUID> notified = new HashSet<>();
+        notifyPlayerUser(franchise.getOwnerPlayer(), notified, title, body, link);
+        notifyPlayerUser(franchise.getManagerPlayer(), notified, title, body, link);
+    }
+
+    private void notifyPlayerUser(Player player, Set<UUID> notified, String title, String body, String link) {
+        if (player == null || player.getUser() == null) {
+            return;
+        }
+        User user = player.getUser();
+        if (notified.add(user.getId())) {
+            notificationService.create(user, NotificationType.AUCTION, title, body, link);
+        }
     }
 
     /** Smallest positive raise step configured for the auction (falls back to 1). */
@@ -712,7 +969,11 @@ public class AuctionService {
                 auction.getBidTimerSeconds(),
                 auction.getAntiSnipeSeconds(),
                 parseIncrements(auction.getRaiseIncrements()),
+                auction.getDefaultBudget(),
+                auction.getIntermissionSeconds(),
+                auction.getScheduledAt(),
                 Instant.now(),
+                auction.getIntermissionUntil(),
                 current == null ? null : lotView(current, auction),
                 franchiseViews,
                 lotViews,
@@ -726,6 +987,43 @@ public class AuctionService {
         Franchise bidder = lot.getCurrentBidder() == null ? null : lot.getCurrentBidder().getFranchise();
         Franchise soldTo = lot.getSoldTo() == null ? null : lot.getSoldTo().getFranchise();
         Player player = lot.getPlayer();
+        List<AuctionLotView.Expertise> expertise = new ArrayList<>();
+        List<String> games = new ArrayList<>();
+        String contact = null;
+        if (player != null) {
+            UUID pid = player.getId();
+            // handle per game, keyed by game id
+            Map<UUID, String> handles = new java.util.HashMap<>();
+            for (PlayerGameUsername u : usernameRepository.findByPlayerId(pid)) {
+                if (u.getGame() != null) {
+                    handles.put(u.getGame().getId(), u.getHandle());
+                }
+            }
+            for (PlayerGameProficiency prof : proficiencyRepository.findByPlayerId(pid)) {
+                if (prof.getGame() == null) {
+                    continue;
+                }
+                expertise.add(new AuctionLotView.Expertise(
+                        prof.getGame().getName(),
+                        prof.getRating(),
+                        handles.get(prof.getGame().getId())));
+            }
+            // declared games + contact from the player's most recent AUCTION registration
+            List<Registration> regs = registrationRepository
+                    .findByPlayerIdAndTypeOrderByCreatedAtDesc(pid, RegistrationType.AUCTION);
+            if (!regs.isEmpty()) {
+                Registration latest = regs.get(0);
+                if (latest.getGames() != null) {
+                    games.addAll(latest.getGames());
+                }
+                contact = latest.getContact();
+            }
+            if (games.isEmpty()) {
+                for (AuctionLotView.Expertise e : expertise) {
+                    games.add(e.game());
+                }
+            }
+        }
         return new AuctionLotView(
                 lot.getId().toString(),
                 player == null ? null : player.getId().toString(),
@@ -739,7 +1037,10 @@ public class AuctionService {
                 soldTo == null ? null : soldTo.getTag(),
                 lot.getSoldPrice(),
                 lot.getBidDeadline(),
-                lot.getLotOrder());
+                lot.getLotOrder(),
+                games,
+                expertise,
+                contact);
     }
 
     private static AuctionFranchiseView franchiseView(AuctionFranchise af, int acquiredCount) {
@@ -750,7 +1051,8 @@ public class AuctionService {
                 franchise == null ? null : franchise.getTag(),
                 af.getBudget(),
                 af.getBalance(),
-                acquiredCount);
+                acquiredCount,
+                af.isJoined());
     }
 
     private static AuctionBidView bidView(AuctionBid bid) {

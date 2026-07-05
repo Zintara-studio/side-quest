@@ -1,6 +1,7 @@
 package com.sidequest.arena.auctions.dto;
 
 import java.time.Instant;
+import java.util.List;
 
 /**
  * A single auction lot as exposed to clients.
@@ -18,6 +19,9 @@ import java.time.Instant;
  * @param soldPrice                final hammer price once SOLD (0 otherwise)
  * @param bidDeadline              when the on-block countdown expires (nullable when not on the block)
  * @param lotOrder                 position in the auction queue
+ * @param games                    game titles the player declared (for scouting)
+ * @param expertise                per-game rating and in-game handle (for scouting)
+ * @param contact                  free-form contact from the player's auction registration (nullable)
  */
 public record AuctionLotView(
         String id,
@@ -32,6 +36,23 @@ public record AuctionLotView(
         String soldToTag,
         long soldPrice,
         Instant bidDeadline,
-        int lotOrder
+        int lotOrder,
+        List<String> games,
+        List<Expertise> expertise,
+        String contact
 ) {
+
+    /**
+     * A player's declared strength in one game.
+     *
+     * @param game   game title
+     * @param rating 0–100 self-rated proficiency
+     * @param handle the player's in-game handle for this game (nullable)
+     */
+    public record Expertise(
+            String game,
+            int rating,
+            String handle
+    ) {
+    }
 }

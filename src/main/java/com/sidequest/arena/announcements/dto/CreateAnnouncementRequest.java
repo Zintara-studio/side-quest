@@ -25,6 +25,7 @@ public record CreateAnnouncementRequest(
         Instant publishedAt,
         boolean registrationOpen,
         String gameId,
-        RegistrationType registrationType
+        RegistrationType registrationType,
+        Integer teamSize
 ) {
 }

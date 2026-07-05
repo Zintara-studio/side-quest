@@ -12,6 +12,8 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+import java.time.Instant;
+
 /**
  * A pre-season player auction. Participating franchises bid on players (one {@link AuctionLot} on the
  * block at a time); a scheduled sweep auto-finalizes the block when its bid timer expires and advances
@@ -55,6 +57,21 @@ public class Auction extends BaseEntity {
     /** Budget (and starting balance) every participating franchise begins with. */
     @Column(name = "default_budget", nullable = false)
     private long defaultBudget;
+
+    /** When the auction is scheduled to go live (nullable — unscheduled or on-demand). */
+    @Column(name = "scheduled_at")
+    private Instant scheduledAt;
+
+    /** Downtime (seconds) after a lot is finalized before the next lot is nominated. */
+    @Column(name = "intermission_seconds", nullable = false)
+    private int intermissionSeconds = 4;
+
+    /**
+     * While set (and in the future) the auction is between lots — the sweep waits until this passes
+     * before nominating the next queued lot. {@code null} when not in an intermission.
+     */
+    @Column(name = "intermission_until")
+    private Instant intermissionUntil;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by")

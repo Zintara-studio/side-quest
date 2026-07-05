@@ -10,6 +10,7 @@ import java.time.Instant;
  * @param pointsPerKill    points awarded per kill by the scoring engine
  * @param placementPoints  placement points csv (highest finish first)
  * @param registrationOpen master registration switch
+ * @param registrationLockHours hours before a match that its registration locks
  * @param updatedAt        when the settings were last changed
  */
 public record SettingsView(
@@ -18,6 +19,7 @@ public record SettingsView(
         int pointsPerKill,
         String placementPoints,
         boolean registrationOpen,
+        int registrationLockHours,
         Instant updatedAt
 ) {
 }

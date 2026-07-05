@@ -12,7 +12,6 @@ package com.sidequest.arena.franchises.dto;
  * @param rank          current standings rank
  * @param active        whether the franchise's season is ongoing
  * @param seasonId      season the franchise belongs to (nullable)
- * @param igl           the in-game leader, or {@code null} if none is set
  * @param owner         the franchise owner, or {@code null} if none is set
  * @param manager       the franchise manager, or {@code null} if none is set
  * @param rosterSize    number of players currently on the roster
@@ -27,19 +26,11 @@ public record FranchiseDetail(
         int rank,
         boolean active,
         String seasonId,
-        IglView igl,
         PersonView owner,
         PersonView manager,
         long rosterSize,
         long matchesPlayed
 ) {
-
-    /** The in-game leader (captain) summary, or {@code null} when no IGL is assigned. */
-    public record IglView(
-            String playerId,
-            String gamerTag
-    ) {
-    }
 
     /** A player holding a franchise role (owner / manager), or {@code null} when unassigned. */
     public record PersonView(

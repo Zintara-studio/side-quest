@@ -479,10 +479,16 @@ public class MatchService {
         List<MatchPlayerView> out = new ArrayList<>();
 
         if (match.getMatchType() == MatchType.FFA) {
-            // A player can appear in more than one approved registration for the same match; emit once.
+            // A player can appear in more than one live registration for the same match; emit once.
+            // Live = registered and not discarded (FORMING/ACTIVE/LOCKED); the confirmed roster is
+            // whoever accepted, so pending/expired invites are ignored below.
             java.util.Set<UUID> seen = new java.util.HashSet<>();
-            for (Registration reg : registrationRepository
-                    .findByMatchIdAndStatus(match.getId(), RegistrationStatus.APPROVED)) {
+            for (Registration reg : registrationRepository.findByMatchId(match.getId())) {
+                RegistrationStatus st = reg.getStatus();
+                if (st != RegistrationStatus.FORMING && st != RegistrationStatus.ACTIVE
+                        && st != RegistrationStatus.LOCKED) {
+                    continue;
+                }
                 String squad = reg.getSquadName();
                 Player captain = reg.getPlayer();
                 if (captain != null && seen.add(captain.getId())) {

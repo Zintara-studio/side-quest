@@ -9,6 +9,7 @@ import com.sidequest.arena.common.Cursors;
 import com.sidequest.arena.common.PageResponse;
 import com.sidequest.arena.model.Announcement;
 import com.sidequest.arena.model.AnnouncementCategory;
+import com.sidequest.arena.model.Match;
 import com.sidequest.arena.model.RegistrationType;
 import com.sidequest.arena.model.User;
 import com.sidequest.arena.repo.AnnouncementRepository;
@@ -83,17 +84,26 @@ public class AnnouncementService {
         announcement.setTitle(req.title());
         announcement.setBody(req.body());
         // Link the match when one is supplied (e.g. a registration call tied to a scheduled fixture).
+        // A RESULT announcement MUST link its match so the public feed can deep-link to that match's
+        // result page; other categories link a match optionally.
+        Match linkedMatch = null;
         if (req.matchId() != null && !req.matchId().isBlank()) {
             try {
-                matchRepository.findById(UUID.fromString(req.matchId())).ifPresent(announcement::setMatch);
+                linkedMatch = matchRepository.findById(UUID.fromString(req.matchId())).orElse(null);
             } catch (IllegalArgumentException ignored) {
-                // unparseable match id → leave match unlinked
+                linkedMatch = null;
             }
         }
+        if (req.category() == AnnouncementCategory.RESULT && linkedMatch == null) {
+            throw ApiException.badRequest(
+                    "A result announcement must link the match it reports");
+        }
+        announcement.setMatch(linkedMatch);
         announcement.setPublishedAt(req.publishedAt() != null ? req.publishedAt() : Instant.now());
         announcement.setRegistrationOpen(req.registrationOpen());
         announcement.setRegistrationType(
                 req.registrationType() != null ? req.registrationType() : RegistrationType.PLAYER);
+        announcement.setTeamSize(req.teamSize());
         if (req.gameId() != null && !req.gameId().isBlank()) {
             try {
                 gameRepository.findById(UUID.fromString(req.gameId())).ifPresent(announcement::setGame);
@@ -171,6 +181,7 @@ public class AnnouncementService {
                 a.isRegistrationOpen(),
                 gameId,
                 gameName,
-                a.getRegistrationType() != null ? a.getRegistrationType().name() : null);
+                a.getRegistrationType() != null ? a.getRegistrationType().name() : null,
+                a.getTeamSize());
     }
 }

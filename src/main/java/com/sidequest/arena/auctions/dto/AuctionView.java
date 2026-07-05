@@ -11,12 +11,16 @@ import java.util.List;
  * @param id             auction id
  * @param title          auction title
  * @param seasonId       season the auction feeds (nullable)
- * @param status         {@code DRAFT} / {@code LIVE} / {@code PAUSED} / {@code COMPLETED}
+ * @param status         {@code DRAFT} / {@code LOBBY} / {@code LIVE} / {@code PAUSED} / {@code COMPLETED}
  * @param basePrice      opening bid for the first bid on a lot
  * @param bidTimerSeconds countdown length; a bid resets the deadline to now + this
  * @param antiSnipeSeconds anti-snipe cushion (config; carried for the client)
  * @param raiseIncrements allowed raise steps (smallest is the min raise)
+ * @param defaultBudget  starting purse each participant is given
+ * @param intermissionSeconds the "sold" pause length between lots
+ * @param scheduledAt    planned go-live time (nullable)
  * @param serverTime     authoritative server clock at snapshot time
+ * @param intermissionUntil when set and in the future, the auction is between lots (nullable)
  * @param currentLot     the lot currently on the block, or {@code null}
  * @param franchises     participating franchises with purses and hauls
  * @param lots           every lot in queue order
@@ -31,7 +35,11 @@ public record AuctionView(
         int bidTimerSeconds,
         int antiSnipeSeconds,
         List<Integer> raiseIncrements,
+        long defaultBudget,
+        int intermissionSeconds,
+        Instant scheduledAt,
         Instant serverTime,
+        Instant intermissionUntil,
         AuctionLotView currentLot,
         List<AuctionFranchiseView> franchises,
         List<AuctionLotView> lots,

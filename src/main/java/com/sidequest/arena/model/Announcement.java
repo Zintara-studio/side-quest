@@ -62,4 +62,8 @@ public class Announcement extends BaseEntity {
     @Enumerated(EnumType.STRING)
     @Column(name = "registration_type", length = 16)
     private RegistrationType registrationType = RegistrationType.PLAYER;
+
+    /** For a SQUAD registration call: the roster size squads should register for (invite cap). Nullable. */
+    @Column(name = "team_size")
+    private Integer teamSize;
 }

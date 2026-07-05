@@ -27,11 +27,6 @@ public class Franchise extends BaseEntity {
     @Column(nullable = false, length = 16)
     private String tag;
 
-    /** In-game leader (captain). Optional FK to a player on the roster. */
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "igl_player_id")
-    private Player iglPlayer;
-
     /** Franchise owner (elevated by an admin). Holds owner + manager permissions. Optional. */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "owner_player_id")

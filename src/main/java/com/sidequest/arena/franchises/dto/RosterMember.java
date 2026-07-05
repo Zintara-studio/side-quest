@@ -7,13 +7,13 @@ package com.sidequest.arena.franchises.dto;
  * @param gamerTag  player's public handle
  * @param avatarUrl avatar image url (nullable)
  * @param status    player status (e.g. PENDING, VERIFIED)
- * @param isIgl     whether this player is the franchise's in-game leader
+ * @param role      the player's role on this franchise: OWNER / MANAGER / PLAYER
  */
 public record RosterMember(
         String playerId,
         String gamerTag,
         String avatarUrl,
         String status,
-        boolean isIgl
+        String role
 ) {
 }

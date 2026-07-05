@@ -120,11 +120,18 @@ public class FranchiseController {
         return franchiseService.setManager(id, request);
     }
 
-    /** Discard (deactivate) a franchise (admin only). */
+    /** Discard (deactivate) a franchise (admin only; blocked during an active season). */
     @PostMapping("/{id}/discard")
     @PreAuthorize("hasRole('ADMIN')")
     public FranchiseDetail discard(@PathVariable String id) {
         return franchiseService.discard(id);
+    }
+
+    /** Bring a previously discarded franchise back into the league (admin only). */
+    @PostMapping("/{id}/restore")
+    @PreAuthorize("hasRole('ADMIN')")
+    public FranchiseDetail restore(@PathVariable String id) {
+        return franchiseService.restore(id);
     }
 
     // ---- owner/manager invites (owner or admin; enforced in the service) ----

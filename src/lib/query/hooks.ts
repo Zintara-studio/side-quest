@@ -1,6 +1,7 @@
 // TanStack Query hooks over the typed endpoint functions. Screens import these instead of
 // reading from src/lib/mock/*. Query keys are namespaced per domain for easy invalidation.
 import {
+  keepPreviousData,
   useInfiniteQuery,
   useMutation,
   useQuery,
@@ -35,7 +36,6 @@ import type {
   AssignRequest,
   AuctionView,
   CreateAuctionRequest,
-  EnterResultsRequest,
   EnterRoundsRequest,
   FranchiseInviteRequest,
   InviteRequest,
@@ -43,11 +43,17 @@ import type {
   ResolveDisputeRequest,
   StartSeasonRequest,
   UpdateAuctionRequest,
-  UpdateFranchiseRequest,
   UpdateGameRequest,
-  UpdatePlayerRequest,
   UpdateSettingsRequest,
 } from "@/lib/api/types";
+
+// Per-domain cache freshness. The global default (providers.tsx) is 30s; these lengthen it for data
+// that changes rarely, so navigating between pages stops refetching near-static data every time. Every
+// mutation still invalidates the relevant keys, so longer windows never surface stale data after a write.
+const MINUTE = 60_000;
+const STALE_STATIC = 10 * MINUTE; // catalog: games, seasons
+const STALE_SEMI = 3 * MINUTE; // directories & standings
+const STALE_LIST = MINUTE; // filtered lists & admin badges
 
 export const qk = {
   games: (enabled?: boolean) => ["games", { enabled }] as const,
@@ -75,10 +81,11 @@ export const qk = {
 // ---- games -----------------------------------------------------------------
 
 export const useGames = (enabled?: boolean) =>
-  useQuery({ queryKey: qk.games(enabled), queryFn: () => gamesApi.list(enabled) });
-
-export const useGame = (id: string | undefined) =>
-  useQuery({ queryKey: qk.game(id ?? ""), queryFn: () => gamesApi.get(id!), enabled: !!id });
+  useQuery({
+    queryKey: qk.games(enabled),
+    queryFn: () => gamesApi.list(enabled),
+    staleTime: STALE_STATIC,
+  });
 
 export const useUpdateGame = () => {
   const qc = useQueryClient();
@@ -92,7 +99,12 @@ export const useUpdateGame = () => {
 // ---- players ---------------------------------------------------------------
 
 export const usePlayers = (params?: PlayerListParams) =>
-  useQuery({ queryKey: qk.players(params), queryFn: () => playersApi.list(params) });
+  useQuery({
+    queryKey: qk.players(params),
+    queryFn: () => playersApi.list(params),
+    staleTime: STALE_SEMI,
+    placeholderData: keepPreviousData,
+  });
 
 export const usePlayer = (id: string | undefined) =>
   useQuery({ queryKey: qk.player(id ?? ""), queryFn: () => playersApi.get(id!), enabled: !!id });
@@ -111,15 +123,6 @@ export const usePlayerUsernames = (id: string | undefined) =>
     enabled: !!id,
   });
 
-export const useUpdatePlayer = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, body }: { id: string; body: UpdatePlayerRequest }) =>
-      playersApi.update(id, body),
-    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: qk.player(v.id) }),
-  });
-};
-
 export const useUpdatePlayerStatus = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -132,7 +135,12 @@ export const useUpdatePlayerStatus = () => {
 // ---- franchises ------------------------------------------------------------
 
 export const useFranchises = (params?: FranchiseListParams) =>
-  useQuery({ queryKey: qk.franchises(params), queryFn: () => franchisesApi.list(params) });
+  useQuery({
+    queryKey: qk.franchises(params),
+    queryFn: () => franchisesApi.list(params),
+    staleTime: STALE_SEMI,
+    placeholderData: keepPreviousData,
+  });
 
 export const useFranchise = (id: string | undefined) =>
   useQuery({
@@ -165,15 +173,6 @@ export const useCreateFranchise = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: CreateFranchiseRequest) => franchisesApi.create(body),
-    onSuccess: () => invalidateFranchises(qc),
-  });
-};
-
-export const useUpdateFranchise = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, body }: { id: string; body: UpdateFranchiseRequest }) =>
-      franchisesApi.update(id, body),
     onSuccess: () => invalidateFranchises(qc),
   });
 };
@@ -308,7 +307,12 @@ export const useCreateFranchiseFromProposal = () => {
 // ---- matches ---------------------------------------------------------------
 
 export const useMatches = (params?: MatchListParams) =>
-  useQuery({ queryKey: qk.matches(params), queryFn: () => matchesApi.list(params) });
+  useQuery({
+    queryKey: qk.matches(params),
+    queryFn: () => matchesApi.list(params),
+    staleTime: STALE_LIST,
+    placeholderData: keepPreviousData,
+  });
 
 /** Cursor-paginated matches for the archive: accumulate pages via "Load more". */
 export const useMatchesInfinite = (params?: MatchListParams) =>
@@ -318,6 +322,8 @@ export const useMatchesInfinite = (params?: MatchListParams) =>
       matchesApi.list({ ...params, cursor: pageParam as string | undefined }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (last) => last.nextCursor ?? undefined,
+    staleTime: STALE_LIST,
+    placeholderData: keepPreviousData,
   });
 
 export const useMatch = (id: string | undefined) =>
@@ -352,21 +358,6 @@ export const useMatchPlayers = (id: string | undefined) =>
     enabled: !!id,
   });
 
-export const useEnterResults = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, body }: { id: string; body: EnterResultsRequest }) =>
-      matchesApi.enterResults(id, body),
-    onSuccess: (_d, v) => {
-      qc.invalidateQueries({ queryKey: qk.matchLeaderboard(v.id) });
-      qc.invalidateQueries({ queryKey: ["standings"] });
-      qc.invalidateQueries({ queryKey: ["matches"] });
-      // Publishing changes franchise points, which feed per-season + all-time standings.
-      qc.invalidateQueries({ queryKey: ["seasons"] });
-    },
-  });
-};
-
 export const useEnterRounds = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -387,15 +378,24 @@ export const useEnterRounds = () => {
 // ---- standings / leaderboards ---------------------------------------------
 
 export const useStandings = () =>
-  useQuery({ queryKey: qk.standings(), queryFn: () => standingsApi.standings() });
+  useQuery({ queryKey: qk.standings(), queryFn: () => standingsApi.standings(), staleTime: STALE_SEMI });
 
 export const useTopPlayers = (limit = 20) =>
-  useQuery({ queryKey: qk.topPlayers(limit), queryFn: () => standingsApi.topPlayers(limit) });
+  useQuery({
+    queryKey: qk.topPlayers(limit),
+    queryFn: () => standingsApi.topPlayers(limit),
+    staleTime: STALE_SEMI,
+  });
 
 // ---- announcements ---------------------------------------------------------
 
 export const useAnnouncements = (params?: AnnouncementListParams) =>
-  useQuery({ queryKey: qk.announcements(params), queryFn: () => announcementsApi.list(params) });
+  useQuery({
+    queryKey: qk.announcements(params),
+    queryFn: () => announcementsApi.list(params),
+    staleTime: STALE_SEMI,
+    placeholderData: keepPreviousData,
+  });
 
 export const useAnnouncement = (id: string | undefined) =>
   useQuery({
@@ -433,8 +433,14 @@ export const useCloseAnnouncement = () => {
 
 // ---- registrations ---------------------------------------------------------
 
-export const useRegistrations = (params?: RegistrationListParams) =>
-  useQuery({ queryKey: qk.registrations(params), queryFn: () => registrationsApi.list(params) });
+export const useRegistrations = (params?: RegistrationListParams, enabled = true) =>
+  useQuery({
+    queryKey: qk.registrations(params),
+    queryFn: () => registrationsApi.list(params),
+    enabled,
+    staleTime: STALE_LIST,
+    placeholderData: keepPreviousData,
+  });
 
 export const useApplyRegistration = () => {
   const qc = useQueryClient();
@@ -515,11 +521,16 @@ export const useMyDisputes = (enabled = true) =>
 
 // ---- admin -----------------------------------------------------------------
 
-export const useAdminOverview = () =>
-  useQuery({ queryKey: qk.adminOverview(), queryFn: () => adminApi.overview() });
+export const useAdminOverview = (enabled = true) =>
+  useQuery({
+    queryKey: qk.adminOverview(),
+    queryFn: () => adminApi.overview(),
+    enabled,
+    staleTime: STALE_LIST,
+  });
 
 export const useSettings = () =>
-  useQuery({ queryKey: qk.settings(), queryFn: () => adminApi.settings() });
+  useQuery({ queryKey: qk.settings(), queryFn: () => adminApi.settings(), staleTime: STALE_LIST });
 
 export const useUpdateSettings = () => {
   const qc = useQueryClient();
@@ -547,16 +558,18 @@ export const useResolveDispute = () => {
 // ---- seasons ---------------------------------------------------------------
 
 export const useSeasons = () =>
-  useQuery({ queryKey: ["seasons"], queryFn: () => seasonsApi.list() });
+  useQuery({ queryKey: ["seasons"], queryFn: () => seasonsApi.list(), staleTime: STALE_STATIC });
 
 export const useCurrentSeason = () =>
-  useQuery({ queryKey: ["seasons", "current"], queryFn: () => seasonsApi.current() });
+  useQuery({ queryKey: ["seasons", "current"], queryFn: () => seasonsApi.current(), staleTime: STALE_STATIC });
 
 export const useSeasonStandings = (code: string | undefined) =>
   useQuery({
     queryKey: ["seasons", code ?? "", "standings"],
     queryFn: () => seasonsApi.standings(code!),
     enabled: !!code,
+    staleTime: STALE_SEMI,
+    placeholderData: keepPreviousData,
   });
 
 /** Cumulative points per franchise across all seasons + live play, ranked. */
@@ -564,6 +577,7 @@ export const useAllTimeStandings = () =>
   useQuery({
     queryKey: ["seasons", "all-time"],
     queryFn: () => seasonsApi.allTimeStandings(),
+    staleTime: STALE_STATIC,
   });
 
 // A season transition clears all rosters and repoints the current season, so
@@ -609,10 +623,9 @@ export const useUnreadCount = (enabled = true) =>
     queryKey: ["notifications", "unread"],
     queryFn: () => notificationsApi.unreadCount(),
     enabled,
-    // Poll briskly and keep polling in a backgrounded tab, then snap fresh the
-    // moment the user refocuses the tab — the bell badge should feel live.
-    refetchInterval: enabled ? 15_000 : false,
-    refetchIntervalInBackground: true,
+    // Poll at a modest cadence and snap fresh the moment the user refocuses the tab. v5 pauses the
+    // interval automatically while the tab is hidden, so backgrounded tabs stop hitting the backend.
+    refetchInterval: enabled ? 30_000 : false,
     refetchOnWindowFocus: true,
   });
 
@@ -655,7 +668,15 @@ export const useActiveAuction = (enabled = true) =>
     queryKey: ["auctions", "active"],
     queryFn: () => auctionsApi.active(),
     enabled,
-    refetchInterval: enabled ? 5_000 : false,
+    // Adaptive cadence: no auction (the common case) → slow 60s poll; a live auction → 5s; other
+    // non-terminal states → 15s. Cuts site-wide idle polling ~12x while still noticing a going-live auction.
+    refetchInterval: (q) => {
+      if (!enabled) return false;
+      const s = q.state.data?.status;
+      if (!s || s === "COMPLETED") return 60_000;
+      return s === "LIVE" ? 5_000 : 15_000;
+    },
+    refetchOnWindowFocus: true,
   });
 
 /**
@@ -674,7 +695,9 @@ export const useAuction = (id: string | undefined) =>
       if (s === "COMPLETED") return false;
       return s === "LIVE" ? 1_500 : 4_000;
     },
-    refetchIntervalInBackground: true,
+    // Don't poll the (heavy) board in a hidden tab; snap fresh instantly when the user refocuses.
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: "always",
   });
 
 export const useCreateAuction = () => {

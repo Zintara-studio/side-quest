@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuthStore } from "@/lib/auth/store";
 import { SQ, FONT } from "@/components/sidequest/tokens";
 import type { AuthResponse } from "@/lib/api/types";
 
-export default function CallbackPage() {
+function CallbackInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const setSession = useAuthStore((state) => state.setSession);
@@ -24,7 +24,7 @@ export default function CallbackPage() {
       try {
         const decodedStr = Buffer.from(payload, "base64").toString("utf-8");
         const authData = JSON.parse(decodedStr) as AuthResponse;
-        
+
         // Hydrate the Zustand store
         setSession(authData);
 
@@ -53,5 +53,14 @@ export default function CallbackPage() {
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
       `}} />
     </div>
+  );
+}
+
+// useSearchParams() must be inside a Suspense boundary or the production build fails to prerender.
+export default function CallbackPage() {
+  return (
+    <Suspense fallback={null}>
+      <CallbackInner />
+    </Suspense>
   );
 }

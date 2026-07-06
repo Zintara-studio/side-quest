@@ -2,11 +2,7 @@
 // Values are CSS custom properties so the whole app re-themes by flipping
 // `document.documentElement.dataset.theme` between "light" (warm paper) and "dark"
 // (warm espresso). The actual colour values live in globals.css (:root / [data-theme=dark]).
-import type {
-  MatchStatus,
-  PlayerStatus,
-  AnnouncementTag,
-} from "@/lib/mock/admin";
+import type { MatchStatus, AnnouncementTag } from "@/lib/mock/admin";
 
 export const SQ = {
   bg: "var(--sq-bg)", // admin canvas
@@ -68,17 +64,6 @@ export function matchStatusColors(s: MatchStatus): [string, string] {
       return [SQ.amber, "rgba(181,131,26,.5)"];
     default:
       return [SQ.mute, SQ.inputBorder];
-  }
-}
-
-export function playerStatusColors(s: PlayerStatus): [string, string] {
-  switch (s) {
-    case "Verified":
-      return [SQ.green, "rgba(31,157,99,.45)"];
-    case "Pending":
-      return [SQ.amber, "rgba(181,131,26,.5)"];
-    default:
-      return [SQ.ember, "rgba(232,96,44,.45)"];
   }
 }
 

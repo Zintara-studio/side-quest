@@ -1,6 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Self-contained build output (.next/standalone → `node server.js`) — a small, fast deploy artifact
+  // for AWS/EC2 that doesn't require shipping node_modules.
+  output: "standalone",
   // Hide the floating Next.js dev indicator ("N" badge) shown in the corner during `next dev`.
   devIndicators: false,
   images: {
@@ -12,7 +15,7 @@ const nextConfig = {
     ],
   },
   experimental: {
-    optimizePackageImports: ["lucide-react", "framer-motion", "recharts"],
+    optimizePackageImports: ["lucide-react"],
   },
 };
 

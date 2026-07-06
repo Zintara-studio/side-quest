@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { SQ, FONT, matchStatusColors } from "../tokens";
 import { ScreenHeader } from "../screen-header";
@@ -342,6 +342,12 @@ function statusLabel(s: string) {
 export function MatchesScreen() {
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("All");
   const [search, setSearch] = useState("");
+  // Debounce the search box so typing fires one request after a pause, not one per keystroke.
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
   const [sort, setSort] = useState("-scheduledAt");
   const [creating, setCreating] = useState(false);
   const [lineupsMatch, setLineupsMatch] = useState<MatchSummary | null>(null);
@@ -349,7 +355,7 @@ export function MatchesScreen() {
   const { data, isLoading, isError } = useMatches({
     limit: 50,
     status: filter === "All" ? undefined : filter,
-    q: search.trim() || undefined,
+    q: debouncedSearch.trim() || undefined,
     sort,
   });
   const matches = data?.items ?? [];

@@ -3,12 +3,10 @@
 // per-player K/D, matchday dates, "form" trend) fall back to neutral placeholders.
 import { SQ } from "@/components/sidequest/tokens";
 import type {
-  AnnouncementView,
   FranchiseSummary,
   GameSummary,
   MatchSummary,
   PlayerSummary,
-  StandingRow,
 } from "@/lib/api/types";
 import type { GameCard, Standing, PlayerRow, Announcement } from "@/lib/mock/league";
 
@@ -47,20 +45,6 @@ export function adaptFranchises(api: FranchiseSummary[]): (Standing & { id: stri
     best: NA,
     form: f.active ? "LIVE" : "OUT",
     formColor: f.active ? SQ.green : SQ.mute,
-  }));
-}
-
-export function adaptStandings(rows: StandingRow[]): Standing[] {
-  return rows.map((r) => ({
-    rank: pad2(r.rank),
-    name: r.name.toUpperCase(),
-    sub: r.tag ?? "",
-    gp: 0,
-    w: 0,
-    pts: r.points,
-    best: NA,
-    form: r.active ? NA : "OUT",
-    formColor: SQ.mute,
   }));
 }
 
@@ -113,12 +97,4 @@ const CATEGORY_TAG: Record<string, Announcement["tag"]> = {
 /** Map a backend AnnouncementCategory to the prototype's tag (RESULT / LEAGUE / RECAP). */
 export function announcementTagFor(category: string): Announcement["tag"] {
   return CATEGORY_TAG[category] ?? "LEAGUE";
-}
-
-export function adaptAnnouncements(api: AnnouncementView[]): Announcement[] {
-  return api.map((a) => ({
-    tag: CATEGORY_TAG[a.category] ?? "LEAGUE",
-    title: a.title,
-    date: shortDate(a.publishedAt),
-  }));
 }

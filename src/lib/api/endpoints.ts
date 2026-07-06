@@ -16,7 +16,6 @@ import type {
   CreateMatchRequest,
   DisputeView,
   EligiblePlayer,
-  EnterResultsRequest,
   FranchiseDetail,
   FranchiseInviteRequest,
   FranchiseInviteView,
@@ -24,7 +23,6 @@ import type {
   FranchiseMineView,
   FranchiseSummary,
   GameDetail,
-  GameRankRow,
   GameSummary,
   EnterRoundsRequest,
   InviteRequest,
@@ -55,9 +53,7 @@ import type {
   StandingsResponse,
   StartSeasonRequest,
   UpdateAuctionRequest,
-  UpdateFranchiseRequest,
   UpdateGameRequest,
-  UpdatePlayerRequest,
   UpdateSettingsRequest,
   UsernameView,
 } from "@/lib/api/types";
@@ -88,7 +84,6 @@ export const authApi = {
 export const gamesApi = {
   list: (enabled?: boolean) =>
     api.get<GameSummary[]>("/games", { params: clean({ enabled }) }).then((r) => r.data),
-  get: (id: string) => api.get<GameDetail>(`/games/${id}`).then((r) => r.data),
   update: (id: string, body: UpdateGameRequest) =>
     api.patch<GameDetail>(`/games/${id}`, body).then((r) => r.data),
 };
@@ -113,8 +108,6 @@ export const playersApi = {
     api.get<PlayerMatchView[]>(`/players/${id}/matches`).then((r) => r.data),
   usernames: (id: string) =>
     api.get<UsernameView[]>(`/players/${id}/usernames`).then((r) => r.data),
-  update: (id: string, body: UpdatePlayerRequest) =>
-    api.patch<PlayerDetail>(`/players/${id}`, body).then((r) => r.data),
   updateStatus: (id: string, status: string) =>
     api.patch<PlayerDetail>(`/players/${id}/status`, { status }).then((r) => r.data),
 };
@@ -140,10 +133,6 @@ export const franchisesApi = {
     api.get<FranchiseMatchView[]>(`/franchises/${id}/matches`).then((r) => r.data),
   create: (body: CreateFranchiseRequest) =>
     api.post<FranchiseDetail>("/franchises", body).then((r) => r.data),
-  update: (id: string, body: UpdateFranchiseRequest) =>
-    api.patch<FranchiseDetail>(`/franchises/${id}`, body).then((r) => r.data),
-  assignPlayer: (id: string, playerId: string) =>
-    api.post<RosterMember[]>(`/franchises/${id}/roster`, { playerId }).then((r) => r.data),
   setOwner: (id: string, playerId: string) =>
     api.post<FranchiseDetail>(`/franchises/${id}/owner`, { playerId }).then((r) => r.data),
   setManager: (id: string, playerId: string) =>
@@ -211,8 +200,6 @@ export const matchesApi = {
     api
       .put<MatchLineupView>(`/matches/${id}/lineups/${franchiseId}`, { playerIds })
       .then((r) => r.data),
-  enterResults: (id: string, body: EnterResultsRequest) =>
-    api.post<ResultView[]>(`/matches/${id}/results`, body).then((r) => r.data),
   enterRounds: (id: string, body: EnterRoundsRequest) =>
     api.post<ResultView[]>(`/matches/${id}/rounds`, body).then((r) => r.data),
 };
@@ -225,8 +212,6 @@ export const standingsApi = {
     api
       .get<PlayerRankRow[]>("/leaderboard/players", { params: { limit } })
       .then((r) => r.data),
-  gameRankings: (id: string) =>
-    api.get<GameRankRow[]>(`/leaderboard/games/${id}`).then((r) => r.data),
 };
 
 // ---- announcements ---------------------------------------------------------

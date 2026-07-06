@@ -9,6 +9,15 @@ import axios, {
 import { authTokens } from "@/lib/auth/store";
 import type { AuthResponse } from "@/lib/api/types";
 
+// NEXT_PUBLIC_* is inlined at BUILD time, so this guard runs during `next build` and fails the build
+// (not runtime) when the API URL wasn't provided — far better than shipping a bundle that silently
+// calls http://localhost:8080 from every visitor's browser.
+if (process.env.NODE_ENV === "production" && !process.env.NEXT_PUBLIC_API_URL) {
+  throw new Error(
+    "NEXT_PUBLIC_API_URL must be set for a production build (e.g. https://api.your-domain.com/v1).",
+  );
+}
+
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080/v1";
 

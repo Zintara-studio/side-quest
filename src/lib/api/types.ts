@@ -143,13 +143,6 @@ export interface UsernameView {
   isPublic: boolean;
 }
 
-export interface UpdatePlayerRequest {
-  gamerTag?: string;
-  region?: string;
-  bio?: string;
-  avatarUrl?: string;
-}
-
 // ---- franchises ------------------------------------------------------------
 
 export interface FranchiseSummary {
@@ -210,14 +203,6 @@ export interface FranchiseInviteView {
   status: string; // PENDING | ACCEPTED | REJECTED
   message?: string;
   createdAt: string;
-}
-
-export interface UpdateFranchiseRequest {
-  name?: string;
-  tag?: string;
-  logoUrl?: string;
-  points?: number;
-  active?: boolean;
 }
 
 export interface RosterMember {
@@ -339,10 +324,6 @@ export interface ResultEntry {
   placePts: number;
 }
 
-export interface EnterResultsRequest {
-  rows: ResultEntry[];
-}
-
 // ---- per-round results (every match is scored round-by-round) ----
 
 export interface PlayerStatView {
@@ -425,13 +406,6 @@ export interface PlayerRankRow {
   avatarUrl?: string;
   points: number;
   franchiseTag?: string;
-}
-
-export interface GameRankRow {
-  rank: number;
-  playerId: string;
-  gamerTag: string;
-  rating: number;
 }
 
 // ---- announcements ---------------------------------------------------------

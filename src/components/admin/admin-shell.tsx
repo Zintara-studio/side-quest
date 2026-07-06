@@ -89,14 +89,14 @@ export function AdminShell({ children, fontClass }: { children: ReactNode; fontC
   }, [hydrated, isAdmin, router, pathname]);
 
   const seasonQ = useCurrentSeason();
-  const pendingQ = useRegistrations({ status: "PENDING", limit: 100 });
+  const pendingQ = useRegistrations({ status: "PENDING", limit: 100 }, isAdmin);
   const pendingItems = isAdmin ? pendingQ.data?.items ?? [] : [];
   // Registrations badge = solo + squad only; FRANCHISE proposals are surfaced
   // separately on the Franchises nav item.
   const pendingCount = pendingItems.filter((r) => r.type !== "FRANCHISE").length;
   const franchiseProposalCount = pendingItems.filter((r) => r.type === "FRANCHISE").length;
 
-  const ov = useAdminOverview();
+  const ov = useAdminOverview(isAdmin);
   const openDisputesCount = isAdmin ? ov.data?.openDisputes ?? 0 : 0;
   const resultsToEnterCount = isAdmin ? ov.data?.resultsToEnter ?? 0 : 0;
 

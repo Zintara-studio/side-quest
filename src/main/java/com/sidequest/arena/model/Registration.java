@@ -9,6 +9,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -22,7 +23,11 @@ import java.util.List;
  * season). Moves through the approval queue (PENDING → APPROVED/REJECTED).
  */
 @Entity
-@Table(name = "registrations")
+@Table(name = "registrations", indexes = {
+        @Index(name = "idx_registrations_player", columnList = "player_id"),
+        @Index(name = "idx_registrations_match", columnList = "match_id"),
+        @Index(name = "idx_registrations_type_status", columnList = "type, status")
+})
 @Getter
 @Setter
 @NoArgsConstructor
@@ -40,6 +45,13 @@ public class Registration extends BaseEntity {
     /** Proposed squad/team name for SQUAD registrations (or franchise name for FRANCHISE bids). */
     @Column(name = "squad_name")
     private String squadName;
+
+    /**
+     * Requested franchise tag/abbreviation for a FRANCHISE proposal (e.g. "RXG"). Optional — when blank
+     * the tag is derived from the name at promotion time.
+     */
+    @Column(name = "franchise_tag", length = 16)
+    private String franchiseTag;
 
     /** The FFA match this registration is entering, when the call was tied to a match. Optional. */
     @ManyToOne(fetch = FetchType.LAZY)

@@ -30,7 +30,7 @@ public class NotificationService {
 
     @Transactional(readOnly = true)
     public List<NotificationView> list() {
-        return notifications.findByUserIdOrderByCreatedAtDesc(SecurityUtils.currentUserId())
+        return notifications.findTop100ByUserIdOrderByCreatedAtDesc(SecurityUtils.currentUserId())
                 .stream()
                 .map(NotificationService::toView)
                 .toList();

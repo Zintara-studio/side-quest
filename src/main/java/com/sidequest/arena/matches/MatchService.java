@@ -33,6 +33,7 @@ import com.sidequest.arena.model.Player;
 import com.sidequest.arena.model.Registration;
 import com.sidequest.arena.model.RegistrationStatus;
 import com.sidequest.arena.model.ResultRow;
+import com.sidequest.arena.model.SeasonStatus;
 import com.sidequest.arena.model.TeamInvite;
 import com.sidequest.arena.model.InviteStatus;
 import com.sidequest.arena.repo.FranchiseRepository;
@@ -47,7 +48,9 @@ import com.sidequest.arena.repo.MatchRoundResultRepository;
 import com.sidequest.arena.repo.PlayerRepository;
 import com.sidequest.arena.repo.RegistrationRepository;
 import com.sidequest.arena.repo.ResultRowRepository;
+import com.sidequest.arena.repo.SeasonRepository;
 import com.sidequest.arena.repo.TeamInviteRepository;
+import com.sidequest.arena.announcements.AnnouncementService;
 import com.sidequest.arena.scoring.ScoringService;
 import com.sidequest.arena.security.SecurityUtils;
 import org.springframework.stereotype.Service;
@@ -59,7 +62,9 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * Matches domain: fixture listing/detail, per-match leaderboards, and the admin flows that schedule
@@ -80,9 +85,11 @@ public class MatchService {
     private final MatchRoundResultRepository matchRoundResultRepository;
     private final MatchRoundPlayerResultRepository matchRoundPlayerResultRepository;
     private final LeagueSettingsRepository leagueSettingsRepository;
+    private final SeasonRepository seasonRepository;
     private final RegistrationRepository registrationRepository;
     private final TeamInviteRepository teamInviteRepository;
     private final ScoringService scoringService;
+    private final AnnouncementService announcementService;
     private final AuditService auditService;
 
     public MatchService(MatchRepository matchRepository,
@@ -96,9 +103,11 @@ public class MatchService {
                         MatchRoundResultRepository matchRoundResultRepository,
                         MatchRoundPlayerResultRepository matchRoundPlayerResultRepository,
                         LeagueSettingsRepository leagueSettingsRepository,
+                        SeasonRepository seasonRepository,
                         RegistrationRepository registrationRepository,
                         TeamInviteRepository teamInviteRepository,
                         ScoringService scoringService,
+                        AnnouncementService announcementService,
                         AuditService auditService) {
         this.matchRepository = matchRepository;
         this.gameRepository = gameRepository;
@@ -111,9 +120,11 @@ public class MatchService {
         this.matchRoundResultRepository = matchRoundResultRepository;
         this.matchRoundPlayerResultRepository = matchRoundPlayerResultRepository;
         this.leagueSettingsRepository = leagueSettingsRepository;
+        this.seasonRepository = seasonRepository;
         this.registrationRepository = registrationRepository;
         this.teamInviteRepository = teamInviteRepository;
         this.scoringService = scoringService;
+        this.announcementService = announcementService;
         this.auditService = auditService;
     }
 
@@ -122,7 +133,8 @@ public class MatchService {
      * Picks the repository finder matching the supplied filter combination.
      */
     @Transactional(readOnly = true)
-    public PageResponse<MatchSummary> list(MatchStatus status, UUID gameId, Integer limit, String cursor) {
+    public PageResponse<MatchSummary> list(MatchStatus status, UUID gameId, String q, UUID franchiseId,
+                                           String seasonId, String sort, Integer limit, String cursor) {
         List<Match> matches;
         if (status != null && gameId != null) {
             matches = matchRepository.findByStatusAndGameIdOrderByScheduledAtDesc(status, gameId);
@@ -133,8 +145,79 @@ public class MatchService {
         } else {
             matches = matchRepository.findAllByOrderByScheduledAtDesc();
         }
-        List<MatchSummary> summaries = matches.stream().map(this::toSummary).toList();
+
+        // Optional franchise-participation filter (one query for the franchise's match ids, not per-match).
+        if (franchiseId != null) {
+            Set<UUID> franchiseMatchIds = matchParticipantRepository.findMatchIdsByFranchiseId(franchiseId);
+            matches = matches.stream().filter(m -> franchiseMatchIds.contains(m.getId())).toList();
+        }
+        // Optional season filter — blank / "all" means every season; otherwise an exact season match.
+        if (seasonId != null && !seasonId.isBlank() && !"all".equalsIgnoreCase(seasonId)) {
+            matches = matches.stream()
+                    .filter(m -> seasonId.equalsIgnoreCase(m.getSeasonId()))
+                    .toList();
+        }
+
+        // Batch-load every surviving match's participants in one query, keyed by match id, so neither the
+        // search filter nor the summary mapping issues a query per match.
+        Map<UUID, List<MatchParticipant>> participantsByMatch = matches.isEmpty() ? Map.of()
+                : matchParticipantRepository.findByMatchIdIn(matches.stream().map(Match::getId).toList())
+                        .stream().collect(Collectors.groupingBy(mp -> mp.getMatch().getId()));
+
+        // Optional free-text search over game name, arena, format and participant tags/names.
+        if (q != null && !q.isBlank()) {
+            String needle = q.trim().toLowerCase();
+            matches = matches.stream().filter(m -> matchMatches(m, needle, participantsByMatch)).toList();
+        }
+
+        List<MatchSummary> summaries = new ArrayList<>(
+                matches.stream().map(m -> toSummary(m, participantsByMatch)).toList());
+        summaries.sort(matchComparator(sort));
         return Cursors.paginate(summaries, cursor, limit);
+    }
+
+    /** Whether a fixture matches the free-text needle (game name, arena, format, or participant tag/name). */
+    private boolean matchMatches(Match m, String needle, Map<UUID, List<MatchParticipant>> participantsByMatch) {
+        if (m.getArena() != null && m.getArena().toLowerCase().contains(needle)) {
+            return true;
+        }
+        if (m.getFormat() != null && m.getFormat().toLowerCase().contains(needle)) {
+            return true;
+        }
+        if (m.getGame() != null && m.getGame().getName() != null
+                && m.getGame().getName().toLowerCase().contains(needle)) {
+            return true;
+        }
+        for (MatchParticipant p : participantsByMatch.getOrDefault(m.getId(), List.of())) {
+            Franchise f = p.getFranchise();
+            if (f != null && ((f.getTag() != null && f.getTag().toLowerCase().contains(needle))
+                    || (f.getName() != null && f.getName().toLowerCase().contains(needle)))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Sort comparator over fixtures; defaults to newest scheduled first, with an id tiebreaker. */
+    private static Comparator<MatchSummary> matchComparator(String sort) {
+        Comparator<MatchSummary> byScheduled = Comparator.comparing(MatchSummary::scheduledAt,
+                Comparator.nullsLast(Comparator.naturalOrder()));
+        String s = sort == null ? "" : sort.trim().toLowerCase();
+        Comparator<MatchSummary> base = switch (s) {
+            case "scheduledat" -> byScheduled;
+            case "status" -> Comparator.comparing(ms -> ms.status() == null ? "" : ms.status());
+            case "game" -> Comparator.comparing(ms -> ms.game() == null || ms.game().name() == null
+                    ? "" : ms.game().name(), String.CASE_INSENSITIVE_ORDER);
+            default -> byScheduled.reversed();
+        };
+        return base.thenComparing(MatchSummary::id);
+    }
+
+    /** The code of the currently ACTIVE season, or null when between seasons. */
+    private String activeSeasonCode() {
+        return seasonRepository.findFirstByStatusOrderByStartedAtDesc(SeasonStatus.ACTIVE)
+                .map(com.sidequest.arena.model.Season::getCode)
+                .orElse(null);
     }
 
     /** Returns a fixture with its rosters and whether results have been published. 404 if missing. */
@@ -173,7 +256,10 @@ public class MatchService {
         match.setMatchType(request.matchType() != null ? request.matchType() : MatchType.FRANCHISE);
         match.setArena(request.arena());
         match.setFormat(request.format());
-        match.setSeasonId(request.seasonId());
+        // Tag the fixture with the active season when the caller didn't specify one, so in-season match
+        // lists stay filterable; a genuine off-season fixture stays null and is surfaced by the client's
+        // null-season handling.
+        match.setSeasonId(request.seasonId() != null ? request.seasonId() : activeSeasonCode());
         // Seed scoring weights from the current league defaults; adjustable per match at result entry.
         LeagueSettings defaults = leagueSettingsRepository.findById(LeagueSettings.SINGLETON_ID).orElse(null);
         if (defaults != null) {
@@ -196,6 +282,10 @@ public class MatchService {
         if (request.participantFranchiseIds() != null) {
             for (String franchiseId : request.participantFranchiseIds()) {
                 Franchise franchise = requireFranchise(franchiseId);
+                if (!franchise.isActive()) {
+                    throw ApiException.badRequest("Franchise '" + franchise.getName()
+                            + "' is discarded and can't be added to a fixture");
+                }
                 MatchParticipant participant = new MatchParticipant();
                 participant.setMatch(saved);
                 participant.setFranchise(franchise);
@@ -220,6 +310,10 @@ public class MatchService {
         if (request.status() != null) {
             match.setStatus(request.status());
             changes.add("status=" + request.status());
+            // A finished or cancelled fixture no longer accepts sign-ups — close its registration call.
+            if (request.status() == MatchStatus.COMPLETED || request.status() == MatchStatus.CANCELLED) {
+                announcementService.closeForMatch(match.getId());
+            }
         }
         if (request.arena() != null) {
             match.setArena(request.arena());
@@ -275,6 +369,9 @@ public class MatchService {
         match.setStatus(MatchStatus.COMPLETED);
         match.setResultsPublishedAt(Instant.now());
         matchRepository.save(match);
+
+        // The fixture is over — close any registration call tied to it so its Register button disappears.
+        announcementService.closeForMatch(match.getId());
 
         // Recompute standings and emit realtime updates.
         scoringService.onResultsPublished(match);
@@ -427,6 +524,9 @@ public class MatchService {
         match.setStatus(MatchStatus.COMPLETED);
         match.setResultsPublishedAt(Instant.now());
         matchRepository.save(match);
+
+        // The fixture is over — close any registration call tied to it so its Register button disappears.
+        announcementService.closeForMatch(match.getId());
 
         scoringService.onResultsPublished(match);
         auditService.record("match.rounds.publish", "Match", match.getId().toString(),
@@ -722,8 +822,8 @@ public class MatchService {
 
     // ---- mappers ----
 
-    private MatchSummary toSummary(Match match) {
-        List<String> participantTags = matchParticipantRepository.findByMatchId(match.getId()).stream()
+    private MatchSummary toSummary(Match match, Map<UUID, List<MatchParticipant>> participantsByMatch) {
+        List<String> participantTags = participantsByMatch.getOrDefault(match.getId(), List.of()).stream()
                 .map(MatchParticipant::getFranchise)
                 .filter(f -> f != null)
                 .map(Franchise::getTag)

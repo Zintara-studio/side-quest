@@ -8,6 +8,7 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToOne;
+import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -18,7 +19,10 @@ import lombok.Setter;
  * auction). {@code points} accumulates from match results and drives the player leaderboard.
  */
 @Entity
-@Table(name = "players")
+@Table(name = "players", indexes = {
+        @Index(name = "idx_players_franchise", columnList = "franchise_id"),
+        @Index(name = "idx_players_points", columnList = "points")
+})
 @Getter
 @Setter
 @NoArgsConstructor

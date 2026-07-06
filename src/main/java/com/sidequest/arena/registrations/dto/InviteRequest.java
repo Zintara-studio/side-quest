@@ -1,5 +1,7 @@
 package com.sidequest.arena.registrations.dto;
 
+import jakarta.validation.constraints.Size;
+
 /**
  * Request body for inviting a teammate to a SQUAD registration. Identify the invitee by either their
  * gamer tag (preferred) or player id; at least one must be supplied (validated in the service). An
@@ -12,6 +14,6 @@ package com.sidequest.arena.registrations.dto;
 public record InviteRequest(
         String gamerTag,
         String playerId,
-        String message
+        @Size(max = 500) String message
 ) {
 }

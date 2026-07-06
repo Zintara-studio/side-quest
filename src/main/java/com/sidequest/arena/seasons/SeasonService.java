@@ -1,5 +1,6 @@
 package com.sidequest.arena.seasons;
 
+import com.sidequest.arena.announcements.AnnouncementService;
 import com.sidequest.arena.audit.AuditService;
 import com.sidequest.arena.common.ApiException;
 import com.sidequest.arena.config.CacheConfig;
@@ -48,6 +49,7 @@ public class SeasonService {
     private final PlayerRepository playerRepository;
     private final PlayerFranchiseHistoryRepository playerFranchiseHistoryRepository;
     private final LeagueSettingsRepository leagueSettingsRepository;
+    private final AnnouncementService announcementService;
     private final AuditService auditService;
 
     public SeasonService(SeasonRepository seasonRepository,
@@ -56,6 +58,7 @@ public class SeasonService {
                          PlayerRepository playerRepository,
                          PlayerFranchiseHistoryRepository playerFranchiseHistoryRepository,
                          LeagueSettingsRepository leagueSettingsRepository,
+                         AnnouncementService announcementService,
                          AuditService auditService) {
         this.seasonRepository = seasonRepository;
         this.seasonStandingRepository = seasonStandingRepository;
@@ -63,6 +66,7 @@ public class SeasonService {
         this.playerRepository = playerRepository;
         this.playerFranchiseHistoryRepository = playerFranchiseHistoryRepository;
         this.leagueSettingsRepository = leagueSettingsRepository;
+        this.announcementService = announcementService;
         this.auditService = auditService;
     }
 
@@ -131,6 +135,11 @@ public class SeasonService {
         // count. We still refresh each franchise's name/tag from the live row (freshest) either way.
         boolean seasonActive = activeOrNull() != null;
         for (Franchise f : franchiseRepository.findAll()) {
+            // A discarded franchise still shows through its frozen SeasonStanding snapshots for seasons it
+            // actually competed in, but is not re-injected as a live row in the all-time table.
+            if (!f.isActive()) {
+                continue;
+            }
             String key = f.getId().toString();
             AllTimeAcc acc = byKey.computeIfAbsent(key, k -> new AllTimeAcc());
             if (seasonActive) {
@@ -227,6 +236,10 @@ public class SeasonService {
             f.setRank(0);
         }
         franchiseRepository.saveAll(franchises);
+
+        // Franchise creation is an off-season activity — starting a season closes any open franchise
+        // calls and voids still-pending proposals so they can't linger into the live season.
+        announcementService.closeFranchiseCalls();
 
         auditService.record("season.start", "Season", saved.getCode(), "Started " + saved.getName());
         return toView(saved, saved);

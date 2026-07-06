@@ -791,6 +791,25 @@ public class AuctionService {
     }
 
     /**
+     * Whether the caller may see private scouting detail (player contact + in-game handles): an admin,
+     * or the owner/manager of a franchise participating in this auction. Everyone else authenticated is a
+     * spectator and gets the read-only, contact-stripped board. Never throws.
+     */
+    private boolean callerCanScout(Auction auction) {
+        if (SecurityUtils.isAdmin()) {
+            return true;
+        }
+        UUID uid;
+        try {
+            uid = SecurityUtils.currentUserId();
+        } catch (RuntimeException ex) {
+            return false;
+        }
+        return auctionFranchiseRepository.findByAuctionId(auction.getId()).stream()
+                .anyMatch(af -> ownedOrManagedBy(af.getFranchise(), uid));
+    }
+
+    /**
      * The players that seed the pool: explicit ids, else the distinct standing pool — AUCTION
      * registrations that are ACTIVE, not yet consumed by a prior auction, and whose player is not
      * already on a franchise roster.
@@ -1007,13 +1026,17 @@ public class AuctionService {
             }
         }
 
+        // Spectators (any authenticated non-participant) get a read-only board with private player
+        // contact/handles stripped; participating owners/managers and admins keep full scouting detail.
+        boolean includePrivate = callerCanScout(auction);
+
         List<AuctionFranchiseView> franchiseViews = new ArrayList<>();
         for (AuctionFranchise af : participants) {
             franchiseViews.add(franchiseView(af, acquired.getOrDefault(af.getId(), 0)));
         }
         List<AuctionLotView> lotViews = new ArrayList<>();
         for (AuctionLot lot : lots) {
-            lotViews.add(lotView(lot, auction));
+            lotViews.add(lotView(lot, auction, includePrivate));
         }
         List<AuctionBidView> recentBids = new ArrayList<>();
         for (AuctionBid bid : auctionBidRepository.findTop25ByLot_Auction_IdOrderByCreatedAtDesc(aid)) {
@@ -1034,13 +1057,13 @@ public class AuctionService {
                 auction.getScheduledAt(),
                 Instant.now(),
                 auction.getIntermissionUntil(),
-                current == null ? null : lotView(current, auction),
+                current == null ? null : lotView(current, auction, includePrivate),
                 franchiseViews,
                 lotViews,
                 recentBids);
     }
 
-    private AuctionLotView lotView(AuctionLot lot, Auction auction) {
+    private AuctionLotView lotView(AuctionLot lot, Auction auction, boolean includePrivate) {
         long minNext = lot.getCurrentBidder() == null
                 ? auction.getBasePrice()
                 : lot.getCurrentBid() + smallestIncrement(auction);
@@ -1052,11 +1075,13 @@ public class AuctionService {
         String contact = null;
         if (player != null) {
             UUID pid = player.getId();
-            // handle per game, keyed by game id
+            // handle per game, keyed by game id — private, so only for participants/admins.
             Map<UUID, String> handles = new java.util.HashMap<>();
-            for (PlayerGameUsername u : usernameRepository.findByPlayerId(pid)) {
-                if (u.getGame() != null) {
-                    handles.put(u.getGame().getId(), u.getHandle());
+            if (includePrivate) {
+                for (PlayerGameUsername u : usernameRepository.findByPlayerId(pid)) {
+                    if (u.getGame() != null) {
+                        handles.put(u.getGame().getId(), u.getHandle());
+                    }
                 }
             }
             for (PlayerGameProficiency prof : proficiencyRepository.findByPlayerId(pid)) {
@@ -1066,7 +1091,10 @@ public class AuctionService {
                 expertise.add(new AuctionLotView.Expertise(
                         prof.getGame().getName(),
                         prof.getRating(),
-                        handles.get(prof.getGame().getId())));
+                        handles.get(prof.getGame().getId()),
+                        prof.getRankTier(),
+                        prof.getKd(),
+                        prof.getAccountLevel()));
             }
             // declared games + contact from the player's most recent AUCTION registration
             List<Registration> regs = registrationRepository
@@ -1076,7 +1104,10 @@ public class AuctionService {
                 if (latest.getGames() != null) {
                     games.addAll(latest.getGames());
                 }
-                contact = latest.getContact();
+                // Contact is private — never expose it to spectators.
+                if (includePrivate) {
+                    contact = latest.getContact();
+                }
             }
             if (games.isEmpty()) {
                 for (AuctionLotView.Expertise e : expertise) {
@@ -1156,8 +1187,14 @@ public class AuctionService {
     }
 
     private Franchise requireFranchise(String id) {
-        return franchiseRepository.findById(parseId(id, "Franchise"))
+        Franchise franchise = franchiseRepository.findById(parseId(id, "Franchise"))
                 .orElseThrow(() -> ApiException.notFound("Franchise", id));
+        // A discarded franchise can never be enrolled in an auction (both create and edit route here).
+        if (!franchise.isActive()) {
+            throw ApiException.badRequest(
+                    "Franchise '" + franchise.getName() + "' is discarded and can't take part in an auction");
+        }
+        return franchise;
     }
 
     private Player requirePlayer(String id) {

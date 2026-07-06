@@ -45,16 +45,23 @@ public record AuctionLotView(
 ) {
 
     /**
-     * A player's declared strength in one game.
+     * A player's declared strength in one game. Beyond the self-rating, franchises get objective
+     * scouting signals when the player supplied them.
      *
-     * @param game   game title
-     * @param rating 0–100 self-rated proficiency
-     * @param handle the player's in-game handle for this game (nullable)
+     * @param game         game title
+     * @param rating       0–100 self-rated proficiency
+     * @param handle       the player's in-game handle for this game (nullable; hidden from spectators)
+     * @param rankTier     objective rank/tier label (nullable)
+     * @param kd           self-reported kill/death ratio (nullable)
+     * @param accountLevel self-reported account level (nullable)
      */
     public record Expertise(
             String game,
             int rating,
-            String handle
+            String handle,
+            String rankTier,
+            Double kd,
+            Integer accountLevel
     ) {
     }
 }

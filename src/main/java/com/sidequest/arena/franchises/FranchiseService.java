@@ -412,7 +412,10 @@ public class FranchiseService {
 
         Franchise franchise = new Franchise();
         franchise.setName(name.trim());
-        franchise.setTag(deriveTag(name));
+        // Honour the applicant's requested tag when they supplied one; otherwise derive it from the name.
+        String requestedTag = registration.getFranchiseTag();
+        franchise.setTag(requestedTag != null && !requestedTag.isBlank()
+                ? requestedTag.trim().toUpperCase() : deriveTag(name));
         franchise.setSeasonId(current != null ? current.code() : null);
         franchise.setPoints(0);
         franchise.setRank(0);

@@ -7,6 +7,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import jakarta.persistence.Version;
@@ -22,8 +23,9 @@ import java.time.Instant;
  * {@code soldTo}'s franchise roster. The optimistic {@code version} guards racing bids/finalizes.
  */
 @Entity
-@Table(name = "auction_lots", uniqueConstraints =
-        @UniqueConstraint(name = "uk_auction_player", columnNames = {"auction_id", "player_id"}))
+@Table(name = "auction_lots",
+        uniqueConstraints = @UniqueConstraint(name = "uk_auction_player", columnNames = {"auction_id", "player_id"}),
+        indexes = @Index(name = "idx_auction_lots_auction_status", columnList = "auction_id, status"))
 @Getter
 @Setter
 @NoArgsConstructor

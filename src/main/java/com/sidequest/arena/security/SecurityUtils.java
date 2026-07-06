@@ -35,10 +35,6 @@ public final class SecurityUtils {
         return requirePrincipal().getUserId();
     }
 
-    public static Role currentRole() {
-        return requirePrincipal().getRole();
-    }
-
     public static boolean isAdmin() {
         return currentPrincipal().map(p -> p.getRole() == Role.ADMIN).orElse(false);
     }

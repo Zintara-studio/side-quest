@@ -23,6 +23,8 @@ import java.util.Map;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
     @ExceptionHandler(ApiException.class)
     public ResponseEntity<ApiError> handleApi(ApiException ex, HttpServletRequest req) {
         ApiError body = ApiError.of(ex.getCode(), ex.getMessage(), ex.getDetails(), req.getRequestURI());
@@ -78,8 +80,10 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiError> handleUnexpected(Exception ex, HttpServletRequest req) {
+        // Log the full exception server-side for debugging, but never leak internal types to the client.
+        log.error("Unhandled exception on {} {}", req.getMethod(), req.getRequestURI(), ex);
         ApiError body = ApiError.of(ErrorCode.INTERNAL_ERROR,
-                "An unexpected error occurred", Map.of("type", ex.getClass().getSimpleName()), req.getRequestURI());
+                "An unexpected error occurred", null, req.getRequestURI());
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
     }
 }

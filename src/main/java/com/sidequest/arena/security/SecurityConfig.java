@@ -51,7 +51,8 @@ public class SecurityConfig {
         http
                 .csrf(AbstractHttpConfigurer::disable)
                 .cors(Customizer.withDefaults())
-                .headers(h -> h.frameOptions(f -> f.disable())) // allow H2 console frame in dev
+                // sameOrigin keeps clickjacking protection in prod while still allowing the dev H2 console frame
+                .headers(h -> h.frameOptions(f -> f.sameOrigin()))
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         // --- infra / docs ---
@@ -92,7 +93,8 @@ public class SecurityConfig {
         CorsConfiguration config = new CorsConfiguration();
         List<String> origins = Arrays.stream(allowedOrigins.split(","))
                 .map(String::trim).filter(s -> !s.isEmpty()).toList();
-        if (origins.isEmpty() || origins.contains("*")) {
+        boolean wildcard = origins.isEmpty() || origins.contains("*");
+        if (wildcard) {
             config.addAllowedOriginPattern("*");
         } else {
             config.setAllowedOrigins(origins);
@@ -100,7 +102,9 @@ public class SecurityConfig {
         config.setAllowedMethods(List.of("GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
         config.setExposedHeaders(List.of("Authorization"));
-        config.setAllowCredentials(true);
+        // Never combine a wildcard origin with credentials (unsafe, and browsers reject it). Auth rides
+        // in the Authorization header, so credentialed CORS is only enabled for an explicit allow-list.
+        config.setAllowCredentials(!wildcard);
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", config);
         return source;

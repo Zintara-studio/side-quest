@@ -11,10 +11,13 @@ import com.sidequest.arena.model.Announcement;
 import com.sidequest.arena.model.AnnouncementCategory;
 import com.sidequest.arena.model.Match;
 import com.sidequest.arena.model.RegistrationType;
+import com.sidequest.arena.model.SeasonStatus;
 import com.sidequest.arena.model.User;
+import com.sidequest.arena.registrations.RegistrationService;
 import com.sidequest.arena.repo.AnnouncementRepository;
 import com.sidequest.arena.repo.GameRepository;
 import com.sidequest.arena.repo.MatchRepository;
+import com.sidequest.arena.repo.SeasonRepository;
 import com.sidequest.arena.repo.UserRepository;
 import com.sidequest.arena.security.SecurityUtils;
 import org.springframework.stereotype.Service;
@@ -36,17 +39,23 @@ public class AnnouncementService {
     private final UserRepository userRepository;
     private final GameRepository gameRepository;
     private final MatchRepository matchRepository;
+    private final SeasonRepository seasonRepository;
+    private final RegistrationService registrationService;
     private final AuditService auditService;
 
     public AnnouncementService(AnnouncementRepository announcementRepository,
                                UserRepository userRepository,
                                GameRepository gameRepository,
                                MatchRepository matchRepository,
+                               SeasonRepository seasonRepository,
+                               RegistrationService registrationService,
                                AuditService auditService) {
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
         this.gameRepository = gameRepository;
         this.matchRepository = matchRepository;
+        this.seasonRepository = seasonRepository;
+        this.registrationService = registrationService;
         this.auditService = auditService;
     }
 
@@ -97,6 +106,13 @@ public class AnnouncementService {
         if (req.category() == AnnouncementCategory.RESULT && linkedMatch == null) {
             throw ApiException.badRequest(
                     "A result announcement must link the match it reports");
+        }
+        // Franchise-creation calls belong to the off-season — a season must be finished before a new
+        // franchise call opens. Keyed on the FRANCHISE registration mode (the franchise template uses
+        // category GENERAL), and only when it actually opens sign-ups.
+        if (req.registrationOpen() && req.registrationType() == RegistrationType.FRANCHISE && seasonActive()) {
+            throw ApiException.badRequest(
+                    "Franchise registration calls can only be opened between seasons — finish the current season first");
         }
         announcement.setMatch(linkedMatch);
         announcement.setPublishedAt(req.publishedAt() != null ? req.publishedAt() : Instant.now());
@@ -149,7 +165,60 @@ public class AnnouncementService {
                 announcement.getTitle());
     }
 
+    /**
+     * Admin: close a registration call — stop new sign-ups (the Register button disappears everywhere it
+     * keys on registrationOpen) and void the still-open sign-ups it was collecting. For a match-tied call
+     * the match's open (never-locked) entries are voided; for a franchise call, still-PENDING proposals.
+     */
+    @Transactional
+    public AnnouncementView close(String id) {
+        Announcement a = require(id);
+        if (a.isRegistrationOpen()) {
+            a.setRegistrationOpen(false);
+            announcementRepository.save(a);
+            auditService.record("announcement.close", "Announcement", a.getId().toString(), a.getTitle());
+        }
+        if (a.getMatch() != null) {
+            registrationService.voidOpenForMatch(a.getMatch().getId(), "Registration closed by an admin.");
+        } else if (a.getRegistrationType() == RegistrationType.FRANCHISE) {
+            registrationService.voidPendingFranchiseProposals("Franchise call closed by an admin.");
+        }
+        return toView(a);
+    }
+
+    /**
+     * Close every open registration call linked to a match (its window passed or it finished/cancelled)
+     * so late sign-ups can't arrive. Leaves the frozen roster registrations untouched. No-op when none.
+     */
+    @Transactional
+    public void closeForMatch(UUID matchId) {
+        for (Announcement a : announcementRepository.findByMatchIdAndRegistrationOpenTrue(matchId)) {
+            a.setRegistrationOpen(false);
+            announcementRepository.save(a);
+            auditService.record("announcement.close", "Announcement", a.getId().toString(),
+                    "auto-closed (match finished)");
+        }
+    }
+
+    /** Season start: close every open franchise call and void still-pending franchise proposals. */
+    @Transactional
+    public void closeFranchiseCalls() {
+        for (Announcement a : announcementRepository
+                .findByRegistrationOpenTrueAndRegistrationType(RegistrationType.FRANCHISE)) {
+            a.setRegistrationOpen(false);
+            announcementRepository.save(a);
+            auditService.record("announcement.close", "Announcement", a.getId().toString(),
+                    "auto-closed (season started)");
+        }
+        registrationService.voidPendingFranchiseProposals("A season started — franchise calls are closed.");
+    }
+
     // ---- helpers ----
+
+    /** Whether a season is currently ACTIVE — franchise calls are off-season only. */
+    private boolean seasonActive() {
+        return seasonRepository.findFirstByStatusOrderByStartedAtDesc(SeasonStatus.ACTIVE).isPresent();
+    }
 
     /** Load an announcement by its string id, or throw 404 (an unparseable id can never match). */
     private Announcement require(String id) {

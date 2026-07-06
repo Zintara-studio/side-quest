@@ -57,7 +57,7 @@ public class RegistrationController {
 
     /** Captain invites a teammate to a squad registration (authenticated; captain-only in service). */
     @PostMapping("/{id}/invite")
-    public RegistrationView invite(@PathVariable String id, @RequestBody InviteRequest request) {
+    public RegistrationView invite(@PathVariable String id, @Valid @RequestBody InviteRequest request) {
         return registrationService.invite(id, request);
     }
 

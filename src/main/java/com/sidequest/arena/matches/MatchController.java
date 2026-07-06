@@ -45,14 +45,22 @@ public class MatchController {
         this.matchService = matchService;
     }
 
-    /** Lists fixtures (newest first), optionally filtered by status and/or game, then paginated. */
+    /**
+     * Lists fixtures, optionally filtered by status, game, participating franchise, season, and a
+     * free-text query (game/arena/format/franchise), sorted by {@code sort}
+     * ({@code -scheduledAt} default, {@code scheduledAt}, {@code status}, {@code game}), then paginated.
+     */
     @GetMapping
     public PageResponse<MatchSummary> list(
             @RequestParam(required = false) MatchStatus status,
             @RequestParam(required = false) UUID gameId,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) UUID franchiseId,
+            @RequestParam(required = false) String seasonId,
+            @RequestParam(required = false) String sort,
             @RequestParam(required = false) Integer limit,
             @RequestParam(required = false) String cursor) {
-        return matchService.list(status, gameId, limit, cursor);
+        return matchService.list(status, gameId, q, franchiseId, seasonId, sort, limit, cursor);
     }
 
     /** Returns a single fixture with its rosters. 404 if the match does not exist. */
@@ -91,7 +99,7 @@ public class MatchController {
      */
     @PutMapping("/{id}/lineups/{franchiseId}")
     public MatchLineupView setLineup(@PathVariable String id, @PathVariable String franchiseId,
-                                     @RequestBody SetLineupRequest request) {
+                                     @Valid @RequestBody SetLineupRequest request) {
         return matchService.setLineup(id, franchiseId, request.playerIds());
     }
 

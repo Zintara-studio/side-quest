@@ -64,6 +64,13 @@ public class AnnouncementController {
         return announcementService.update(id, request);
     }
 
+    /** Admin: close a registration call — stops new sign-ups and voids still-open entries. */
+    @PostMapping("/{id}/close")
+    @PreAuthorize("hasRole('ADMIN')")
+    public AnnouncementView close(@PathVariable String id) {
+        return announcementService.close(id);
+    }
+
     /** Admin: delete an announcement. Returns 204 on success, 404 if it does not exist. */
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")

@@ -11,6 +11,7 @@ import java.util.List;
  * @param type       {@link com.sidequest.arena.model.RegistrationType} name
  * @param player     minimal applicant view, or {@code null} if no player is attached
  * @param squadName  proposed squad name (SQUAD applications), nullable
+ * @param franchiseTag requested franchise tag (FRANCHISE proposals), nullable
  * @param games      game titles the applicant registered for
  * @param contact    free-form contact captured at apply time, nullable
  * @param status     {@link com.sidequest.arena.model.RegistrationStatus} name
@@ -30,6 +31,7 @@ public record RegistrationView(
         String type,
         PlayerMini player,
         String squadName,
+        String franchiseTag,
         List<String> games,
         String contact,
         String status,

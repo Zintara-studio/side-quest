@@ -7,6 +7,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -19,7 +20,11 @@ import java.time.Instant;
  * (Match N—N Franchise) and results via {@link ResultRow} (Match 1—N ResultRow).
  */
 @Entity
-@Table(name = "matches")
+@Table(name = "matches", indexes = {
+        @Index(name = "idx_matches_status_scheduled", columnList = "status, scheduled_at"),
+        @Index(name = "idx_matches_game", columnList = "game_id"),
+        @Index(name = "idx_matches_season", columnList = "season_id")
+})
 @Getter
 @Setter
 @NoArgsConstructor

@@ -8,7 +8,8 @@ import java.util.UUID;
 
 public interface NotificationRepository extends JpaRepository<Notification, UUID> {
 
-    List<Notification> findByUserIdOrderByCreatedAtDesc(UUID userId);
+    /** Bounded feed for the notifications page — the table grows unbounded, so never load the whole history. */
+    List<Notification> findTop100ByUserIdOrderByCreatedAtDesc(UUID userId);
 
     List<Notification> findByUserIdAndReadFalse(UUID userId);
 

@@ -31,4 +31,19 @@ public class PlayerGameProficiency extends BaseEntity {
     /** 0–100 self-rated proficiency. */
     @Column(nullable = false)
     private int rating = 50;
+
+    /**
+     * Objective rank/tier for this game (e.g. "Immortal 2", "Conqueror", "Faceit 8"). Free-form so any
+     * title works; driven by a per-game preset on the client. Nullable.
+     */
+    @Column(name = "rank_tier")
+    private String rankTier;
+
+    /** Self-reported kill/death ratio, nullable. */
+    @Column(name = "kd")
+    private Double kd;
+
+    /** Self-reported in-game account level, nullable. */
+    @Column(name = "account_level")
+    private Integer accountLevel;
 }

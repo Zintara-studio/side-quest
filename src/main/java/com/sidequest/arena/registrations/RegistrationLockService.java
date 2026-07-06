@@ -1,5 +1,6 @@
 package com.sidequest.arena.registrations;
 
+import com.sidequest.arena.announcements.AnnouncementService;
 import com.sidequest.arena.model.Match;
 import com.sidequest.arena.repo.MatchRepository;
 import org.slf4j.Logger;
@@ -22,11 +23,14 @@ public class RegistrationLockService {
 
     private final MatchRepository matchRepository;
     private final RegistrationService registrationService;
+    private final AnnouncementService announcementService;
 
     public RegistrationLockService(MatchRepository matchRepository,
-                                   RegistrationService registrationService) {
+                                   RegistrationService registrationService,
+                                   AnnouncementService announcementService) {
         this.matchRepository = matchRepository;
         this.registrationService = registrationService;
+        this.announcementService = announcementService;
     }
 
     @Scheduled(fixedDelay = 60_000)
@@ -43,6 +47,9 @@ public class RegistrationLockService {
                     if (locked > 0) {
                         log.info("Locked {} registration(s) for match {}", locked, match.getId());
                     }
+                    // Once the window passes, close the linked registration call so its Register button
+                    // disappears (idempotent — a no-op once already closed).
+                    announcementService.closeForMatch(match.getId());
                 }
             }
         } catch (Exception ex) {

@@ -62,7 +62,7 @@ public class AuctionController {
     @PatchMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public AuctionView update(@PathVariable String id,
-                             @RequestBody com.sidequest.arena.auctions.dto.UpdateAuctionRequest request) {
+                             @Valid @RequestBody com.sidequest.arena.auctions.dto.UpdateAuctionRequest request) {
         return auctionService.updateConfig(id, request);
     }
 
@@ -73,9 +73,14 @@ public class AuctionController {
         return auctionService.openHall(id);
     }
 
-    /** Mark the caller's participating franchise present in the hall (admin/franchise owner/manager). */
+    /**
+     * Mark the caller's participating franchise present in the hall. Authorization is enforced in the
+     * service against the live franchise ownership/management relationship (not the JWT role claim, which
+     * can lag a mid-session manager promotion), so any authenticated user may reach it and non-leaders
+     * get a clear 403.
+     */
     @PostMapping("/{id}/join")
-    @PreAuthorize("hasAnyRole('ADMIN','FRANCHISE_OWNER','FRANCHISE_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public AuctionView join(@PathVariable String id) {
         return auctionService.join(id);
     }
@@ -159,9 +164,13 @@ public class AuctionController {
 
     // ---- bidding (participating owner/manager) ----
 
-    /** Place a bid on the lot on the block (admin/franchise owner/manager). */
+    /**
+     * Place a bid on the lot on the block. Like join, authorization is enforced in the service against
+     * the live participating-franchise ownership/management relationship, so a freshly-promoted manager
+     * whose token still says PLAYER can still bid and non-leaders get a clear 403.
+     */
     @PostMapping("/{id}/bid")
-    @PreAuthorize("hasAnyRole('ADMIN','FRANCHISE_OWNER','FRANCHISE_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public AuctionView bid(@PathVariable String id, @Valid @RequestBody PlaceBidRequest request) {
         return auctionService.placeBid(id, request);
     }

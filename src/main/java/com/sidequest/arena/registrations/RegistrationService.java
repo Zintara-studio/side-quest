@@ -17,6 +17,7 @@ import com.sidequest.arena.model.Registration;
 import com.sidequest.arena.model.RegistrationStatus;
 import com.sidequest.arena.model.RegistrationType;
 import com.sidequest.arena.model.Role;
+import com.sidequest.arena.model.SeasonStatus;
 import com.sidequest.arena.model.TeamInvite;
 import com.sidequest.arena.model.User;
 import com.sidequest.arena.notifications.NotificationService;
@@ -33,6 +34,7 @@ import com.sidequest.arena.repo.PlayerGameProficiencyRepository;
 import com.sidequest.arena.repo.PlayerGameUsernameRepository;
 import com.sidequest.arena.repo.PlayerRepository;
 import com.sidequest.arena.repo.RegistrationRepository;
+import com.sidequest.arena.repo.SeasonRepository;
 import com.sidequest.arena.repo.TeamInviteRepository;
 import com.sidequest.arena.repo.UserRepository;
 import com.sidequest.arena.security.SecurityUtils;
@@ -68,6 +70,7 @@ public class RegistrationService {
     private final PlayerGameProficiencyRepository proficiencyRepository;
     private final PlayerGameUsernameRepository usernameRepository;
     private final LeagueSettingsRepository leagueSettingsRepository;
+    private final SeasonRepository seasonRepository;
     private final RealtimeService realtimeService;
     private final NotificationService notificationService;
     private final AuditService auditService;
@@ -81,6 +84,7 @@ public class RegistrationService {
                                PlayerGameProficiencyRepository proficiencyRepository,
                                PlayerGameUsernameRepository usernameRepository,
                                LeagueSettingsRepository leagueSettingsRepository,
+                               SeasonRepository seasonRepository,
                                RealtimeService realtimeService,
                                NotificationService notificationService,
                                AuditService auditService) {
@@ -93,9 +97,15 @@ public class RegistrationService {
         this.proficiencyRepository = proficiencyRepository;
         this.usernameRepository = usernameRepository;
         this.leagueSettingsRepository = leagueSettingsRepository;
+        this.seasonRepository = seasonRepository;
         this.realtimeService = realtimeService;
         this.notificationService = notificationService;
         this.auditService = auditService;
+    }
+
+    /** Whether a season is currently ACTIVE — franchise proposals are only accepted between seasons. */
+    private boolean seasonActive() {
+        return seasonRepository.findFirstByStatusOrderByStartedAtDesc(SeasonStatus.ACTIVE).isPresent();
     }
 
     /**
@@ -135,12 +145,36 @@ public class RegistrationService {
             throw ApiException.badRequest(
                     "You're already on a franchise — franchise members can't enter the auction.");
         }
+        // Franchise proposals may only be submitted between seasons — mirror the promotion gate at the
+        // submission boundary so proposals can't pile up mid-season.
+        if (request.type() == RegistrationType.FRANCHISE && seasonActive()) {
+            throw ApiException.badRequest(
+                    "Franchise proposals can only be submitted between seasons — a season is currently active.");
+        }
+        // A player can only sit in the auction pool once: block a duplicate live, unconsumed entry.
+        if (request.type() == RegistrationType.AUCTION) {
+            boolean alreadyPooled = registrationRepository.findByPlayerId(player.getId()).stream()
+                    .anyMatch(r -> r.getType() == RegistrationType.AUCTION
+                            && r.getStatus() == RegistrationStatus.ACTIVE && !r.isConsumed());
+            if (alreadyPooled) {
+                throw ApiException.conflict("You're already in the auction pool.");
+            }
+        }
+        // Every non-franchise entry needs at least one game (franchise proposals carry no games).
+        if (request.type() != RegistrationType.FRANCHISE
+                && (request.games() == null || request.games().isEmpty())) {
+            throw ApiException.badRequest("Select at least one game for this registration");
+        }
 
         Registration registration = new Registration();
         registration.setType(request.type());
         registration.setPlayer(player);
         registration.setSquadName(request.squadName());
-        registration.setGames(new ArrayList<>(request.games()));
+        if (request.type() == RegistrationType.FRANCHISE) {
+            registration.setFranchiseTag(normalizeTag(request.franchiseTag()));
+        }
+        registration.setGames(request.games() == null
+                ? new ArrayList<>() : new ArrayList<>(request.games()));
         registration.setContact(request.contact());
         if (request.type() == RegistrationType.SQUAD) {
             registration.setTeamSize(request.teamSize());
@@ -260,6 +294,16 @@ public class RegistrationService {
                         return created;
                     });
             prof.setRating(rating);
+            // Optional objective signals — only overwrite when supplied so a re-submit can't wipe them.
+            if (entry.rankTier() != null && !entry.rankTier().isBlank()) {
+                prof.setRankTier(entry.rankTier().trim());
+            }
+            if (entry.kd() != null) {
+                prof.setKd(Math.max(0, entry.kd()));
+            }
+            if (entry.accountLevel() != null) {
+                prof.setAccountLevel(Math.max(0, entry.accountLevel()));
+            }
             proficiencyRepository.save(prof);
 
             if (entry.handle() != null && !entry.handle().isBlank()) {
@@ -651,6 +695,36 @@ public class RegistrationService {
         return locked;
     }
 
+    /**
+     * Void the still-open (never-locked) registrations tied to a match — used when its registration call
+     * is closed. LOCKED entries are left intact (they're the frozen roster of a played fixture).
+     */
+    @Transactional
+    public void voidOpenForMatch(UUID matchId, String reason) {
+        for (Registration reg : registrationRepository.findByMatchId(matchId)) {
+            if (reg.getStatus() == RegistrationStatus.FORMING
+                    || reg.getStatus() == RegistrationStatus.ACTIVE) {
+                voidRegistration(reg, reason);
+            }
+        }
+    }
+
+    /** Void every still-PENDING franchise proposal — used when a season starts / a franchise call closes. */
+    @Transactional
+    public void voidPendingFranchiseProposals(String reason) {
+        for (Registration reg : registrationRepository
+                .findByStatusAndTypeOrderByCreatedAtDesc(RegistrationStatus.PENDING, RegistrationType.FRANCHISE)) {
+            voidRegistration(reg, reason);
+            Player player = reg.getPlayer();
+            if (player != null && player.getUser() != null) {
+                notificationService.create(player.getUser(), NotificationType.REGISTRATION,
+                        "Franchise call closed",
+                        "Your " + describe(reg) + " proposal was closed: " + reason,
+                        "/my/registrations");
+            }
+        }
+    }
+
     private User currentReviewer() {
         UUID userId = SecurityUtils.currentUserId();
         return userRepository.findById(userId)
@@ -673,6 +747,18 @@ public class RegistrationService {
 
     private static String nullSafe(String s) {
         return s == null ? "" : s;
+    }
+
+    /** Normalize a requested franchise tag: uppercase, strip non-alphanumerics, cap at 16; null when blank. */
+    private static String normalizeTag(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String cleaned = raw.trim().toUpperCase().replaceAll("[^A-Z0-9]", "");
+        if (cleaned.isEmpty()) {
+            return null;
+        }
+        return cleaned.length() > 16 ? cleaned.substring(0, 16) : cleaned;
     }
 
     private static UUID parseId(String id, String resource) {
@@ -728,6 +814,7 @@ public class RegistrationService {
                 registration.getType().name(),
                 playerMini,
                 registration.getSquadName(),
+                registration.getFranchiseTag(),
                 List.copyOf(registration.getGames()),
                 registration.getContact(),
                 registration.getStatus().name(),

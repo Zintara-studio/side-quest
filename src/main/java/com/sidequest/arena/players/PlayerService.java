@@ -25,6 +25,7 @@ import com.sidequest.arena.repo.MatchParticipantRepository;
 import com.sidequest.arena.repo.PlayerGameProficiencyRepository;
 import com.sidequest.arena.repo.PlayerGameUsernameRepository;
 import com.sidequest.arena.repo.PlayerRepository;
+import com.sidequest.arena.repo.RefreshTokenRepository;
 import com.sidequest.arena.repo.ResultRowRepository;
 import com.sidequest.arena.config.CacheConfig;
 import com.sidequest.arena.security.SecurityUtils;
@@ -55,6 +56,7 @@ public class PlayerService {
     private final PlayerGameProficiencyRepository playerGameProficiencyRepository;
     private final AuditService auditService;
     private final NotificationService notificationService;
+    private final RefreshTokenRepository refreshTokenRepository;
 
     public PlayerService(PlayerRepository playerRepository,
                          FranchiseRepository franchiseRepository,
@@ -63,7 +65,8 @@ public class PlayerService {
                          PlayerGameUsernameRepository playerGameUsernameRepository,
                          PlayerGameProficiencyRepository playerGameProficiencyRepository,
                          AuditService auditService,
-                         NotificationService notificationService) {
+                         NotificationService notificationService,
+                         RefreshTokenRepository refreshTokenRepository) {
         this.playerRepository = playerRepository;
         this.franchiseRepository = franchiseRepository;
         this.matchParticipantRepository = matchParticipantRepository;
@@ -72,6 +75,7 @@ public class PlayerService {
         this.playerGameProficiencyRepository = playerGameProficiencyRepository;
         this.auditService = auditService;
         this.notificationService = notificationService;
+        this.refreshTokenRepository = refreshTokenRepository;
     }
 
     /**
@@ -213,6 +217,12 @@ public class PlayerService {
         auditService.record("player.status", "Player", id.toString(),
                 "Set " + saved.getGamerTag() + " to " + request.status());
 
+        // A suspension must take effect immediately: revoke all refresh tokens so the user cannot renew
+        // their session (their current short-lived access token still expires on its own).
+        if (request.status() == PlayerStatus.SUSPENDED && saved.getUser() != null) {
+            refreshTokenRepository.revokeAllForUser(saved.getUser().getId());
+        }
+
         // Notify the player whose standing changed (skip no-op updates).
         if (previous != request.status() && saved.getUser() != null) {
             notificationService.create(saved.getUser(), NotificationType.GENERAL,
@@ -292,6 +302,9 @@ public class PlayerService {
         return new PlayerDetail.ProficiencyView(
                 prof.getGame().getId().toString(),
                 prof.getGame().getName(),
-                prof.getRating());
+                prof.getRating(),
+                prof.getRankTier(),
+                prof.getKd(),
+                prof.getAccountLevel());
     }
 }

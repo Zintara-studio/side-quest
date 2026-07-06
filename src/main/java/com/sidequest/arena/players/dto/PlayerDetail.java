@@ -38,7 +38,8 @@ public record PlayerDetail(
     public record FranchiseMini(String id, String name, String tag) {
     }
 
-    /** A player's self-rated proficiency for one game. */
-    public record ProficiencyView(String gameId, String gameName, int rating) {
+    /** A player's self-rated proficiency for one game, plus optional objective signals. */
+    public record ProficiencyView(String gameId, String gameName, int rating,
+                                  String rankTier, Double kd, Integer accountLevel) {
     }
 }

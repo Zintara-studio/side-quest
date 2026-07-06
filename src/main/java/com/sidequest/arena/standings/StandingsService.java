@@ -2,6 +2,7 @@ package com.sidequest.arena.standings;
 
 import com.sidequest.arena.common.ApiException;
 import com.sidequest.arena.common.Cursors;
+import org.springframework.data.domain.PageRequest;
 import com.sidequest.arena.model.Franchise;
 import com.sidequest.arena.model.Game;
 import com.sidequest.arena.model.LeagueSettings;
@@ -60,7 +61,10 @@ public class StandingsService {
     @Cacheable(CacheConfig.STANDINGS)
     @Transactional(readOnly = true)
     public StandingsResponse standings() {
-        List<Franchise> franchises = franchiseRepository.findAllByOrderByPointsDescNameAsc();
+        // Discarded franchises drop out of the live league table (and the Home leaderboard it feeds).
+        List<Franchise> franchises = franchiseRepository.findAllByOrderByPointsDescNameAsc().stream()
+                .filter(Franchise::isActive)
+                .toList();
 
         String season = franchises.isEmpty() ? currentSeasonCode() : franchises.get(0).getSeasonId();
         if (season == null) {
@@ -90,7 +94,9 @@ public class StandingsService {
     @Transactional(readOnly = true)
     public List<PlayerRankRow> topPlayers(Integer limit) {
         int cap = Cursors.clampLimit(limit);
-        List<Player> players = playerRepository.findAllByOrderByPointsDesc();
+        // Fetch only the top-N (franchise eager-loaded) instead of materialising the whole players table
+        // and lazy-loading each franchise on every cache miss.
+        List<Player> players = playerRepository.findAllByOrderByPointsDesc(PageRequest.of(0, cap));
 
         List<PlayerRankRow> rows = new ArrayList<>();
         int rank = 1;

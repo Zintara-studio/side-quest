@@ -75,6 +75,7 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.time.Instant;
@@ -95,6 +96,7 @@ import java.util.List;
  * </ul>
  */
 @Configuration
+@Profile("dev") // belt-and-braces: demo seed data (incl. known-password accounts) can never load outside dev
 @ConditionalOnProperty(name = "sidequest.seed.enabled", havingValue = "true")
 public class DataSeeder {
 

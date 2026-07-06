@@ -15,6 +15,9 @@ RUN mvn -B -q -DskipTests clean package
 # ---------- runtime stage ----------
 FROM eclipse-temurin:21-jre
 
+# curl is required by the container HEALTHCHECK below (the temurin JRE image ships neither curl nor wget).
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
 # Hugging Face Spaces run containers as uid 1000. Use a workdir owned by that uid (the base image
 # already reserves uid 1000, so we don't create a user — just run as it).
 WORKDIR /app
@@ -32,6 +35,6 @@ USER 1000
 
 # Container-friendly health check hits the actuator endpoint (under the /v1 context path).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
-    CMD wget -qO- http://localhost:8080/v1/actuator/health || exit 1
+    CMD curl -fsS http://localhost:8080/v1/actuator/health || exit 1
 
 ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]

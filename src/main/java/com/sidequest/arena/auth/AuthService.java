@@ -94,6 +94,7 @@ public class AuthService {
             throw new ApiException(ErrorCode.INVALID_CREDENTIALS, "Invalid credentials");
         }
 
+        ensureNotSuspended(user);
         return issueTokens(user);
     }
 
@@ -107,6 +108,8 @@ public class AuthService {
         if (token.isRevoked() || token.getExpiresAt().isBefore(Instant.now())) {
             throw new ApiException(ErrorCode.TOKEN_INVALID, "Refresh token is invalid");
         }
+
+        ensureNotSuspended(token.getUser());
 
         // Rotate: revoke the presented token before minting a replacement.
         token.setRevoked(true);
@@ -160,6 +163,15 @@ public class AuthService {
     }
 
     // ---- helpers ----
+
+    /** Blocks a suspended player from acquiring or renewing a session. */
+    private void ensureNotSuspended(User user) {
+        playerRepository.findByUserId(user.getId())
+                .filter(player -> player.getStatus() == PlayerStatus.SUSPENDED)
+                .ifPresent(player -> {
+                    throw new ApiException(ErrorCode.FORBIDDEN, "This account has been suspended");
+                });
+    }
 
     /**
      * Mints a new access token and a new (persisted) rotating refresh token for the given user,

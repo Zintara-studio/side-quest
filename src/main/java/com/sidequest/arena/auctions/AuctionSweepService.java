@@ -21,14 +21,27 @@ public class AuctionSweepService {
         this.auctionService = auctionService;
     }
 
+    /** Advance any LIVE auction — needs ~1s resolution to honour bid-timer deadlines. */
     @Scheduled(fixedDelay = 1000)
     public void sweep() {
         try {
-            // Keep DRAFT/LOBBY pools growing as players register, then advance any LIVE auction.
-            auctionService.syncOpenPools();
             auctionService.finalizeExpiredLots();
         } catch (Exception ex) {
             log.warn("Auction sweep failed", ex);
+        }
+    }
+
+    /**
+     * Keep DRAFT/LOBBY pools growing as players register. This does not need per-second resolution — a
+     * newly-registered player appearing in the pool within ~10s is fine — so it runs on its own slower
+     * clock to keep the hot per-second sweep cheap.
+     */
+    @Scheduled(fixedDelay = 10_000)
+    public void syncPools() {
+        try {
+            auctionService.syncOpenPools();
+        } catch (Exception ex) {
+            log.warn("Auction pool sync failed", ex);
         }
     }
 }

@@ -4,6 +4,7 @@ import com.sidequest.arena.model.Role;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Service;
 
 import javax.crypto.SecretKey;
@@ -20,12 +21,22 @@ import java.util.UUID;
 @Service
 public class JwtService {
 
+    /** The committed dev-only secret; rejected outside the dev profile so prod can't silently use it. */
+    private static final String DEV_DEFAULT_SECRET =
+            "change-me-in-prod-this-is-a-very-long-dev-only-secret-key-0123456789";
+
     private final JwtProperties props;
     private final SecretKey key;
 
-    public JwtService(JwtProperties props) {
+    public JwtService(JwtProperties props, Environment env) {
+        String secret = props.getSecret();
+        boolean devProfile = java.util.Arrays.asList(env.getActiveProfiles()).contains("dev");
+        if (!devProfile && (secret == null || secret.isBlank() || DEV_DEFAULT_SECRET.equals(secret))) {
+            throw new IllegalStateException(
+                    "SIDEQUEST_JWT_SECRET must be set to a strong, non-default secret when not running the dev profile");
+        }
         this.props = props;
-        this.key = Keys.hmacShaKeyFor(props.getSecret().getBytes(StandardCharsets.UTF_8));
+        this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 
     public String generateAccessToken(UUID userId, String email, Role role) {

@@ -201,7 +201,13 @@ const socialBtn = {
 export function SocialRow() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <button type="button" style={socialBtn}>
+      <button 
+        type="button" 
+        style={socialBtn}
+        onClick={() => {
+          window.location.href = "/api/auth/google";
+        }}
+      >
         Continue with Google
       </button>
       <button type="button" style={socialBtn}>

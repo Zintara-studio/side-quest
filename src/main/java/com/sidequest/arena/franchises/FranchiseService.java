@@ -310,6 +310,15 @@ public class FranchiseService {
         }
     }
 
+    /** Tell a released owner/manager their franchise role has ended (they're a free agent again). */
+    private void notifyReleased(Player player, Franchise franchise) {
+        if (player.getUser() != null) {
+            notificationService.create(player.getUser(), NotificationType.GENERAL,
+                    "Franchise role ended",
+                    "You are no longer part of " + franchise.getName() + ".", "/my/franchise");
+        }
+    }
+
     /**
      * Admin: discard (deactivate) a franchise so it no longer competes; history is preserved. Only
      * allowed between seasons — a franchise cannot be pulled out mid-season. A discarded franchise can
@@ -323,10 +332,29 @@ public class FranchiseService {
             throw ApiException.badRequest(
                     "A franchise can't be discarded during an active season — finish the season first");
         }
+        // Discarding releases the entire roster: owner and manager become unassigned free agents again
+        // (platform role dropped back to PLAYER), and any remaining players are detached too.
+        Player owner = franchise.getOwnerPlayer();
+        Player manager = franchise.getManagerPlayer();
+        franchise.setOwnerPlayer(null);
+        franchise.setManagerPlayer(null);
+        List<Player> roster = playerRepository.findByFranchiseId(franchise.getId());
+        for (Player p : roster) {
+            p.setFranchise(null);
+        }
+        playerRepository.saveAll(roster);
+        if (owner != null) {
+            demoteRole(owner);
+            notifyReleased(owner, franchise);
+        }
+        if (manager != null && (owner == null || !manager.getId().equals(owner.getId()))) {
+            demoteRole(manager);
+            notifyReleased(manager, franchise);
+        }
         franchise.setActive(false);
         Franchise saved = franchiseRepository.save(franchise);
         auditService.record("franchise.discard", "Franchise", saved.getId().toString(),
-                "Discarded " + saved.getName());
+                "Discarded " + saved.getName() + " and released its roster");
         return toDetail(saved);
     }
 
@@ -353,6 +381,10 @@ public class FranchiseService {
     @CacheEvict(cacheNames = {CacheConfig.FRANCHISES, CacheConfig.PLAYERS}, allEntries = true)
     @Transactional
     public FranchiseDetail createFromProposal(UUID registrationId) {
+        if (seasonService.current() != null) {
+            throw ApiException.badRequest(
+                    "Franchises can only be created between seasons — finish the current season first");
+        }
         Registration registration = registrationRepository.findById(registrationId)
                 .orElseThrow(() -> ApiException.notFound("Registration", registrationId));
         if (registration.getType() != RegistrationType.FRANCHISE) {

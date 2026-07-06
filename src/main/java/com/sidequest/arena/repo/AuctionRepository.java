@@ -13,6 +13,8 @@ public interface AuctionRepository extends JpaRepository<Auction, UUID> {
 
     List<Auction> findByStatus(AuctionStatus status);
 
+    List<Auction> findByStatusIn(Collection<AuctionStatus> statuses);
+
     /** The single "active" auction — most recent DRAFT/PAUSED/LIVE. */
     Optional<Auction> findFirstByStatusInOrderByCreatedAtDesc(Collection<AuctionStatus> statuses);
 }

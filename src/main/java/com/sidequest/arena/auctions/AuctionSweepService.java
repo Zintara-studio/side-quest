@@ -24,6 +24,8 @@ public class AuctionSweepService {
     @Scheduled(fixedDelay = 1000)
     public void sweep() {
         try {
+            // Keep DRAFT/LOBBY pools growing as players register, then advance any LIVE auction.
+            auctionService.syncOpenPools();
             auctionService.finalizeExpiredLots();
         } catch (Exception ex) {
             log.warn("Auction sweep failed", ex);

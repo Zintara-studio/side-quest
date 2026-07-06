@@ -17,6 +17,7 @@ import java.util.List;
  * @param soldToFranchiseId        real franchise id of the winner once SOLD (nullable)
  * @param soldToTag                winner's franchise tag once SOLD (nullable)
  * @param soldPrice                final hammer price once SOLD (0 otherwise)
+ * @param bidOpensAt               when bidding opens after the review window (nullable; past = open now)
  * @param bidDeadline              when the on-block countdown expires (nullable when not on the block)
  * @param lotOrder                 position in the auction queue
  * @param games                    game titles the player declared (for scouting)
@@ -35,6 +36,7 @@ public record AuctionLotView(
         String soldToFranchiseId,
         String soldToTag,
         long soldPrice,
+        Instant bidOpensAt,
         Instant bidDeadline,
         int lotOrder,
         List<String> games,

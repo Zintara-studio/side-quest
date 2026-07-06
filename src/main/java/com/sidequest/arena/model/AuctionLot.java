@@ -59,6 +59,13 @@ public class AuctionLot extends BaseEntity {
     @Column(name = "sold_price", nullable = false)
     private long soldPrice = 0;
 
+    /**
+     * When bidding opens on this lot — the "review window" after nomination during which franchises can
+     * study the player but can't bid yet. {@code null} when not on the block or the window has passed.
+     */
+    @Column(name = "bid_opens_at")
+    private Instant bidOpensAt;
+
     /** When the current on-block countdown expires; {@code null} when not on the block. */
     @Column(name = "bid_deadline")
     private Instant bidDeadline;

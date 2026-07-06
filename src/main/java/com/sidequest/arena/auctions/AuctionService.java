@@ -168,7 +168,7 @@ public class AuctionService {
             for (AuctionFranchise af : auctionFranchiseRepository.findByAuctionId(saved.getId())) {
                 notifyLeadership(af.getFranchise(), "Auction scheduled",
                         saved.getTitle() + " is scheduled for " + saved.getScheduledAt() + ".",
-                        "/auctions/" + saved.getId());
+                        "/my/franchise/auction");
             }
         }
 
@@ -207,7 +207,7 @@ public class AuctionService {
             for (AuctionFranchise af : auctionFranchiseRepository.findByAuctionId(auction.getId())) {
                 notifyLeadership(af.getFranchise(), "Auction hall is open",
                         "The hall for " + auction.getTitle() + " is open — join before bidding starts.",
-                        "/auctions/" + auction.getId());
+                        "/my/franchise/auction");
             }
             return publishAndView(auction);
         } finally {
@@ -251,7 +251,7 @@ public class AuctionService {
                 notifyLeadership(af.getFranchise(), "Auction rescheduled",
                         auction.getTitle() + " is now scheduled for "
                                 + (scheduledAt == null ? "an unspecified time" : scheduledAt) + ".",
-                        "/auctions/" + auction.getId());
+                        "/my/franchise/auction");
             }
             return publishAndView(auction);
         } finally {
@@ -451,6 +451,10 @@ public class AuctionService {
             }
             if (!lot.getId().toString().equals(req.lotId())) {
                 throw ApiException.conflict("That player is no longer on the block");
+            }
+            if (lot.getBidOpensAt() != null && Instant.now().isBefore(lot.getBidOpensAt())) {
+                long secs = java.time.Duration.between(Instant.now(), lot.getBidOpensAt()).toSeconds() + 1;
+                throw ApiException.badRequest("Bidding opens in " + secs + "s — review the player first");
             }
 
             AuctionFranchise bidder = callerFranchise(auction.getId());
@@ -747,7 +751,11 @@ public class AuctionService {
         lot.setStatus(AuctionLotStatus.ON_BLOCK);
         lot.setCurrentBid(0);
         lot.setCurrentBidder(null);
-        lot.setBidDeadline(Instant.now().plusSeconds(auction.getBidTimerSeconds()));
+        // A short review window opens first (franchises study the player), then the bid timer runs.
+        int review = Math.max(0, auction.getAntiSnipeSeconds());
+        Instant opens = Instant.now().plusSeconds(review);
+        lot.setBidOpensAt(review > 0 ? opens : null);
+        lot.setBidDeadline(opens.plusSeconds(auction.getBidTimerSeconds()));
         auctionLotRepository.save(lot);
         if (auction.getIntermissionUntil() != null) {
             auction.setIntermissionUntil(null);
@@ -829,11 +837,63 @@ public class AuctionService {
     }
 
     /**
+     * Keep DRAFT/LOBBY auctions' pools in sync with the standing registration pool: any ACTIVE,
+     * unconsumed, un-rostered AUCTION registrant that isn't already a lot is appended as a QUEUED lot.
+     * This makes the pool a continuous list — players who sign up (through ANY auction call) after the
+     * auction was created still get added, right up until it goes LIVE. Called every second by the sweep.
+     */
+    @Transactional
+    public void syncOpenPools() {
+        List<Auction> open = auctionRepository.findByStatusIn(
+                List.of(AuctionStatus.DRAFT, AuctionStatus.LOBBY));
+        for (Auction auction : open) {
+            ReentrantLock lock = lockFor(auction.getId());
+            if (!lock.tryLock()) {
+                continue;
+            }
+            try {
+                Set<UUID> present = new HashSet<>();
+                int nextOrder = 0;
+                for (AuctionLot l : auctionLotRepository
+                        .findByAuctionIdOrderByLotOrderAsc(auction.getId())) {
+                    if (l.getPlayer() != null) {
+                        present.add(l.getPlayer().getId());
+                    }
+                    nextOrder = Math.max(nextOrder, l.getLotOrder() + 1);
+                }
+                Map<UUID, Player> toAdd = new LinkedHashMap<>();
+                for (Registration reg : registrationRepository
+                        .findByTypeAndStatus(RegistrationType.AUCTION, RegistrationStatus.ACTIVE)) {
+                    if (reg.isConsumed()) {
+                        continue;
+                    }
+                    Player p = reg.getPlayer();
+                    if (p == null || p.getFranchise() != null || present.contains(p.getId())) {
+                        continue;
+                    }
+                    toAdd.putIfAbsent(p.getId(), p);
+                }
+                for (Player p : toAdd.values()) {
+                    AuctionLot lot = new AuctionLot();
+                    lot.setAuction(auction);
+                    lot.setPlayer(p);
+                    lot.setStatus(AuctionLotStatus.QUEUED);
+                    lot.setCurrentBid(0);
+                    lot.setLotOrder(nextOrder++);
+                    auctionLotRepository.save(lot);
+                }
+            } finally {
+                lock.unlock();
+            }
+        }
+    }
+
+    /**
      * Send ONE end-of-auction summary to each participating franchise's leadership: what they won and
      * what they spent, or that they signed no one.
      */
     private void notifyAuctionSummary(Auction auction) {
-        String link = "/auctions/" + auction.getId();
+        String link = "/my/franchise/auction";
         for (AuctionFranchise af : auctionFranchiseRepository.findByAuctionId(auction.getId())) {
             List<String> won = new ArrayList<>();
             long spent = 0;
@@ -1036,6 +1096,7 @@ public class AuctionService {
                 soldTo == null ? null : soldTo.getId().toString(),
                 soldTo == null ? null : soldTo.getTag(),
                 lot.getSoldPrice(),
+                lot.getBidOpensAt(),
                 lot.getBidDeadline(),
                 lot.getLotOrder(),
                 games,

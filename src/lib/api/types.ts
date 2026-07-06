@@ -694,6 +694,12 @@ export interface AuctionLotView {
   soldPrice: number;
   /** When the current bid timer expires (server-authoritative). */
   bidDeadline?: string;
+  /**
+   * When bidding opens (server-authoritative). During the short review window after a lot is
+   * nominated, franchises can study the player but cannot bid until this instant passes. Null when
+   * there's no review window or it has already opened.
+   */
+  bidOpensAt: string | null;
   lotOrder: number;
   /** Games this player registered for the auction with. */
   games: string[];

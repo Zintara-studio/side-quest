@@ -15,6 +15,7 @@ const sectionTitle = {
   letterSpacing: ".2em",
   textTransform: "uppercase",
   margin: "0 0 14px",
+  flexShrink: 0, // stays put as a panel header while its list scrolls beneath
 } as const;
 
 const subLabel = {
@@ -163,6 +164,18 @@ function BidRoom({
   );
   const inIntermission = intermissionLeft != null && intermissionLeft > 0;
 
+  // Pre-bid REVIEW WINDOW: when a lot is nominated there's a brief pause (the auction's anti-snipe
+  // seconds) where franchises can study the player but can't bid yet. `bidOpensAt` is
+  // server-authoritative — reconcile it against serverTime the same way the bid countdown does.
+  // Null (or already elapsed) means bidding is open. The 1s tick re-renders this room, so the block
+  // lifts on its own the instant the window ends — polling just keeps bidOpensAt honest.
+  const reviewLeft = useCountdown(
+    auction.serverTime,
+    currentLot?.bidOpensAt ?? undefined,
+    auction.status === "LIVE",
+  );
+  const reviewing = reviewLeft != null && reviewLeft > 0;
+
   // A new player on the block (or a status flip) clears any stale bid error.
   useEffect(() => {
     setBidErr(null);
@@ -177,11 +190,13 @@ function BidRoom({
         ? "The auction is not live."
         : !currentLot
           ? "No player is on the block right now."
-          : iAmTop
-            ? "You are the top bidder — sit tight."
-            : myAF.balance < minNext
-              ? "Insufficient balance for the next bid."
-              : null;
+          : reviewing
+            ? `Bidding opens in ${reviewLeft}s — review the player`
+            : iAmTop
+              ? "You are the top bidder — sit tight."
+              : myAF.balance < minNext
+                ? "Insufficient balance for the next bid."
+                : null;
 
   const submitBid = async (amount: number) => {
     if (!currentLot) return;
@@ -302,6 +317,8 @@ function BidRoom({
               canBid={canBid}
               balance={myAF.balance}
               blockReason={bidBlockReason}
+              reviewing={reviewing}
+              reviewLeft={reviewLeft}
               pending={placeBid.isPending}
               bidErr={bidErr}
               onBid={submitBid}
@@ -316,8 +333,8 @@ function BidRoom({
 
         <aside className="sqar-rail">
           <StandingsRail auction={auction} myFranchiseId={myFranchiseId} />
-          <RecentBidsPanel auction={auction} myTag={myAF.tag} />
           <AcquiredPanel acquired={acquired} />
+          <RecentBidsPanel auction={auction} myTag={myAF.tag} />
         </aside>
       </div>
 
@@ -528,6 +545,8 @@ function HeroLot({
   canBid,
   balance,
   blockReason,
+  reviewing,
+  reviewLeft,
   pending,
   bidErr,
   onBid,
@@ -539,6 +558,8 @@ function HeroLot({
   canBid: boolean;
   balance: number;
   blockReason: string | null;
+  reviewing: boolean;
+  reviewLeft: number | null;
   pending: boolean;
   bidErr: string | null;
   onBid: (amount: number) => void;
@@ -546,9 +567,18 @@ function HeroLot({
 }) {
   const remaining = useCountdown(auction.serverTime, lot.bidDeadline, auction.status === "LIVE");
   const showRaises = canBid && auction.status === "LIVE";
-  const timerColor: string =
-    remaining == null ? SQ.mute : remaining <= 5 ? SQ.red : remaining <= 10 ? SQ.amber : SQ.ink;
-  const urgent = remaining != null && remaining <= 5 && auction.status === "LIVE";
+  // While the review window is open the bid-deadline clock may still tick, but keep it calm (amber,
+  // no red final-seconds flash) — nothing is expiring for this franchise to act on until bids open.
+  const timerColor: string = reviewing
+    ? SQ.amber
+    : remaining == null
+      ? SQ.mute
+      : remaining <= 5
+        ? SQ.red
+        : remaining <= 10
+          ? SQ.amber
+          : SQ.ink;
+  const urgent = !reviewing && remaining != null && remaining <= 5 && auction.status === "LIVE";
 
   return (
     <div
@@ -560,6 +590,41 @@ function HeroLot({
         padding: 22,
       }}
     >
+      {/* review window: a calm amber strip while franchises study the player before bids open —
+          deliberately distinct from the red final-seconds timer treatment. */}
+      {reviewing ? (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+            marginBottom: 18,
+            padding: "12px 16px",
+            borderRadius: 10,
+            border: `1px solid ${SQ.amber}`,
+            background: "rgba(181,131,26,.10)",
+          }}
+        >
+          <span
+            style={{
+              fontFamily: FONT.mono,
+              fontSize: 11,
+              letterSpacing: ".18em",
+              fontWeight: 700,
+              color: SQ.amber,
+              whiteSpace: "nowrap",
+            }}
+          >
+            ● REVIEW
+          </span>
+          <span style={{ fontFamily: FONT.mono, fontSize: 12.5, color: SQ.amber }}>
+            Bidding opens in {reviewLeft ?? 0}s — study the player
+          </span>
+        </div>
+      ) : null}
+
       {/* identity + timer */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 18, justifyContent: "space-between", alignItems: "flex-start" }}>
         <div style={{ minWidth: 0, flex: "1 1 220px" }}>
@@ -659,16 +724,19 @@ function HeroLot({
         ) : null}
       </div>
 
-      {/* expertise */}
+      {/* expertise — condensed rows in a fixed-height, internally-scrollable strip, so the hero
+          card height stays stable whether the player has 1 or 10 games on record. */}
       {lot.expertise.length > 0 ? (
         <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${SQ.hairlineSoft}` }}>
-          <div style={subLabel}>EXPERTISE</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={subLabel}>
+            EXPERTISE{lot.expertise.length > 1 ? ` · ${lot.expertise.length} GAMES` : ""}
+          </div>
+          <div className="sqar-scroll" style={{ maxHeight: 104, display: "flex", flexDirection: "column", gap: 6, paddingRight: 4 }}>
             {lot.expertise.map((e) => (
               <div key={e.game} style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <span
                   style={{
-                    width: 96,
+                    width: 88,
                     flexShrink: 0,
                     fontSize: 12,
                     fontWeight: 600,
@@ -679,10 +747,10 @@ function HeroLot({
                 >
                   {e.game}
                 </span>
-                <div style={{ flex: 1, minWidth: 50, height: 6, borderRadius: 4, background: SQ.track, overflow: "hidden" }}>
+                <div style={{ flex: 1, minWidth: 40, height: 6, borderRadius: 4, background: SQ.track, overflow: "hidden" }}>
                   <div style={{ width: `${pct(e.rating)}%`, height: "100%", background: SQ.blue }} />
                 </div>
-                <span style={{ fontFamily: FONT.mono, fontSize: 11.5, color: SQ.faint, width: 30, textAlign: "right" }}>
+                <span style={{ fontFamily: FONT.mono, fontSize: 11.5, color: SQ.faint, width: 28, textAlign: "right", flexShrink: 0 }}>
                   {Math.round(e.rating)}
                 </span>
                 {e.handle ? (
@@ -691,7 +759,8 @@ function HeroLot({
                       fontFamily: FONT.mono,
                       fontSize: 11,
                       color: SQ.mute,
-                      maxWidth: 110,
+                      maxWidth: 96,
+                      flexShrink: 0,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
@@ -963,6 +1032,7 @@ function StandingsRail({
 
   return (
     <section
+      className="sqar-panel"
       style={{
         background: SQ.panel,
         border: `1px solid ${SQ.hairline}`,
@@ -971,7 +1041,7 @@ function StandingsRail({
       }}
     >
       <div style={sectionTitle}>{title}</div>
-      <div className="sqar-scroll" style={{ maxHeight: 340, display: "flex", flexDirection: "column", gap: 8 }}>
+      <div className="sqar-scroll" style={{ maxHeight: 300, display: "flex", flexDirection: "column", gap: 8 }}>
         {rows.map((f) => {
           const isMe = f.franchiseId === myFranchiseId;
           const isTop = topBidderId != null && f.franchiseId === topBidderId;
@@ -1032,6 +1102,7 @@ function RecentBidsPanel({ auction, myTag }: { auction: AuctionView; myTag: stri
   if (auction.recentBids.length === 0) return null;
   return (
     <section
+      className="sqar-panel"
       style={{
         background: SQ.panel,
         border: `1px solid ${SQ.hairline}`,
@@ -1040,7 +1111,7 @@ function RecentBidsPanel({ auction, myTag }: { auction: AuctionView; myTag: stri
       }}
     >
       <div style={sectionTitle}>Recent bids</div>
-      <div className="sqar-scroll" style={{ maxHeight: 260, display: "flex", flexDirection: "column", gap: 0 }}>
+      <div className="sqar-scroll" style={{ maxHeight: 220, display: "flex", flexDirection: "column", gap: 0 }}>
         {auction.recentBids.slice(0, 12).map((b, i) => {
           const isMine = b.franchiseTag === myTag;
           return (
@@ -1083,6 +1154,7 @@ function RecentBidsPanel({ auction, myTag }: { auction: AuctionView; myTag: stri
 function AcquiredPanel({ acquired }: { acquired: AuctionLotView[] }) {
   return (
     <section
+      className="sqar-panel"
       style={{
         background: SQ.panel,
         border: `1px solid ${SQ.hairline}`,
@@ -1096,7 +1168,7 @@ function AcquiredPanel({ acquired }: { acquired: AuctionLotView[] }) {
           You haven&rsquo;t won any players yet.
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+        <div className="sqar-scroll" style={{ maxHeight: 200, display: "flex", flexDirection: "column", gap: 0 }}>
           {acquired.map((l, i) => (
             <div
               key={l.id}
@@ -1335,13 +1407,21 @@ function Header() {
 function WarStyles() {
   return (
     <style>{`
+      /* Desktop: a fixed, near-viewport-height dashboard. The hero column keeps the live lot +
+         bidding pinned; the rail is bounded to the viewport and hands its height to its panels,
+         each of which scrolls internally instead of pushing the page down. */
       .sqar-grid { display: grid; grid-template-columns: minmax(0,1.6fr) minmax(288px,1fr); gap: 22px; align-items: start; }
-      .sqar-hero { position: sticky; top: 84px; align-self: start; display: flex; flex-direction: column; gap: 16px; }
-      .sqar-rail { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
-      .sqar-scroll { overflow-y: auto; }
+      .sqar-hero { position: sticky; top: 84px; align-self: start; display: flex; flex-direction: column; gap: 16px; min-width: 0; min-height: 0; }
+      .sqar-rail { position: sticky; top: 84px; align-self: start; display: flex; flex-direction: column; gap: 16px; min-width: 0; min-height: 0; max-height: calc(100vh - 104px); }
+      /* A rail panel: fixed header + a scroll region that absorbs any overflow. min-height:0 lets it
+         shrink below its content so the inner list — not the page — is what scrolls. */
+      .sqar-panel { display: flex; flex-direction: column; min-height: 0; overflow: hidden; flex: 0 1 auto; }
+      .sqar-scroll { overflow-y: auto; min-height: 0; flex: 1 1 auto; }
       @media (max-width: 920px) {
         .sqar-grid { grid-template-columns: 1fr; }
         .sqar-hero { position: static; top: auto; }
+        /* Narrow screens stack and scroll normally; panels keep their own bounded lists. */
+        .sqar-rail { position: static; top: auto; max-height: none; }
       }
       @keyframes sqar-soldin { 0% { transform: scale(.92); opacity: 0; } 60% { transform: scale(1.02); } 100% { transform: scale(1); opacity: 1; } }
       @keyframes sqar-badge { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }

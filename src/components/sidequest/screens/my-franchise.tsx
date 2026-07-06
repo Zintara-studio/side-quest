@@ -191,13 +191,25 @@ function FranchisePanel({ mine }: { mine: FranchiseMineView }) {
   const canManage = myRole === "OWNER" || myRole === "MANAGER";
   const isOwner = myRole === "OWNER";
 
-  // Surface the bidding-room CTA only to owners/managers whose franchise is a PARTICIPANT in a
-  // currently-running auction.
+  // Surface the bidding-room CTA to owners/managers whose franchise is a PARTICIPANT while the hall
+  // is open (LOBBY), running (LIVE), or momentarily paused. LOBBY is the crucial case: it's the
+  // reliable in-app entry to the room before bidding starts (the notification deep-link 404'd).
   const activeAuction = useActiveAuction().data ?? null;
+  // This franchise's seat at the auction table (match by id) — lets us reflect its join state.
+  const myAuctionSeat = activeAuction?.franchises.find((fr) => fr.franchiseId === f.id) ?? null;
   const auctionOpen =
     canManage &&
-    (activeAuction?.status === "LIVE" || activeAuction?.status === "PAUSED") &&
-    !!activeAuction?.franchises.some((fr) => fr.franchiseId === f.id);
+    (activeAuction?.status === "LOBBY" ||
+      activeAuction?.status === "LIVE" ||
+      activeAuction?.status === "PAUSED") &&
+    !!myAuctionSeat;
+  const auctionLive = activeAuction?.status === "LIVE";
+  const auctionSubline =
+    activeAuction?.status === "LOBBY"
+      ? "Join the hall before bidding starts"
+      : activeAuction?.status === "PAUSED"
+        ? "Bidding is paused — stay in the room"
+        : "Bidding is live — enter the room";
 
   // Which upcoming match has its lineup editor open (matchId, or null).
   const [lineupMatchId, setLineupMatchId] = useState<string | null>(null);
@@ -212,20 +224,22 @@ function FranchisePanel({ mine }: { mine: FranchiseMineView }) {
 
   return (
     <div>
-      {/* live-auction CTA — only while an auction is running and the user can bid */}
+      {/* auction-hall CTA — the reliable in-app entry to the bidding room while the hall is open
+          (LOBBY), running (LIVE), or paused, for owners/managers of a participating franchise */}
       {auctionOpen ? (
         <Link
           href="/my/franchise/auction"
           style={{
             display: "flex",
+            flexWrap: "wrap",
             alignItems: "center",
-            gap: 10,
-            marginBottom: 22,
-            padding: "12px 16px",
-            borderRadius: 8,
+            gap: 14,
+            marginBottom: 24,
+            padding: "16px 20px",
+            borderRadius: 10,
             textDecoration: "none",
             border: `1px solid ${SQ.red}`,
-            background: "linear-gradient(90deg,rgba(232,96,44,.14),transparent)",
+            background: "linear-gradient(90deg,rgba(232,96,44,.16),transparent)",
             color: SQ.ink,
           }}
         >
@@ -233,18 +247,51 @@ function FranchisePanel({ mine }: { mine: FranchiseMineView }) {
             style={{
               fontFamily: FONT.mono,
               fontSize: 9,
-              letterSpacing: ".12em",
-              color: activeAuction?.status === "LIVE" ? SQ.red : SQ.amber,
-              border: `1px solid ${activeAuction?.status === "LIVE" ? SQ.red : SQ.amber}`,
+              letterSpacing: ".14em",
+              color: auctionLive ? SQ.red : SQ.amber,
+              border: `1px solid ${auctionLive ? SQ.red : SQ.amber}`,
               borderRadius: 999,
-              padding: "3px 9px",
+              padding: "4px 10px",
               whiteSpace: "nowrap",
             }}
           >
             ● {activeAuction?.status}
           </span>
-          <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600 }}>
-            The player auction is live — enter the bidding room ▸
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-.01em" }}>
+              Auction hall is open — {activeAuction?.title}
+            </div>
+            <div
+              style={{
+                fontFamily: FONT.mono,
+                fontSize: 10.5,
+                letterSpacing: ".08em",
+                color: SQ.faint,
+                marginTop: 5,
+              }}
+            >
+              {auctionSubline}
+              {" · "}
+              <span style={{ color: myAuctionSeat?.joined ? SQ.green : SQ.amber }}>
+                {myAuctionSeat?.joined ? "YOU'VE JOINED" : "JOIN NOW"}
+              </span>
+            </div>
+          </div>
+          <span
+            style={{
+              fontFamily: FONT.mono,
+              fontSize: 10.5,
+              letterSpacing: ".12em",
+              textTransform: "uppercase",
+              fontWeight: 700,
+              color: SQ.league,
+              background: SQ.red,
+              padding: "10px 16px",
+              borderRadius: 6,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Enter the bidding room ▸
           </span>
         </Link>
       ) : null}

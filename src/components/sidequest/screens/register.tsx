@@ -15,10 +15,12 @@ import {
   useGames,
   useInviteTeammate,
   useMatch,
+  useMyRegistrations,
   usePlayers,
 } from "@/lib/query/hooks";
 import type { GameSummary, RegistrationType } from "@/lib/api/types";
 import type { SessionUser } from "@/lib/auth/store";
+import { ranksFor } from "@/lib/ranks";
 
 // Registration locks this long before the match starts (backend enforces the same window).
 const REG_LOCK_MS = 3 * 60 * 60 * 1000;
@@ -28,6 +30,14 @@ const fieldLabel = {
   fontSize: 11,
   letterSpacing: ".16em",
   color: SQ.label,
+} as const;
+
+const miniLabel = {
+  fontFamily: FONT.mono,
+  fontSize: 10,
+  letterSpacing: ".12em",
+  color: SQ.label,
+  flex: "0 0 auto",
 } as const;
 
 const card = {
@@ -76,7 +86,10 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
   // manual picker. When the announcement resolves no game (e.g. a general "registrations are live"
   // post with no game and no match), we fall back to the manual picker so the sign-up still works.
   const derivedGame = ann.data?.gameName ?? matchQ.data?.game?.name ?? null;
-  const showGamePicker = !derivedGame;
+  // Games are meaningless for a FRANCHISE bid (a franchise fields most games), so never show a picker there.
+  const showGamePicker = !derivedGame && mode !== "FRANCHISE";
+  // Franchise creation is an off-season activity — block a franchise bid while a season is running.
+  const franchiseBlocked = mode === "FRANCHISE" && !!season;
 
   // Client-side mirror of the backend time-lock: submissions close 3h before the match starts.
   const registrationLocked = useMemo(() => {
@@ -90,6 +103,7 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
   const [whatsapp, setWhatsapp] = useState("");
   const [email, setEmail] = useState("");
   const [squadName, setSquadName] = useState("");
+  const [franchiseTag, setFranchiseTag] = useState("");
   const [selectedGames, setSelectedGames] = useState<string[]>([]);
   const [teammates, setTeammates] = useState<string[]>([]);
   const [search, setSearch] = useState("");
@@ -121,7 +135,12 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
     e.preventDefault();
     setError(null);
     if (alreadyRegistered || registrationLocked) return;
+    if (franchiseBlocked) {
+      setError("Franchise bids are only accepted between seasons — a season is currently running.");
+      return;
+    }
     // When the game is derived from the announcement/match we skip the picker; otherwise require a pick.
+    // (FRANCHISE bids carry no games, so showGamePicker is false and this check is skipped.)
     if (showGamePicker && selectedGames.length === 0) {
       setError("Select at least one game.");
       return;
@@ -133,13 +152,15 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
     const contact = [whatsapp && `WhatsApp: ${whatsapp}`, email && `Email: ${email}`]
       .filter(Boolean)
       .join(" · ");
-    // Send the derived game when we have one (the backend still authoritatively derives it from the
-    // linked match); otherwise send the user's manual picks. Never send an empty games list.
-    const games = derivedGame ? [derivedGame] : selectedGames;
+    // FRANCHISE bids carry no games; otherwise send the derived game (backend re-derives from the match)
+    // or the user's manual picks. Never send an empty games list for a non-franchise entry.
+    const games = mode === "FRANCHISE" ? [] : derivedGame ? [derivedGame] : selectedGames;
     try {
       const reg = await apply.mutateAsync({
         type: mode,
         squadName: mode !== "PLAYER" ? squadName || undefined : undefined,
+        franchiseTag:
+          mode === "FRANCHISE" ? franchiseTag.trim().toUpperCase() || undefined : undefined,
         games,
         contact: contact || undefined,
         matchId: ann.data?.matchId || undefined,
@@ -382,6 +403,25 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
                   onChange={(e) => setSquadName(e.target.value)}
                   placeholder={mode === "FRANCHISE" ? "e.g. Nova Esports" : "e.g. Phantom Five"}
                 />
+                {mode === "FRANCHISE" ? (
+                  <>
+                    <div style={{ ...fieldLabel, margin: "18px 0 8px" }}>FRANCHISE TAG</div>
+                    <input
+                      className="sq-field"
+                      style={{ ...inputStyle, maxWidth: 200, letterSpacing: ".12em", fontFamily: FONT.mono }}
+                      value={franchiseTag}
+                      maxLength={16}
+                      onChange={(e) =>
+                        setFranchiseTag(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))
+                      }
+                      placeholder="e.g. RXG"
+                    />
+                    <div style={{ marginTop: 8, fontSize: 12, color: SQ.mute, lineHeight: 1.5 }}>
+                      Your team&rsquo;s short abbreviation shown on the leaderboard and in the auction.
+                      Leave blank to auto-generate one from the name.
+                    </div>
+                  </>
+                ) : null}
               </>
             ) : null}
 
@@ -404,7 +444,7 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
               />
             </div>
 
-            {!showGamePicker ? (
+            {derivedGame ? (
               <>
                 <div style={{ ...fieldLabel, margin: "18px 0 8px" }}>GAME</div>
                 <span
@@ -428,10 +468,16 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
                   The game is fixed by the announcement you&rsquo;re registering for.
                 </div>
               </>
-            ) : (
+            ) : showGamePicker ? (
               <>
                 <div style={{ ...fieldLabel, margin: "18px 0 8px" }}>YOUR GAMES</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 9 }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fill,minmax(128px,1fr))",
+                    gap: 9,
+                  }}
+                >
                   {allGames.length === 0 ? (
                     <span style={{ fontSize: 13, color: SQ.mute }}>Loading games…</span>
                   ) : (
@@ -443,6 +489,8 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
                           type="button"
                           onClick={() => toggleGame(g)}
                           style={{
+                            width: "100%",
+                            textAlign: "center",
                             fontFamily: FONT.mono,
                             fontSize: 11,
                             letterSpacing: ".06em",
@@ -461,7 +509,25 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
                   )}
                 </div>
               </>
-            )}
+            ) : null}
+
+            {franchiseBlocked ? (
+              <div
+                style={{
+                  margin: "18px 0 0",
+                  padding: "12px 14px",
+                  borderRadius: 5,
+                  background: SQ.inset,
+                  border: `1px solid ${SQ.amber}`,
+                  color: SQ.amber,
+                  fontSize: 12.5,
+                  lineHeight: 1.55,
+                }}
+              >
+                Franchise bids open <strong style={{ color: SQ.ink }}>between seasons</strong> — a season is
+                currently running, so new franchises can&rsquo;t be created yet. Come back once it wraps.
+              </div>
+            ) : null}
 
             {alreadyRegistered ? (
               <div
@@ -520,14 +586,17 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
             ) : null}
 
             {(() => {
-              const disabled = apply.isPending || alreadyRegistered || registrationLocked;
+              const disabled =
+                apply.isPending || alreadyRegistered || registrationLocked || franchiseBlocked;
               const label = alreadyRegistered
                 ? "Already registered"
-                : registrationLocked
-                  ? "Registration closed"
-                  : apply.isPending
-                    ? "Submitting…"
-                    : "Submit registration ▸";
+                : franchiseBlocked
+                  ? "Opens between seasons"
+                  : registrationLocked
+                    ? "Registration closed"
+                    : apply.isPending
+                      ? "Submitting…"
+                      : "Submit registration ▸";
               return (
                 <button
                   type="submit"
@@ -693,20 +762,33 @@ function AuctionRegisterForm({
 }) {
   const gamesQ = useGames(true);
   const apply = useApplyRegistration();
+  const myRegsQ = useMyRegistrations(!!user);
 
   const games: GameSummary[] = gamesQ.data ?? [];
+
+  // Proactively detect an existing live auction entry so we can't create a wasteful duplicate.
+  const alreadyInAuction = (myRegsQ.data ?? []).some(
+    (r) => r.type === "AUCTION" && r.status === "ACTIVE",
+  );
 
   const [name, setName] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
   const [email, setEmail] = useState("");
   const [note, setNote] = useState("");
-  // Per-game expertise, keyed by gameId. `on` = "I play this"; rating is 0-100; handle is optional.
+  // Per-game expertise, keyed by gameId. `on` = "I play this"; rating is 0-100; handle is optional;
+  // rank/kd/level are optional objective signals franchises can scout on.
   const [plays, setPlays] = useState<Record<string, boolean>>({});
   const [ratings, setRatings] = useState<Record<string, number>>({});
   const [handles, setHandles] = useState<Record<string, string>>({});
+  const [ranks, setRanks] = useState<Record<string, string>>({});
+  const [kds, setKds] = useState<Record<string, string>>({});
+  const [levels, setLevels] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [alreadyRegistered, setAlreadyRegistered] = useState(false);
   const [done, setDone] = useState(false);
+
+  // Either the proactive check (existing entry) or a 409 from a race both mean "already in the pool".
+  const isRegistered = alreadyRegistered || alreadyInAuction;
 
   // Prefill identity from the signed-in user.
   useEffect(() => {
@@ -727,7 +809,7 @@ function AuctionRegisterForm({
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (alreadyRegistered) return;
+    if (isRegistered) return;
 
     const chosen = games.filter((g) => plays[g.id]);
     // Require at least one game toggled on with a rating above 0 — no squad, no derived game.
@@ -741,11 +823,18 @@ function AuctionRegisterForm({
       .filter(Boolean)
       .join(" · ");
 
-    const proficiencies = chosen.map((g) => ({
-      gameId: g.id,
-      rating: clampRating(ratings[g.id] ?? 0),
-      handle: handles[g.id]?.trim() || undefined,
-    }));
+    const proficiencies = chosen.map((g) => {
+      const kdRaw = parseFloat(kds[g.id] ?? "");
+      const lvlRaw = parseInt(levels[g.id] ?? "", 10);
+      return {
+        gameId: g.id,
+        rating: clampRating(ratings[g.id] ?? 0),
+        handle: handles[g.id]?.trim() || undefined,
+        rankTier: ranks[g.id]?.trim() || undefined,
+        kd: Number.isFinite(kdRaw) ? Math.max(0, kdRaw) : undefined,
+        accountLevel: Number.isFinite(lvlRaw) ? Math.max(0, Math.round(lvlRaw)) : undefined,
+      };
+    });
 
     try {
       await apply.mutateAsync({
@@ -907,7 +996,7 @@ function AuctionRegisterForm({
               placeholder="Anything the auction admins should know — availability, past teams, achievements…"
             />
 
-            {alreadyRegistered ? (
+            {isRegistered ? (
               <div
                 style={{
                   margin: "18px 0 0",
@@ -921,7 +1010,7 @@ function AuctionRegisterForm({
                 }}
               >
                 <span style={{ color: SQ.amber, fontWeight: 700 }}>
-                  You are already registered for this auction.
+                  You&rsquo;re already in the auction pool.
                 </span>{" "}
                 <Link
                   href="/my/registrations"
@@ -949,9 +1038,9 @@ function AuctionRegisterForm({
             ) : null}
 
             {(() => {
-              const disabled = apply.isPending || alreadyRegistered;
-              const label = alreadyRegistered
-                ? "Already registered"
+              const disabled = apply.isPending || isRegistered;
+              const label = isRegistered
+                ? "Already in the pool"
                 : apply.isPending
                   ? "Submitting…"
                   : "Enter the auction ▸";
@@ -986,8 +1075,9 @@ function AuctionRegisterForm({
           <div style={card}>
             <div style={{ ...fieldLabel, marginBottom: 6 }}>YOUR GAME EXPERTISE</div>
             <p style={{ margin: "0 0 14px", fontSize: 12.5, lineHeight: 1.6, color: SQ.mute }}>
-              Toggle every game you play, rate yourself 0–100 and drop your in-game handle. Franchises
-              use these ratings to value you in the auction.
+              Toggle every game you play, rate yourself 0–100, and add your rank, K/D, account level and
+              in-game handle where you can. Franchises use these to value you in the auction — the more
+              objective detail, the better your bids.
               {chosenCount > 0 ? (
                 <span style={{ color: SQ.green }}> {chosenCount} selected.</span>
               ) : null}
@@ -1015,6 +1105,9 @@ function AuctionRegisterForm({
                           type="button"
                           onClick={() => toggleGame(g.id)}
                           style={{
+                            width: 148,
+                            flex: "0 0 auto",
+                            textAlign: "center",
                             fontFamily: FONT.mono,
                             fontSize: 11,
                             letterSpacing: ".06em",
@@ -1111,6 +1204,65 @@ function AuctionRegisterForm({
                                 setHandles((h) => ({ ...h, [g.id]: e.target.value }))
                               }
                               placeholder={`In-game name for ${g.name} (optional)`}
+                            />
+                          </div>
+                          <div
+                            style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 10 }}
+                          >
+                            <span style={{ ...miniLabel, width: 58 }}>RANK</span>
+                            {ranksFor(g.name) ? (
+                              <select
+                                className="sq-field"
+                                value={ranks[g.id] ?? ""}
+                                onChange={(e) => setRanks((r) => ({ ...r, [g.id]: e.target.value }))}
+                                style={{ ...inputStyle, flex: 1, padding: "8px 10px" }}
+                              >
+                                <option value="">— Select rank (optional) —</option>
+                                {ranksFor(g.name)!.map((p) => (
+                                  <option key={p} value={p}>
+                                    {p}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input
+                                className="sq-field"
+                                value={ranks[g.id] ?? ""}
+                                onChange={(e) => setRanks((r) => ({ ...r, [g.id]: e.target.value }))}
+                                placeholder="Your current rank (optional)"
+                                style={{ ...inputStyle, flex: 1, padding: "8px 10px" }}
+                              />
+                            )}
+                          </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 10,
+                              marginTop: 10,
+                              flexWrap: "wrap",
+                            }}
+                          >
+                            <span style={{ ...miniLabel, width: 58 }}>K/D</span>
+                            <input
+                              className="sq-field"
+                              type="number"
+                              min={0}
+                              step="0.1"
+                              value={kds[g.id] ?? ""}
+                              onChange={(e) => setKds((k) => ({ ...k, [g.id]: e.target.value }))}
+                              placeholder="e.g. 2.4"
+                              style={{ ...inputStyle, width: 92, flex: "0 0 auto", padding: "8px 10px" }}
+                            />
+                            <span style={{ ...miniLabel, width: 44, marginLeft: 6 }}>LEVEL</span>
+                            <input
+                              className="sq-field"
+                              type="number"
+                              min={0}
+                              value={levels[g.id] ?? ""}
+                              onChange={(e) => setLevels((l) => ({ ...l, [g.id]: e.target.value }))}
+                              placeholder="e.g. 150"
+                              style={{ ...inputStyle, width: 92, flex: "0 0 auto", padding: "8px 10px" }}
                             />
                           </div>
                         </>

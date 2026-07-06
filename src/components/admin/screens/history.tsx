@@ -6,6 +6,7 @@ import { SQ, FONT } from "../tokens";
 import { ScreenHeader } from "../screen-header";
 import { TableScroll } from "../table-scroll";
 import { StateNote } from "@/components/sidequest/state-note";
+import { ConfirmModal } from "@/components/sidequest/confirm-modal";
 import {
   useSeasons,
   useSeasonStandings,
@@ -54,12 +55,14 @@ export function HistoryScreen() {
   const matchesQ = useMatches({ limit: 50 });
   const matches = useMemo(() => {
     const all = matchesQ.data?.items ?? [];
-    return isAll ? all : all.filter((m) => m.seasonId === code);
+    // Untagged (null-season) fixtures — off-season FFA matches — always show alongside the season.
+    return isAll ? all : all.filter((m) => m.seasonId === code || !m.seasonId);
   }, [matchesQ.data, isAll, code]);
 
   const startSeason = useStartSeason();
   const finishSeason = useFinishSeason();
   const [newCode, setNewCode] = useState("");
+  const [confirmFinish, setConfirmFinish] = useState(false);
   const [newName, setNewName] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -82,16 +85,21 @@ export function HistoryScreen() {
     }
   };
 
-  const onFinish = async () => {
+  // Staged behind a themed confirm dialog (not the native window.confirm).
+  const onFinish = () => {
+    if (current) setConfirmFinish(true);
+  };
+  const doFinish = async () => {
     setMsg(null);
     setErr(null);
     if (!current) return;
-    if (!window.confirm(`Finish ${current.name}? Its standings will be frozen into history.`)) return;
     try {
       await finishSeason.mutateAsync();
       setMsg(`${current.name} finished and archived.`);
     } catch (e) {
       setErr(apiErrorMessage(e, "Couldn't finish the season."));
+    } finally {
+      setConfirmFinish(false);
     }
   };
 
@@ -293,6 +301,21 @@ export function HistoryScreen() {
           )}
         </div>
       </div>
+
+      <ConfirmModal
+        open={confirmFinish}
+        title="Finish season"
+        tone="destructive"
+        message={
+          current
+            ? `Finish ${current.name}? Its standings will be frozen into history and a new season can then be started.`
+            : "Finish the current season?"
+        }
+        confirmLabel="Finish season"
+        busy={finishSeason.isPending}
+        onConfirm={doFinish}
+        onClose={() => setConfirmFinish(false)}
+      />
     </div>
   );
 }

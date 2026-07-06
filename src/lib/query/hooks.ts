@@ -1,6 +1,11 @@
 // TanStack Query hooks over the typed endpoint functions. Screens import these instead of
 // reading from src/lib/mock/*. Query keys are namespaced per domain for easy invalidation.
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   adminApi,
   announcementsApi,
@@ -305,6 +310,16 @@ export const useCreateFranchiseFromProposal = () => {
 export const useMatches = (params?: MatchListParams) =>
   useQuery({ queryKey: qk.matches(params), queryFn: () => matchesApi.list(params) });
 
+/** Cursor-paginated matches for the archive: accumulate pages via "Load more". */
+export const useMatchesInfinite = (params?: MatchListParams) =>
+  useInfiniteQuery({
+    queryKey: [...qk.matches(params), "infinite"],
+    queryFn: ({ pageParam }) =>
+      matchesApi.list({ ...params, cursor: pageParam as string | undefined }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+  });
+
 export const useMatch = (id: string | undefined) =>
   useQuery({ queryKey: qk.match(id ?? ""), queryFn: () => matchesApi.get(id!), enabled: !!id });
 
@@ -402,6 +417,17 @@ export const useDeleteAnnouncement = () => {
   return useMutation({
     mutationFn: (id: string) => announcementsApi.remove(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["announcements"] }),
+  });
+};
+
+export const useCloseAnnouncement = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => announcementsApi.close(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["announcements"] });
+      qc.invalidateQueries({ queryKey: ["registrations"] });
+    },
   });
 };
 

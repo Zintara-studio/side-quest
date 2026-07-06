@@ -130,9 +130,38 @@ export function GamesScreen() {
                 />
               </div>
               <div style={{ display: "flex", gap: 18, marginTop: 14, alignItems: "flex-end" }}>
-                <div>
+                <div style={{ minWidth: 0 }}>
                   <div style={statLabel}>FORMAT</div>
-                  <div style={{ ...statValue, color: SQ.faint }}>{g.format}</div>
+                  <input
+                    defaultValue={g.format}
+                    disabled={updateGame.isPending || seasonActive}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    }}
+                    onBlur={(e) => {
+                      const v = e.target.value.trim();
+                      // FORMAT is NOT NULL — refuse blank, and only PATCH when it actually changed.
+                      if (!v) {
+                        e.target.value = g.format;
+                      } else if (!seasonActive && v !== g.format) {
+                        updateGame.mutate({ id: g.id, body: { format: v } });
+                      }
+                    }}
+                    style={{
+                      marginTop: 4,
+                      width: "100%",
+                      maxWidth: 200,
+                      background: SQ.inset,
+                      border: `1px solid ${SQ.inputBorder}`,
+                      borderRadius: 5,
+                      padding: "6px 9px",
+                      fontFamily: FONT.mono,
+                      fontSize: 12.5,
+                      color: SQ.ink,
+                      cursor: updateGame.isPending || seasonActive ? "default" : "text",
+                      opacity: updateGame.isPending || seasonActive ? 0.5 : 1,
+                    }}
+                  />
                 </div>
                 <div>
                   <div style={statLabel}>POPULARITY</div>

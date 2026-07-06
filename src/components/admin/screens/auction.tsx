@@ -233,7 +233,7 @@ function parseIncrements(text: string): number[] {
 }
 
 function CreateAuctionForm({ onCreated }: { onCreated: (id: string) => void }) {
-  const franchisesQ = useFranchises({ limit: 100 });
+  const franchisesQ = useFranchises({ active: true, limit: 100 });
   const create = useCreateAuction();
   const franchises = franchisesQ.data?.items ?? [];
 
@@ -433,7 +433,7 @@ function ConfigStats({ a, queuedCount }: { a: AuctionView; queuedCount: number }
  * doesn't needlessly reset participant purses or replace the roster.
  */
 function EditSettingsPanel({ a }: { a: AuctionView }) {
-  const franchisesQ = useFranchises({ limit: 100 });
+  const franchisesQ = useFranchises({ active: true, limit: 100 });
   const update = useUpdateAuction();
   const franchises = franchisesQ.data?.items ?? [];
 

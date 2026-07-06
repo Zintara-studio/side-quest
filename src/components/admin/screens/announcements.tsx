@@ -6,15 +6,17 @@ import { ScreenHeader } from "../screen-header";
 import { StateNote } from "@/components/sidequest/state-note";
 import { SearchableSelect, type SearchableSelectOption } from "@/components/sidequest/searchable-select";
 import { MarkdownView } from "@/components/sidequest/markdown";
+import { ConfirmModal } from "@/components/sidequest/confirm-modal";
 import {
   useAnnouncements,
   useCreateAnnouncement,
+  useCloseAnnouncement,
   useDeleteAnnouncement,
   useGames,
   useMatches,
 } from "@/lib/query/hooks";
 import { announcementTagFor, shortDate } from "@/lib/adapters/league";
-import type { RegistrationType } from "@/lib/api/types";
+import type { AnnouncementView, RegistrationType } from "@/lib/api/types";
 
 const fieldLabel = {
   fontFamily: FONT.mono,
@@ -207,6 +209,10 @@ export function AnnouncementsScreen() {
   const list = useAnnouncements({ limit: 20 });
   const create = useCreateAnnouncement();
   const remove = useDeleteAnnouncement();
+  const close = useCloseAnnouncement();
+  const [pendingTemplate, setPendingTemplate] = useState<Template | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [pendingClose, setPendingClose] = useState<AnnouncementView | null>(null);
   const gamesQ = useGames(true);
   // All matches (not just SCHEDULED) so result / recap posts can point at a
   // LIVE, AWAITING_RESULT or COMPLETED fixture too.
@@ -239,19 +245,22 @@ export function AnnouncementsScreen() {
   // Prefill the composer from a preset. Only touches the fields the preset
   // owns (category/title/body/registrationOpen [+ registrationType]); leaves
   // matchId/gameId alone. Confirm before clobbering a draft in progress.
-  const applyTemplate = (t: Template) => {
-    if (
-      (title.trim() || body.trim()) &&
-      !window.confirm("Replace the current draft with this template?")
-    ) {
-      return;
-    }
+  const commitTemplate = (t: Template) => {
     setCategory(t.category);
     setTitle(t.title);
     setBody(t.body);
     setRegistrationOpen(t.registrationOpen);
     if (t.registrationType) setRegistrationType(t.registrationType);
     setErr(null);
+    setPendingTemplate(null);
+  };
+  const applyTemplate = (t: Template) => {
+    // Confirm before clobbering a draft in progress (themed dialog, not native confirm).
+    if (title.trim() || body.trim()) {
+      setPendingTemplate(t);
+    } else {
+      commitTemplate(t);
+    }
   };
 
   const onPublish = async () => {
@@ -600,11 +609,30 @@ export function AnnouncementsScreen() {
                       {a.gameName ? ` · ${a.gameName}` : ""}
                     </div>
                   </div>
+                  {a.registrationOpen ? (
+                    <button
+                      type="button"
+                      onClick={() => setPendingClose(a)}
+                      disabled={close.isPending}
+                      style={{
+                        fontFamily: FONT.mono,
+                        fontSize: 10,
+                        letterSpacing: ".1em",
+                        textTransform: "uppercase",
+                        color: SQ.amber,
+                        background: "transparent",
+                        border: `1px solid ${SQ.inputBorder}`,
+                        borderRadius: 5,
+                        padding: "6px 10px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Close registration
+                    </button>
+                  ) : null}
                   <button
                     type="button"
-                    onClick={() => {
-                      if (window.confirm("Delete this announcement?")) remove.mutate(a.id);
-                    }}
+                    onClick={() => setPendingDelete(a.id)}
                     disabled={remove.isPending}
                     style={{
                       fontFamily: FONT.mono,
@@ -625,6 +653,43 @@ export function AnnouncementsScreen() {
           )}
         </div>
       </div>
+
+      <ConfirmModal
+        open={!!pendingTemplate}
+        title="Replace draft"
+        message="Replace the current draft with this template? Your unsaved title and body will be overwritten."
+        confirmLabel="Replace"
+        onConfirm={() => pendingTemplate && commitTemplate(pendingTemplate)}
+        onClose={() => setPendingTemplate(null)}
+      />
+      <ConfirmModal
+        open={!!pendingClose}
+        title="Close registration"
+        tone="destructive"
+        message={
+          pendingClose
+            ? `Close registration for “${pendingClose.title}”? The Register button is removed everywhere and any still-open sign-ups are voided.`
+            : ""
+        }
+        confirmLabel="Close registration"
+        busy={close.isPending}
+        onConfirm={() =>
+          pendingClose && close.mutate(pendingClose.id, { onSettled: () => setPendingClose(null) })
+        }
+        onClose={() => setPendingClose(null)}
+      />
+      <ConfirmModal
+        open={!!pendingDelete}
+        title="Delete announcement"
+        tone="destructive"
+        message="Delete this announcement? This permanently removes it from the league feed."
+        confirmLabel="Delete"
+        busy={remove.isPending}
+        onConfirm={() =>
+          pendingDelete && remove.mutate(pendingDelete, { onSettled: () => setPendingDelete(null) })
+        }
+        onClose={() => setPendingDelete(null)}
+      />
     </div>
   );
 }

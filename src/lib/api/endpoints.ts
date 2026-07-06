@@ -154,8 +154,10 @@ export const franchisesApi = {
     api.post<FranchiseDetail>(`/franchises/${id}/restore`).then((r) => r.data),
   eligibleOwners: (id: string) =>
     api.get<EligiblePlayer[]>(`/franchises/${id}/eligible-owners`).then((r) => r.data),
+  // The backend returns an EMPTY body (→ "") for a free agent with no franchise; coerce that to null
+  // (not the truthy empty string) so `mine?.franchise` consumers don't dereference "".
   mine: () =>
-    api.get<FranchiseMineView | null>("/franchises/mine").then((r) => r.data ?? null),
+    api.get<FranchiseMineView | "">("/franchises/mine").then((r) => r.data || null),
   myInvites: () =>
     api.get<FranchiseInviteView[]>("/franchises/invites/mine").then((r) => r.data),
   pendingInvites: (id: string) =>
@@ -177,6 +179,14 @@ export const franchisesApi = {
 export interface MatchListParams {
   status?: string;
   gameId?: string;
+  /** Free-text search over game name, arena, format and participant franchise tag/name. */
+  q?: string;
+  /** Restrict to fixtures a given franchise participates in. */
+  franchiseId?: string;
+  /** Restrict to a season code (untagged/off-season fixtures are always included). */
+  seasonId?: string;
+  /** Sort order: -scheduledAt (default), scheduledAt, status, game. */
+  sort?: string;
   limit?: number;
   cursor?: string;
 }
@@ -235,6 +245,8 @@ export const announcementsApi = {
   get: (id: string) => api.get<AnnouncementView>(`/announcements/${id}`).then((r) => r.data),
   create: (body: CreateAnnouncementRequest) =>
     api.post<AnnouncementView>("/announcements", body).then((r) => r.data),
+  close: (id: string) =>
+    api.post<AnnouncementView>(`/announcements/${id}/close`).then((r) => r.data),
   remove: (id: string) => api.delete<void>(`/announcements/${id}`).then((r) => r.data),
 };
 
@@ -313,7 +325,9 @@ export const notificationsApi = {
 };
 
 export const auctionsApi = {
-  active: () => api.get<AuctionView | null>("/auctions/active").then((r) => r.data ?? null),
+  // The backend returns an EMPTY body (→ "") when there is no active auction; coerce that to null the
+  // same way seasonsApi.current does, so `?? null` consumers don't receive a truthy empty string.
+  active: () => api.get<AuctionView | "">("/auctions/active").then((r) => r.data || null),
   get: (id: string) => api.get<AuctionView>(`/auctions/${id}`).then((r) => r.data),
   create: (body: CreateAuctionRequest) =>
     api.post<AuctionView>("/auctions", body).then((r) => r.data),

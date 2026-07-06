@@ -17,7 +17,7 @@ const headCell = {
 } as const;
 
 export function PlayersScreen() {
-  const { data, isLoading, isError } = usePlayers({ limit: 50 });
+  const { data, isLoading, isError } = usePlayers({ limit: 100 });
   const players = data ? adaptPlayers(data.items) : [];
   const season = useCurrentSeason().data;
 

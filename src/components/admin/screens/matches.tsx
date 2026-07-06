@@ -43,7 +43,7 @@ const formInput = {
 
 function CreateMatchPanel({ onClose }: { onClose: () => void }) {
   const gamesQ = useGames();
-  const franchisesQ = useFranchises({ limit: 50 });
+  const franchisesQ = useFranchises({ active: true, limit: 50 });
   const createMatch = useCreateMatch();
   const games = gamesQ.data ?? [];
   const franchises = franchisesQ.data?.items ?? [];
@@ -341,11 +341,16 @@ function statusLabel(s: string) {
 
 export function MatchesScreen() {
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("All");
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState("-scheduledAt");
   const [creating, setCreating] = useState(false);
   const [lineupsMatch, setLineupsMatch] = useState<MatchSummary | null>(null);
+  // Search / sort are server-side (the matches endpoint filters by game/arena/format/franchise + sorts).
   const { data, isLoading, isError } = useMatches({
     limit: 50,
     status: filter === "All" ? undefined : filter,
+    q: search.trim() || undefined,
+    sort,
   });
   const matches = data?.items ?? [];
 
@@ -423,6 +428,44 @@ export function MatchesScreen() {
             </button>
           );
         })}
+      </div>
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search team, game, arena, format…"
+          style={{
+            flex: 1,
+            minWidth: 200,
+            fontFamily: FONT.mono,
+            fontSize: 11.5,
+            background: SQ.inset,
+            border: `1px solid ${SQ.inputBorder}`,
+            borderRadius: 5,
+            padding: "9px 12px",
+            color: SQ.ink,
+          }}
+        />
+        <select
+          value={sort}
+          onChange={(e) => setSort(e.target.value)}
+          style={{
+            fontFamily: FONT.mono,
+            fontSize: 11.5,
+            background: SQ.inset,
+            border: `1px solid ${SQ.inputBorder}`,
+            borderRadius: 5,
+            padding: "9px 12px",
+            color: SQ.ink,
+            cursor: "pointer",
+          }}
+        >
+          <option value="-scheduledAt">Newest first</option>
+          <option value="scheduledAt">Oldest first</option>
+          <option value="status">By status</option>
+          <option value="game">By game</option>
+        </select>
       </div>
 
       {isLoading ? (

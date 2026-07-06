@@ -73,17 +73,22 @@ export function GamesScreen() {
                   borderBottom: `1px solid ${SQ.hairline}`,
                   display: "flex",
                   alignItems: "flex-end",
-                  justifyContent: "space-between",
                   padding: "14px 18px",
                 }}
               >
-                <span style={{ fontFamily: FONT.display, fontSize: 22, letterSpacing: "-.02em" }}>
-                  {g.name}
-                </span>
+                {/* Title only — the format lives in the body below, so long names (MARVEL RIVALS,
+                    SMASHKARTS) can wrap cleanly here instead of colliding with a subtitle. */}
                 <span
-                  style={{ fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".12em", color: SQ.mute }}
+                  style={{
+                    fontFamily: FONT.display,
+                    fontSize: 22,
+                    letterSpacing: "-.02em",
+                    lineHeight: 1.05,
+                    minWidth: 0,
+                    overflowWrap: "anywhere",
+                  }}
                 >
-                  {g.format}
+                  {g.name}
                 </span>
               </div>
               <div style={{ padding: 18 }}>

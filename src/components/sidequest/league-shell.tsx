@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth/context";
-import { useCurrentSeason } from "@/lib/query/hooks";
+import { useActiveAuction, useCurrentSeason } from "@/lib/query/hooks";
 import { ThemeToggle } from "@/lib/theme";
 import { NotificationBell } from "./notification-bell";
 import { SQ, FONT } from "./tokens";
@@ -26,6 +26,7 @@ function activeKey(pathname: string): string {
   if (pathname.startsWith("/player")) return "players"; // players + player
   if (pathname.startsWith("/match")) return "match";
   if (pathname.startsWith("/announcements")) return "announcements";
+  if (pathname.startsWith("/auction")) return "auction"; // top-level spectator route
   if (pathname.startsWith("/my/franchise")) return "myFranchise"; // must precede the generic /my check
   if (pathname.startsWith("/my")) return "my";
   return "home";
@@ -47,6 +48,13 @@ export function LeagueShell({
   // neutral off-season label when no season is active (or while it loads).
   const season = useCurrentSeason().data ?? null;
   const seasonCode = season?.code ?? "—";
+
+  // Surface a public "Auction" tab only while an auction is live to watch — fans and non-participant
+  // franchises can follow the bidding read-only from there.
+  const activeAuction = useActiveAuction(isAuthenticated).data ?? null;
+  const links = activeAuction
+    ? [...navLinks, { key: "auction", label: "Auction", href: "/auction" }]
+    : navLinks;
   const seasonTagline = season
     ? `${season.name.toUpperCase()} · BUILT FOR THE FRANCHISES`
     : "OFF-SEASON · BUILT FOR THE FRANCHISES";
@@ -135,7 +143,7 @@ export function LeagueShell({
             flexWrap: "wrap",
           }}
         >
-          {navLinks.map((link) => {
+          {links.map((link) => {
             const active = cur === link.key;
             return (
               <Link

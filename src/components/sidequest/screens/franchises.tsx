@@ -28,7 +28,8 @@ export function FranchisesScreen() {
 
   // Live franchises for the current season; frozen snapshot for finished seasons;
   // aggregated all-time standings for the "All seasons" view.
-  const liveQ = useFranchises({ active: true });
+  // Explicit high limit so the league table isn't silently clamped to the server default (20 rows).
+  const liveQ = useFranchises({ active: true, limit: 100 });
   const snapshotQ = useSeasonStandings(isCurrent || isAll ? undefined : code || undefined);
   const allTimeQ = useAllTimeStandings();
   const live = liveQ.data ? adaptFranchises(liveQ.data.items) : [];

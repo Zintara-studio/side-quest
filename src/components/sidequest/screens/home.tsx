@@ -16,6 +16,7 @@ import {
   useAnnouncements,
   useActiveAuction,
 } from "@/lib/query/hooks";
+import { useAuth } from "@/lib/auth/context";
 import { adaptUpcoming, shortDate, announcementTagFor, type UpcomingItem } from "@/lib/adapters/league";
 import type {
   AnnouncementView,
@@ -66,7 +67,9 @@ export function HomeScreen() {
   const topPlayersQ = useTopPlayers(5);
   const seasonQ = useCurrentSeason();
   const seasonsQ = useSeasons();
-  const activeAuction = useActiveAuction().data ?? null;
+  // Auction reads require auth — gate the query so guests don't fire a wasted 401.
+  const { isAuthenticated } = useAuth();
+  const activeAuction = useActiveAuction(isAuthenticated).data ?? null;
 
   const season = seasonQ.data ?? null;
   const seasons = seasonsQ.data ?? [];
@@ -146,6 +149,11 @@ export function HomeScreen() {
           error={finalStandingsQ.isError}
           hasAuction={!!activeAuction}
           feed={feed}
+          registrationCalls={registrationCalls}
+          upcoming={upcoming}
+          upcomingLoading={upcomingQ.isLoading}
+          upcomingError={upcomingQ.isError}
+          recent={recent}
         />
       ) : (
         <InSeason
@@ -253,7 +261,7 @@ function AuctionBanner({ auction }: { auction: AuctionView }) {
 
   return (
     <Link
-      href="/my/franchise/auction"
+      href="/auction"
       style={{
         display: "flex",
         flexWrap: "wrap",
@@ -344,40 +352,14 @@ function InSeason({
 }) {
   return (
     <>
-      {registrationCalls.length > 0 ? (
-        <>
-          <SectionHead label="Open Registration" />
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))",
-              gap: 16,
-            }}
-          >
-            {registrationCalls.map((a) => (
-              <RegistrationCallCard key={a.id} a={a} />
-            ))}
-          </div>
-        </>
-      ) : null}
-
-      <SectionHead label="Upcoming Matches" />
-      {upcomingLoading ? (
-        <StateNote>Loading fixtures…</StateNote>
-      ) : upcoming.length === 0 ? (
-        <StateNote tone={upcomingError ? "error" : "muted"}>
-          {upcomingError ? "Couldn't reach the league API." : "No upcoming matches scheduled."}
-        </StateNote>
-      ) : (
-        <MatchGrid items={upcoming} kind="upcoming" />
-      )}
-
-      {recent.length > 0 ? (
-        <>
-          <SectionHead label="Recent Results" />
-          <MatchGrid items={recent} kind="result" />
-        </>
-      ) : null}
+      <CallsAndFixtures
+        registrationCalls={registrationCalls}
+        upcoming={upcoming}
+        upcomingLoading={upcomingLoading}
+        upcomingError={upcomingError}
+        recent={recent}
+        showEmptyUpcoming
+      />
 
       <SectionHeadRow label="Franchise Leaderboard" href="/franchises" />
       <Leaderboard
@@ -420,6 +402,71 @@ function InSeason({
   );
 }
 
+// ---- shared: open registration calls + fixtures (rendered in BOTH season states) --------------
+// FFA matches, franchise calls and auction sign-ups all continue between seasons, so these sections
+// must not disappear off-season. `showEmptyUpcoming` keeps the always-on "Upcoming Matches" empty state
+// in-season, while off-season only surfaces sections that actually have content.
+
+function CallsAndFixtures({
+  registrationCalls,
+  upcoming,
+  upcomingLoading,
+  upcomingError,
+  recent,
+  showEmptyUpcoming,
+}: {
+  registrationCalls: AnnouncementView[];
+  upcoming: UpcomingItem[];
+  upcomingLoading: boolean;
+  upcomingError: boolean;
+  recent: UpcomingItem[];
+  showEmptyUpcoming: boolean;
+}) {
+  const showUpcoming = showEmptyUpcoming || upcomingLoading || upcoming.length > 0;
+  return (
+    <>
+      {registrationCalls.length > 0 ? (
+        <>
+          <SectionHead label="Open Registration" />
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))",
+              gap: 16,
+            }}
+          >
+            {registrationCalls.map((a) => (
+              <RegistrationCallCard key={a.id} a={a} />
+            ))}
+          </div>
+        </>
+      ) : null}
+
+      {showUpcoming ? (
+        <>
+          <SectionHead label="Upcoming Matches" />
+          {upcomingLoading ? (
+            <StateNote>Loading fixtures…</StateNote>
+          ) : upcoming.length === 0 ? (
+            <StateNote tone={upcomingError ? "error" : "muted"}>
+              {upcomingError ? "Couldn't reach the league API." : "No upcoming matches scheduled."}
+            </StateNote>
+          ) : (
+            <MatchGrid items={upcoming} kind="upcoming" />
+          )}
+        </>
+      ) : null}
+
+      {recent.length > 0 ? (
+        <>
+          <SectionHead label="Recent Results" />
+          <MatchGrid items={recent} kind="result" />
+        </>
+      ) : null}
+    </>
+  );
+}
+
 // ---- off-season state ------------------------------------------------------
 
 function OffSeason({
@@ -430,6 +477,11 @@ function OffSeason({
   error,
   hasAuction,
   feed,
+  registrationCalls,
+  upcoming,
+  upcomingLoading,
+  upcomingError,
+  recent,
 }: {
   lastFinished: SeasonView | null;
   finalStandings: SeasonStandingView[];
@@ -438,10 +490,25 @@ function OffSeason({
   error: boolean;
   hasAuction: boolean;
   feed: AnnouncementView[];
+  registrationCalls: AnnouncementView[];
+  upcoming: UpcomingItem[];
+  upcomingLoading: boolean;
+  upcomingError: boolean;
+  recent: UpcomingItem[];
 }) {
   return (
     <>
       <ChampionCard season={lastFinished} champion={champion} />
+
+      {/* Between seasons the league keeps moving — surface any open calls and off-season fixtures. */}
+      <CallsAndFixtures
+        registrationCalls={registrationCalls}
+        upcoming={upcoming}
+        upcomingLoading={upcomingLoading}
+        upcomingError={upcomingError}
+        recent={recent}
+        showEmptyUpcoming={false}
+      />
 
       <SectionHead label={lastFinished ? `Final Standings · ${lastFinished.code}` : "Final Standings"} />
       {loading ? (
@@ -475,7 +542,7 @@ function OffSeason({
         </div>
         {hasAuction ? (
           <Link
-            href="/my/franchise/auction"
+            href="/auction"
             style={{
               display: "inline-block",
               marginTop: 14,

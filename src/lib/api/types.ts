@@ -117,7 +117,14 @@ export interface PlayerDetail {
   points: number;
   user: { name: string };
   franchise: { id: string; name: string; tag: string } | null;
-  proficiencies: { gameId: string; gameName: string; rating: number }[];
+  proficiencies: {
+    gameId: string;
+    gameName: string;
+    rating: number;
+    rankTier?: string | null;
+    kd?: number | null;
+    accountLevel?: number | null;
+  }[];
 }
 
 export interface PlayerMatchView {
@@ -480,11 +487,19 @@ export interface ProficiencyEntry {
   gameId: string;
   rating: number;
   handle?: string;
+  /** Objective rank/tier label (e.g. "Immortal 2", "Conqueror"). */
+  rankTier?: string;
+  /** Self-reported kill/death ratio. */
+  kd?: number;
+  /** Self-reported in-game account level. */
+  accountLevel?: number;
 }
 
 export interface ApplyRequest {
   type: RegistrationType;
   squadName?: string;
+  /** FRANCHISE proposals: requested tag/abbreviation (e.g. "RXG"); derived from the name when blank. */
+  franchiseTag?: string;
   games: string[];
   contact?: string;
   matchId?: string;
@@ -513,6 +528,8 @@ export interface RegistrationView {
   type: string;
   player: { id: string; gamerTag: string } | null;
   squadName?: string;
+  /** FRANCHISE proposals: the requested tag/abbreviation (null when none supplied). */
+  franchiseTag?: string | null;
   games: string[];
   contact?: string;
   status: string;
@@ -703,8 +720,15 @@ export interface AuctionLotView {
   lotOrder: number;
   /** Games this player registered for the auction with. */
   games: string[];
-  /** Per-game expertise the player self-reported at registration (rating 0-100). */
-  expertise: { game: string; rating: number; handle: string | null }[];
+  /** Per-game expertise the player self-reported at registration (rating 0-100 + objective signals). */
+  expertise: {
+    game: string;
+    rating: number;
+    handle: string | null;
+    rankTier?: string | null;
+    kd?: number | null;
+    accountLevel?: number | null;
+  }[];
   /** Free-form contact the player supplied at registration; null if none. */
   contact: string | null;
 }

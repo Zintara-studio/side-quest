@@ -5,7 +5,14 @@ import Link from "next/link";
 import { SQ, FONT, rankAccent } from "../tokens";
 import { LeagueTitle } from "../league-title";
 import { StateNote } from "../state-note";
-import { useMatch, useMatchLeaderboard, useMatchRounds, useMatches, useSeasons } from "@/lib/query/hooks";
+import {
+  useMatch,
+  useMatchLeaderboard,
+  useMatchRounds,
+  useMatchesInfinite,
+  useGames,
+  useSeasons,
+} from "@/lib/query/hooks";
 import { shortDate } from "@/lib/adapters/league";
 
 const ALL = "__all__";
@@ -41,13 +48,52 @@ function MatchHistory({ base }: { base: string }) {
   const code = selected || current?.code || seasons[0]?.code || "";
   const isAll = selected === ALL;
 
-  const mq = useMatches({ limit: 100 });
-  // The matches API has no seasonId param, so filter client-side. Default view
-  // is the current season; "All seasons" shows the full archive.
-  const matches = [...(mq.data?.items ?? [])]
-    .filter((m) => isAll || m.seasonId === code)
-    .sort((a, b) => ts(b.scheduledAt) - ts(a.scheduledAt));
+  // Search / game filter / sort controls over the archive.
+  const [search, setSearch] = useState("");
+  const [gameFilter, setGameFilter] = useState("");
+  const [sortMode, setSortMode] = useState<"newest" | "oldest" | "status" | "game">("newest");
+  const gamesQ = useGames(true);
+
+  const mq = useMatchesInfinite({ limit: 100 });
+  const loaded = (mq.data?.pages ?? []).flatMap((p) => p.items);
+
+  // Filter client-side: season (untagged/off-season fixtures always show so they don't vanish between
+  // seasons), then game, then a free-text search over teams / game / arena / format; finally sort.
+  const q = search.trim().toLowerCase();
+  const matches = loaded
+    .filter((m) => isAll || m.seasonId === code || !m.seasonId)
+    .filter((m) => !gameFilter || m.game.name === gameFilter)
+    .filter((m) =>
+      !q
+        ? true
+        : [m.game.name, m.arena ?? "", m.format ?? "", ...m.participantTags]
+            .join(" ")
+            .toLowerCase()
+            .includes(q),
+    )
+    .sort((a, b) => {
+      switch (sortMode) {
+        case "oldest":
+          return ts(a.scheduledAt) - ts(b.scheduledAt);
+        case "status":
+          return (a.status ?? "").localeCompare(b.status ?? "");
+        case "game":
+          return a.game.name.localeCompare(b.game.name);
+        default:
+          return ts(b.scheduledAt) - ts(a.scheduledAt);
+      }
+    });
   const finals = matches.filter((m) => (m.status ?? "").toUpperCase() === "COMPLETED").length;
+
+  const controlStyle = {
+    fontFamily: FONT.mono,
+    fontSize: 11.5,
+    background: SQ.inset,
+    border: `1px solid ${SQ.inputBorder}`,
+    borderRadius: 5,
+    padding: "8px 11px",
+    color: SQ.ink,
+  } as const;
 
   return (
     <div>
@@ -114,6 +160,38 @@ function MatchHistory({ base }: { base: string }) {
             All seasons
           </button>
         </div>
+      </div>
+
+      {/* search · game · sort */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 18 }}>
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search team, game, arena…"
+          style={{ ...controlStyle, flex: 1, minWidth: 180 }}
+        />
+        <select
+          value={gameFilter}
+          onChange={(e) => setGameFilter(e.target.value)}
+          style={{ ...controlStyle, cursor: "pointer" }}
+        >
+          <option value="">All games</option>
+          {(gamesQ.data ?? []).map((g) => (
+            <option key={g.id} value={g.name}>
+              {g.name}
+            </option>
+          ))}
+        </select>
+        <select
+          value={sortMode}
+          onChange={(e) => setSortMode(e.target.value as typeof sortMode)}
+          style={{ ...controlStyle, cursor: "pointer" }}
+        >
+          <option value="newest">Newest first</option>
+          <option value="oldest">Oldest first</option>
+          <option value="status">By status</option>
+          <option value="game">By game</option>
+        </select>
       </div>
 
       {mq.isLoading || seasonsQ.isLoading ? (
@@ -209,6 +287,30 @@ function MatchHistory({ base }: { base: string }) {
           </div>
         </div>
       )}
+
+      {mq.hasNextPage ? (
+        <div style={{ display: "flex", justifyContent: "center", marginTop: 20 }}>
+          <button
+            type="button"
+            onClick={() => mq.fetchNextPage()}
+            disabled={mq.isFetchingNextPage}
+            style={{
+              fontFamily: FONT.mono,
+              fontSize: 11.5,
+              letterSpacing: ".12em",
+              textTransform: "uppercase",
+              color: SQ.faint,
+              background: "transparent",
+              border: `1px solid ${SQ.inputBorder}`,
+              borderRadius: 6,
+              padding: "10px 20px",
+              cursor: mq.isFetchingNextPage ? "not-allowed" : "pointer",
+            }}
+          >
+            {mq.isFetchingNextPage ? "Loading…" : "Load more matches"}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

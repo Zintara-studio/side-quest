@@ -196,7 +196,8 @@ function FranchisePanel({ mine }: { mine: FranchiseMineView }) {
   // reliable in-app entry to the room before bidding starts (the notification deep-link 404'd).
   const activeAuction = useActiveAuction().data ?? null;
   // This franchise's seat at the auction table (match by id) — lets us reflect its join state.
-  const myAuctionSeat = activeAuction?.franchises.find((fr) => fr.franchiseId === f.id) ?? null;
+  // Guard `franchises` defensively: a malformed/empty payload must never crash this page.
+  const myAuctionSeat = activeAuction?.franchises?.find((fr) => fr.franchiseId === f.id) ?? null;
   const auctionOpen =
     canManage &&
     (activeAuction?.status === "LOBBY" ||

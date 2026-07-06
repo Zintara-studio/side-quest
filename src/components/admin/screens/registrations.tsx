@@ -5,6 +5,7 @@ import Link from "next/link";
 import { SQ, FONT } from "../tokens";
 import { ScreenHeader } from "../screen-header";
 import { StateNote } from "@/components/sidequest/state-note";
+import { ConfirmModal } from "@/components/sidequest/confirm-modal";
 import { useRegistrations, useRejectRegistration, useMatches } from "@/lib/query/hooks";
 import { shortDate } from "@/lib/adapters/league";
 import type { RegistrationView } from "@/lib/api/types";
@@ -53,13 +54,11 @@ export function RegistrationsScreen() {
   // registration alone carries. Registration still falls back to its own gameName.
   const matchesQ = useMatches({ limit: 100 });
   const discard = useRejectRegistration();
+  const [pendingDiscard, setPendingDiscard] = useState<string | null>(null);
 
-  const onDiscard = (id: string) => {
-    // Discard removes the registration from the match. Reason is optional — we omit it here.
-    if (window.confirm("Discard this registration? The player/squad is removed from this match.")) {
-      discard.mutate({ id });
-    }
-  };
+  // Discard removes the registration from the match; reason is optional — omitted here. Staged for a
+  // themed confirm dialog instead of the native window.confirm.
+  const onDiscard = (id: string) => setPendingDiscard(id);
 
   // Only the live match registrations belong here: a SQUAD forming, a solo PLAYER active, or either
   // once auto-locked. FRANCHISE proposals (PENDING/APPROVED) live on the admin Franchises page, and
@@ -410,6 +409,20 @@ export function RegistrationsScreen() {
           ) : null}
         </div>
       )}
+
+      <ConfirmModal
+        open={!!pendingDiscard}
+        title="Discard registration"
+        tone="destructive"
+        message="Discard this registration? The player or squad is removed from this match. This can't be undone."
+        confirmLabel="Discard"
+        busy={discard.isPending}
+        onConfirm={() =>
+          pendingDiscard &&
+          discard.mutate({ id: pendingDiscard }, { onSettled: () => setPendingDiscard(null) })
+        }
+        onClose={() => setPendingDiscard(null)}
+      />
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { ScreenHeader } from "../screen-header";
 import { TableScroll } from "../table-scroll";
 import { StateNote } from "@/components/sidequest/state-note";
 import { SearchableSelect } from "@/components/sidequest/searchable-select";
+import { ConfirmModal } from "@/components/sidequest/confirm-modal";
 import {
   useFranchises,
   useFranchise,
@@ -242,6 +243,7 @@ function ProposalCard({ r }: { r: RegistrationView }) {
   const keep = useCreateFranchiseFromProposal();
   const discard = useRejectRegistration();
   const [msg, setMsg] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   const busy = keep.isPending || discard.isPending;
 
@@ -255,13 +257,14 @@ function ProposalCard({ r }: { r: RegistrationView }) {
     }
   };
 
-  const onDiscard = async () => {
-    if (!window.confirm("Discard this franchise proposal? The registration will be rejected.")) return;
+  const doDiscard = async () => {
     setMsg(null);
     try {
       await discard.mutateAsync({ id: r.id, reason: "Franchise proposal discarded." });
     } catch (e) {
       setMsg({ tone: "err", text: apiErrorMessage(e, "Couldn't discard this proposal.") });
+    } finally {
+      setConfirmDiscard(false);
     }
   };
 
@@ -272,9 +275,17 @@ function ProposalCard({ r }: { r: RegistrationView }) {
     <div style={{ background: SQ.inset, border: `1px solid ${SQ.hairline}`, borderRadius: 9, padding: 16 }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 15, fontWeight: 700 }}>{title}</div>
+          <div style={{ fontSize: 15, fontWeight: 700 }}>
+            {title}
+            {r.franchiseTag ? (
+              <span style={{ color: SQ.mute, fontWeight: 400, fontFamily: FONT.mono, fontSize: 12 }}>
+                {" "}· {r.franchiseTag}
+              </span>
+            ) : null}
+          </div>
           <div style={{ fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".08em", color: SQ.mute, marginTop: 3 }}>
             PROPOSED BY {(r.player?.gamerTag ?? "—").toUpperCase()}
+            {r.franchiseTag ? " · TAG REQUESTED" : ""}
           </div>
         </div>
         <span
@@ -326,7 +337,7 @@ function ProposalCard({ r }: { r: RegistrationView }) {
         <button
           type="button"
           disabled={busy}
-          onClick={onDiscard}
+          onClick={() => setConfirmDiscard(true)}
           style={{ ...cardBtn, color: SQ.ember, background: "transparent", border: "1px solid rgba(232,96,44,.45)", opacity: busy ? 0.6 : 1 }}
         >
           {discard.isPending ? "Discarding…" : "Discard"}
@@ -346,6 +357,17 @@ function ProposalCard({ r }: { r: RegistrationView }) {
           {msg.text}
         </div>
       ) : null}
+
+      <ConfirmModal
+        open={confirmDiscard}
+        title="Discard proposal"
+        tone="destructive"
+        message={`Discard the franchise proposal “${title}”? The registration will be rejected and the applicant notified.`}
+        confirmLabel="Discard proposal"
+        busy={discard.isPending}
+        onConfirm={doDiscard}
+        onClose={() => setConfirmDiscard(false)}
+      />
     </div>
   );
 }
@@ -358,7 +380,19 @@ function ManagePanel({ franchiseId }: { franchiseId: string }) {
   const discard = useDiscardFranchise();
   const restore = useRestoreFranchise();
   const [lifecycleMsg, setLifecycleMsg] = useState<string | null>(null);
+  const [confirmDiscardFr, setConfirmDiscardFr] = useState(false);
   const d = detailQ.data;
+
+  const doDiscardFranchise = async () => {
+    setLifecycleMsg(null);
+    try {
+      await discard.mutateAsync(franchiseId);
+    } catch (e) {
+      setLifecycleMsg(apiErrorMessage(e, "Couldn't discard this franchise."));
+    } finally {
+      setConfirmDiscardFr(false);
+    }
+  };
   const eligible = eligibleQ.data ?? [];
 
   const [ownerMsg, setOwnerMsg] = useState<string | null>(null);
@@ -437,15 +471,7 @@ function ManagePanel({ franchiseId }: { franchiseId: string }) {
             <button
               type="button"
               disabled={discard.isPending}
-              onClick={async () => {
-                setLifecycleMsg(null);
-                if (!window.confirm("Discard this franchise? It will stop competing (history is kept). Only allowed between seasons.")) return;
-                try {
-                  await discard.mutateAsync(franchiseId);
-                } catch (e) {
-                  setLifecycleMsg(apiErrorMessage(e, "Couldn't discard this franchise."));
-                }
-              }}
+              onClick={() => setConfirmDiscardFr(true)}
               style={{ ...smallBtn, color: SQ.ember, background: "transparent", border: "1px solid rgba(232,96,44,.45)" }}
             >
               {discard.isPending ? "Discarding…" : "Discard franchise"}
@@ -478,6 +504,17 @@ function ManagePanel({ franchiseId }: { franchiseId: string }) {
           No eligible players to assign — only verified players who are unassigned or already on this franchise can be an owner or manager.
         </div>
       ) : null}
+
+      <ConfirmModal
+        open={confirmDiscardFr}
+        title="Discard franchise"
+        tone="destructive"
+        message={`Discard ${d?.name ?? "this franchise"}? It stops competing (history is kept) and its owner, manager and roster are released as free agents. Only allowed between seasons.`}
+        confirmLabel="Discard franchise"
+        busy={discard.isPending}
+        onConfirm={doDiscardFranchise}
+        onClose={() => setConfirmDiscardFr(false)}
+      />
     </div>
   );
 }

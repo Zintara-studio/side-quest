@@ -13,6 +13,7 @@ import com.sidequest.arena.model.Player;
 import com.sidequest.arena.model.PlayerGameProficiency;
 import com.sidequest.arena.model.PlayerGameUsername;
 import com.sidequest.arena.model.PlayerStatus;
+import com.sidequest.arena.model.Announcement;
 import com.sidequest.arena.model.Registration;
 import com.sidequest.arena.model.RegistrationStatus;
 import com.sidequest.arena.model.RegistrationType;
@@ -33,6 +34,7 @@ import com.sidequest.arena.repo.MatchRepository;
 import com.sidequest.arena.repo.PlayerGameProficiencyRepository;
 import com.sidequest.arena.repo.PlayerGameUsernameRepository;
 import com.sidequest.arena.repo.PlayerRepository;
+import com.sidequest.arena.repo.AnnouncementRepository;
 import com.sidequest.arena.repo.RegistrationRepository;
 import com.sidequest.arena.repo.SeasonRepository;
 import com.sidequest.arena.repo.TeamInviteRepository;
@@ -62,6 +64,7 @@ public class RegistrationService {
     private static final int DEFAULT_SQUAD_SIZE = 5;
 
     private final RegistrationRepository registrationRepository;
+    private final AnnouncementRepository announcementRepository;
     private final PlayerRepository playerRepository;
     private final UserRepository userRepository;
     private final TeamInviteRepository teamInviteRepository;
@@ -76,6 +79,7 @@ public class RegistrationService {
     private final AuditService auditService;
 
     public RegistrationService(RegistrationRepository registrationRepository,
+                               AnnouncementRepository announcementRepository,
                                PlayerRepository playerRepository,
                                UserRepository userRepository,
                                TeamInviteRepository teamInviteRepository,
@@ -89,6 +93,7 @@ public class RegistrationService {
                                NotificationService notificationService,
                                AuditService auditService) {
         this.registrationRepository = registrationRepository;
+        this.announcementRepository = announcementRepository;
         this.playerRepository = playerRepository;
         this.userRepository = userRepository;
         this.teamInviteRepository = teamInviteRepository;
@@ -130,6 +135,16 @@ public class RegistrationService {
         }
 
         Player player = currentPlayer();
+
+        // If this entry is responding to a specific registration call, that call must still be open —
+        // a stale link (closed/deleted call) can't submit past the UI. This is the authoritative guard.
+        if (request.announcementId() != null && !request.announcementId().isBlank()) {
+            Announcement call = announcementRepository
+                    .findById(parseId(request.announcementId(), "Announcement")).orElse(null);
+            if (call == null || !call.isRegistrationOpen()) {
+                throw ApiException.badRequest("This registration call has closed.");
+            }
+        }
 
         // Verification gate: auctions and franchise creation are for verified accounts only; anyone may
         // still enter FFA/solo/squad games. (Verification will be automated via email; today it's set by
@@ -705,6 +720,15 @@ public class RegistrationService {
             if (reg.getStatus() == RegistrationStatus.FORMING
                     || reg.getStatus() == RegistrationStatus.ACTIVE) {
                 voidRegistration(reg, reason);
+                // Don't kill a registration silently — the applicant (and any accepted squad members) are told.
+                Player applicant = reg.getPlayer();
+                if (applicant != null && applicant.getUser() != null) {
+                    notificationService.create(applicant.getUser(), NotificationType.REGISTRATION,
+                            "Registration closed",
+                            "Your " + describe(reg) + " registration was closed: " + reason,
+                            "/my/registrations");
+                }
+                notifyAcceptedMembers(reg, false, reason);
             }
         }
     }
@@ -826,7 +850,8 @@ public class RegistrationService {
                 gameName,
                 members,
                 acceptedCount,
-                registration.getTeamSize());
+                registration.getTeamSize(),
+                registration.isConsumed());
     }
 
     /**

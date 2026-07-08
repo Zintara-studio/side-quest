@@ -19,6 +19,7 @@ import com.sidequest.arena.repo.UserRepository;
 import com.sidequest.arena.security.JwtService;
 import com.sidequest.arena.security.SecurityUtils;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -160,6 +161,13 @@ public class AuthService {
                 .orElse(null);
 
         return new MeResponse(userView, playerView);
+    }
+
+    /** Hourly cleanup of expired refresh tokens so the table doesn't grow without bound. */
+    @Scheduled(fixedDelay = 3_600_000)
+    @Transactional
+    public void purgeExpiredRefreshTokens() {
+        refreshTokenRepository.deleteExpiredBefore(Instant.now());
     }
 
     // ---- helpers ----

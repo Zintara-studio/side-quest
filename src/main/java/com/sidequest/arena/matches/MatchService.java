@@ -841,6 +841,12 @@ public class MatchService {
         );
     }
 
+    /** Configured hours before a match's scheduled start when its registration window closes. */
+    private int registrationLockHours() {
+        LeagueSettings s = leagueSettingsRepository.findById(LeagueSettings.SINGLETON_ID).orElse(null);
+        return s != null ? Math.max(0, s.getRegistrationLockHours()) : 3;
+    }
+
     private MatchDetail toDetail(Match match) {
         List<ParticipantView> participants = matchParticipantRepository.findByMatchId(match.getId()).stream()
                 .map(MatchParticipant::getFranchise)
@@ -860,6 +866,7 @@ public class MatchService {
                 match.getMatchType() == null ? null : match.getMatchType().name(),
                 match.getPointsPerKill(),
                 match.getPlacementPoints(),
+                registrationLockHours(),
                 participants
         );
     }

@@ -25,6 +25,8 @@ import java.util.UUID;
  *                      profile (used by AUCTION entries so franchises can scout the pool), nullable
  * @param note          optional free-form note stored on the registration for admins, nullable
  * @param teamSize      desired squad size for a SQUAD registration (caps invites); nullable → default
+ * @param announcementId the registration call this entry responds to, so the server can reject a
+ *                       closed/deleted call; nullable for direct (non-call) registrations
  */
 public record ApplyRequest(
         @NotNull RegistrationType type,
@@ -36,7 +38,8 @@ public record ApplyRequest(
         UUID gameId,
         List<ProficiencyEntry> proficiencies,
         String note,
-        Integer teamSize
+        Integer teamSize,
+        String announcementId
 ) {
 
     /**

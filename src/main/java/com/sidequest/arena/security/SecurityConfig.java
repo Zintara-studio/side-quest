@@ -70,7 +70,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET,
                                 "/players/**", "/franchises/**", "/games/**", "/matches/**",
                                 "/standings/**", "/leaderboard/**", "/announcements/**",
-                                "/seasons/**").permitAll()
+                                "/seasons/**", "/auctions/**").permitAll()
                         // --- realtime handshake is authenticated at the WS layer ---
                         .requestMatchers("/ws/**", "/live/**").permitAll()
                         // --- everything else requires a valid token ---

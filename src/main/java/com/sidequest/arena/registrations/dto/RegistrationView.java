@@ -25,6 +25,8 @@ import java.util.List;
  *                   solo (PLAYER) registrations
  * @param acceptedCount number of confirmed members (captain + accepted invites)
  * @param teamSize   desired squad size (invite cap) for SQUAD registrations, nullable
+ * @param consumed   whether an AUCTION entry has already been drawn into a completed auction (so the
+ *                   frontend can offer re-entry into the next pool instead of showing it as live)
  */
 public record RegistrationView(
         String id,
@@ -43,7 +45,8 @@ public record RegistrationView(
         String gameName,
         List<MemberView> members,
         int acceptedCount,
-        Integer teamSize
+        Integer teamSize,
+        boolean consumed
 ) {
 
     /** Minimal applicant-player reference. */

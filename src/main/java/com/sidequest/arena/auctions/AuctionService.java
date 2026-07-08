@@ -427,6 +427,7 @@ public class AuctionService {
             auctionRepository.save(auction);
             consumeAuctionPool();
             notifyAuctionSummary(auction);
+            notifyAuctionPlayers(auction);
             return publishAndView(auction);
         } finally {
             lock.unlock();
@@ -928,6 +929,29 @@ public class AuctionService {
                     ? "You didn't sign any players."
                     : "You won: " + String.join(", ", won) + " (spent " + spent + ").";
             notifyLeadership(af.getFranchise(), "Auction complete", body, link);
+        }
+    }
+
+    /** Tell each pooled player how they fared: signed (by whom, for how much) or unsold. */
+    private void notifyAuctionPlayers(Auction auction) {
+        for (AuctionLot lot : auctionLotRepository.findByAuctionIdOrderByLotOrderAsc(auction.getId())) {
+            Player player = lot.getPlayer();
+            if (player == null || player.getUser() == null) {
+                continue;
+            }
+            if (lot.getStatus() == AuctionLotStatus.SOLD && lot.getSoldTo() != null) {
+                String tag = lot.getSoldTo().getFranchise() != null
+                        ? lot.getSoldTo().getFranchise().getTag() : "a franchise";
+                notificationService.create(player.getUser(), NotificationType.AUCTION,
+                        "You were signed!",
+                        "You were signed by " + tag + " for " + lot.getSoldPrice() + ".",
+                        "/my/franchise");
+            } else if (lot.getStatus() == AuctionLotStatus.UNSOLD) {
+                notificationService.create(player.getUser(), NotificationType.AUCTION,
+                        "You went unsold",
+                        "You weren't signed in this auction — you can re-enter the next auction pool.",
+                        "/my/registrations");
+            }
         }
     }
 

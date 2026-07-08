@@ -32,6 +32,7 @@ public record MatchDetail(
         String matchType,
         int pointsPerKill,
         String placementPoints,
+        int registrationLockHours,
         List<ParticipantView> participants
 ) {
 }

@@ -2,7 +2,9 @@
 // Values are CSS custom properties so the whole app re-themes by flipping
 // `document.documentElement.dataset.theme` between "light" (warm paper) and "dark"
 // (warm espresso). The actual colour values live in globals.css (:root / [data-theme=dark]).
-import type { MatchStatus, AnnouncementTag } from "@/lib/mock/admin";
+// Display-status unions used by the status/tag colour helpers below.
+export type MatchStatus = "Live" | "Scheduled" | "Awaiting result" | "Completed";
+export type AnnouncementTag = "RESULT" | "LEAGUE" | "RECAP" | "AUCTION";
 
 export const SQ = {
   bg: "var(--sq-bg)", // admin canvas

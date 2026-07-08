@@ -39,7 +39,10 @@ export function SignupForm() {
     try {
       // Backend has no 2FA/email-verification step yet — registration returns a live session.
       const role = await signup({ name, email, password });
-      router.push(role === "ADMIN" ? "/admin" : "/");
+      // Honour a ?next= redirect (carried over from the login link), but only same-origin paths.
+      const next = new URLSearchParams(window.location.search).get("next");
+      const safeNext = next && next.startsWith("/") && !next.startsWith("//") ? next : null;
+      router.push(safeNext ?? (role === "ADMIN" ? "/admin" : "/"));
     } catch (err) {
       setError(apiErrorMessage(err, "Could not create account."));
     } finally {

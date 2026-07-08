@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { SQ, FONT } from "../tokens";
 import { StateNote } from "../state-note";
 import { Modal } from "../modal";
@@ -54,24 +53,11 @@ const fmtWhen = (iso: string) => {
 export function AuctionBidScreen() {
   const { isAuthenticated, hydrated } = useAuth();
   const mineQ = useMyFranchise(isAuthenticated);
-  const activeQ = useActiveAuction(isAuthenticated);
+  // Auction reads are public — anonymous fans can spectate the board (bidding still needs a franchise).
+  const activeQ = useActiveAuction();
   // Full board for the active auction; polls fast only while LIVE. Falls back to the light
   // active-auction payload until the detailed board lands.
   const boardQ = useAuction(activeQ.data?.id);
-
-  if (hydrated && !isAuthenticated) {
-    return (
-      <div>
-        <Header />
-        <StateNote>
-          <Link href="/login" style={{ color: SQ.ember, textDecoration: "none", fontWeight: 600 }}>
-            Sign in
-          </Link>{" "}
-          to join the bidding room for your franchise.
-        </StateNote>
-      </div>
-    );
-  }
 
   const auction = boardQ.data ?? activeQ.data ?? null;
   const mine = mineQ.data ?? null;

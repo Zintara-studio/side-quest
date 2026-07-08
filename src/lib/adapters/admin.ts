@@ -1,6 +1,29 @@
 // Adapters mapping backend admin DTOs onto the control-room display shapes.
 import type { OverviewResponse } from "@/lib/api/types";
-import type { AdminKpi, AdminActivity, AdminTask } from "@/lib/mock/admin";
+
+// Control-room display shapes the overview adapter maps backend DTOs onto.
+export interface AdminKpi {
+  label: string;
+  value: string;
+  dot: string;
+  delta: string;
+  deltaColor: string;
+  border: string;
+}
+
+export interface AdminTask {
+  dot: string;
+  title: string;
+  meta: string;
+  btn: string;
+  href: string;
+  primary: boolean;
+}
+
+export interface AdminActivity {
+  time: string;
+  text: string;
+}
 
 /** ISO-8601 → "HH:MM" (24h), the activity-feed timestamp style. */
 function shortTime(iso: string): string {

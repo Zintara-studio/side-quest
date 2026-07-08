@@ -51,7 +51,7 @@ export function LeagueShell({
 
   // Surface a public "Auction" tab only while an auction is live to watch — fans and non-participant
   // franchises can follow the bidding read-only from there.
-  const activeAuction = useActiveAuction(isAuthenticated).data ?? null;
+  const activeAuction = useActiveAuction().data ?? null;
   const links = activeAuction
     ? [...navLinks, { key: "auction", label: "Auction", href: "/auction" }]
     : navLinks;

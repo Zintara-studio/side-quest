@@ -16,7 +16,6 @@ import {
   useAnnouncements,
   useActiveAuction,
 } from "@/lib/query/hooks";
-import { useAuth } from "@/lib/auth/context";
 import { adaptUpcoming, shortDate, announcementTagFor, type UpcomingItem } from "@/lib/adapters/league";
 import type {
   AnnouncementView,
@@ -67,9 +66,8 @@ export function HomeScreen() {
   const topPlayersQ = useTopPlayers(5);
   const seasonQ = useCurrentSeason();
   const seasonsQ = useSeasons();
-  // Auction reads require auth — gate the query so guests don't fire a wasted 401.
-  const { isAuthenticated } = useAuth();
-  const activeAuction = useActiveAuction(isAuthenticated).data ?? null;
+  // Auction reads are public, so the banner shows for guests too during a live auction.
+  const activeAuction = useActiveAuction().data ?? null;
 
   const season = seasonQ.data ?? null;
   const seasons = seasonsQ.data ?? [];

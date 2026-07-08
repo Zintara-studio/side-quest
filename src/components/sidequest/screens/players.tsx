@@ -5,9 +5,15 @@ import Link from "next/link";
 import { SQ, FONT } from "../tokens";
 import { LeagueTitle } from "../league-title";
 import { StateNote } from "../state-note";
-import { sortChips } from "@/lib/mock/league";
 import { usePlayers, useCurrentSeason } from "@/lib/query/hooks";
 import { adaptPlayers } from "@/lib/adapters/league";
+
+const sortChips = [
+  { label: "Franchise", selected: true },
+  { label: "A–Z", selected: false },
+  { label: "Z–A", selected: false },
+  { label: "Points", selected: false },
+];
 
 const headCell = {
   fontFamily: FONT.mono,

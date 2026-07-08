@@ -16,14 +16,12 @@ import {
   useInviteTeammate,
   useMatch,
   useMyRegistrations,
+  usePlayer,
   usePlayers,
 } from "@/lib/query/hooks";
 import type { GameSummary, RegistrationType } from "@/lib/api/types";
 import type { SessionUser } from "@/lib/auth/store";
 import { ranksFor } from "@/lib/ranks";
-
-// Registration locks this long before the match starts (backend enforces the same window).
-const REG_LOCK_MS = 3 * 60 * 60 * 1000;
 
 const fieldLabel = {
   fontFamily: FONT.mono,
@@ -91,13 +89,20 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
   // Franchise creation is an off-season activity — block a franchise bid while a season is running.
   const franchiseBlocked = mode === "FRANCHISE" && !!season;
 
-  // Client-side mirror of the backend time-lock: submissions close 3h before the match starts.
+  // Client-side mirror of the backend time-lock, using the league's configurable window (not a constant).
+  const lockHours = matchQ.data?.registrationLockHours ?? 3;
   const registrationLocked = useMemo(() => {
     const at = matchQ.data?.scheduledAt;
     if (!at) return false;
     const t = new Date(at).getTime();
-    return !Number.isNaN(t) && Date.now() > t - REG_LOCK_MS;
-  }, [matchQ.data]);
+    return !Number.isNaN(t) && Date.now() > t - lockHours * 3_600_000;
+  }, [matchQ.data, lockHours]);
+
+  // FRANCHISE creation needs a verified account (the backend also enforces it) — warn upfront rather
+  // than letting the user fill the whole form and only fail on submit.
+  const meQ = usePlayer(playerId ?? undefined);
+  const notVerified = !!meQ.data && meQ.data.status !== "VERIFIED";
+  const needsVerification = mode === "FRANCHISE" && notVerified;
 
   const [name, setName] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
@@ -134,7 +139,7 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (alreadyRegistered || registrationLocked) return;
+    if (alreadyRegistered || registrationLocked || needsVerification) return;
     if (franchiseBlocked) {
       setError("Franchise bids are only accepted between seasons — a season is currently running.");
       return;
@@ -164,6 +169,7 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
         games,
         contact: contact || undefined,
         matchId: ann.data?.matchId || undefined,
+        announcementId: announcementId || undefined,
         // SQUAD sign-ups carry the announcement's configured roster cap (backend also enforces it).
         teamSize: mode === "SQUAD" ? ann.data?.teamSize ?? undefined : undefined,
       });
@@ -191,8 +197,8 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
         setAlreadyRegistered(true);
         setError(null);
       } else if (status === 400 && /(clos|lock)/i.test(msg)) {
-        // Time-lock — locks 3 hours before match time.
-        setError("Registration closed — locks 3 hours before match time.");
+        // Time-lock — locks a configurable number of hours before match time.
+        setError(`Registration closed — locks ${lockHours} hours before match time.`);
       } else {
         setError(msg);
       }
@@ -221,10 +227,50 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
     );
   }
 
+  // A stale link into a deleted or closed registration call shouldn't render a live form.
+  if (announcementId && ann.isError) {
+    return (
+      <div>
+        <LeagueTitle eyebrow="Registration" title="REGISTER TO PLAY" />
+        <div style={{ marginTop: 22 }}>
+          <StateNote tone="error">
+            This registration call no longer exists.{" "}
+            <Link href="/announcements" style={{ color: SQ.ember, textDecoration: "none", fontWeight: 600 }}>
+              Back to announcements ▸
+            </Link>
+          </StateNote>
+        </div>
+      </div>
+    );
+  }
+  if (ann.data && !ann.data.registrationOpen) {
+    return (
+      <div>
+        <LeagueTitle eyebrow="Registration" title="REGISTER TO PLAY" />
+        <div style={{ marginTop: 22 }}>
+          <StateNote>
+            This registration call has closed — it&rsquo;s no longer accepting sign-ups.{" "}
+            <Link href="/announcements" style={{ color: SQ.ember, textDecoration: "none", fontWeight: 600 }}>
+              Back to announcements ▸
+            </Link>
+          </StateNote>
+        </div>
+      </div>
+    );
+  }
+
   // Auction self-registration is a wholly different flow: no match-derived game, no squad name, no
-  // 3h match-lock. Branch to its own exhaustive form once auth has resolved.
+  // match-lock. Branch to its own exhaustive form once auth has resolved.
   if (mode === "AUCTION") {
-    return <AuctionRegisterForm user={user} seasonName={season?.name} announcementTitle={ann.data?.title} />;
+    return (
+      <AuctionRegisterForm
+        user={user}
+        playerId={playerId ?? undefined}
+        seasonName={season?.name}
+        announcementId={announcementId}
+        announcementTitle={ann.data?.title}
+      />
+    );
   }
 
   if (redirecting) {
@@ -478,8 +524,16 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
                     gap: 9,
                   }}
                 >
-                  {allGames.length === 0 ? (
+                  {gamesQ.isLoading ? (
                     <span style={{ fontSize: 13, color: SQ.mute }}>Loading games…</span>
+                  ) : gamesQ.isError ? (
+                    <span style={{ fontSize: 13, color: SQ.ember }}>
+                      Couldn&rsquo;t load the games list — refresh to retry.
+                    </span>
+                  ) : allGames.length === 0 ? (
+                    <span style={{ fontSize: 13, color: SQ.mute }}>
+                      No games are open for registration right now.
+                    </span>
                   ) : (
                     allGames.map((g) => {
                       const on = selectedGames.includes(g);
@@ -529,6 +583,25 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
               </div>
             ) : null}
 
+            {needsVerification ? (
+              <div
+                style={{
+                  margin: "18px 0 0",
+                  padding: "12px 14px",
+                  borderRadius: 5,
+                  background: SQ.inset,
+                  border: `1px solid ${SQ.amber}`,
+                  color: SQ.ink,
+                  fontSize: 12.5,
+                  lineHeight: 1.55,
+                }}
+              >
+                <span style={{ color: SQ.amber, fontWeight: 700 }}>Verify your account first.</span>{" "}
+                Franchise creation is limited to verified accounts — a league admin verifies you. Reach out
+                to the organizers to get verified, then come back to submit your proposal.
+              </div>
+            ) : null}
+
             {alreadyRegistered ? (
               <div
                 style={{
@@ -565,7 +638,7 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
                   lineHeight: 1.55,
                 }}
               >
-                Registration closed — locks 3 hours before match time.
+                Registration closed — locks {lockHours} hours before match time.
               </div>
             ) : null}
 
@@ -587,16 +660,19 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
 
             {(() => {
               const disabled =
-                apply.isPending || alreadyRegistered || registrationLocked || franchiseBlocked;
+                apply.isPending || alreadyRegistered || registrationLocked || franchiseBlocked ||
+                needsVerification;
               const label = alreadyRegistered
                 ? "Already registered"
-                : franchiseBlocked
-                  ? "Opens between seasons"
-                  : registrationLocked
-                    ? "Registration closed"
-                    : apply.isPending
-                      ? "Submitting…"
-                      : "Submit registration ▸";
+                : needsVerification
+                  ? "Verification required"
+                  : franchiseBlocked
+                    ? "Opens between seasons"
+                    : registrationLocked
+                      ? "Registration closed"
+                      : apply.isPending
+                        ? "Submitting…"
+                        : "Submit registration ▸";
               return (
                 <button
                   type="submit"
@@ -753,22 +829,32 @@ const clampRating = (n: number) => (Number.isFinite(n) ? Math.max(0, Math.min(10
 
 function AuctionRegisterForm({
   user,
+  playerId,
   seasonName,
+  announcementId,
   announcementTitle,
 }: {
   user: SessionUser | null;
+  playerId?: string;
   seasonName?: string;
+  announcementId?: string;
   announcementTitle?: string;
 }) {
   const gamesQ = useGames(true);
   const apply = useApplyRegistration();
   const myRegsQ = useMyRegistrations(!!user);
+  const meQ = usePlayer(playerId);
 
   const games: GameSummary[] = gamesQ.data ?? [];
 
-  // Proactively detect an existing live auction entry so we can't create a wasteful duplicate.
+  // Auction entry needs a verified account (backend enforces it too) — warn upfront, don't fail on submit.
+  const notVerified = !!meQ.data && meQ.data.status !== "VERIFIED";
+
+  // Proactively detect an existing live, UNCONSUMED auction entry so we can't create a wasteful
+  // duplicate. A consumed entry (already drawn into a completed auction) doesn't block re-entry into
+  // the next pool.
   const alreadyInAuction = (myRegsQ.data ?? []).some(
-    (r) => r.type === "AUCTION" && r.status === "ACTIVE",
+    (r) => r.type === "AUCTION" && r.status === "ACTIVE" && !r.consumed,
   );
 
   const [name, setName] = useState("");
@@ -809,7 +895,7 @@ function AuctionRegisterForm({
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (isRegistered) return;
+    if (isRegistered || notVerified) return;
 
     const chosen = games.filter((g) => plays[g.id]);
     // Require at least one game toggled on with a rating above 0 — no squad, no derived game.
@@ -843,6 +929,7 @@ function AuctionRegisterForm({
         contact: contact || undefined,
         note: note.trim() || undefined,
         proficiencies,
+        announcementId: announcementId || undefined,
       });
       setDone(true);
     } catch (err) {
@@ -996,6 +1083,25 @@ function AuctionRegisterForm({
               placeholder="Anything the auction admins should know — availability, past teams, achievements…"
             />
 
+            {notVerified ? (
+              <div
+                style={{
+                  margin: "18px 0 0",
+                  padding: "12px 14px",
+                  borderRadius: 5,
+                  background: SQ.inset,
+                  border: `1px solid ${SQ.amber}`,
+                  color: SQ.ink,
+                  fontSize: 12.5,
+                  lineHeight: 1.55,
+                }}
+              >
+                <span style={{ color: SQ.amber, fontWeight: 700 }}>Verify your account first.</span>{" "}
+                Auction entry is limited to verified accounts — a league admin verifies you. Reach out to
+                the organizers to get verified, then come back to enter the pool.
+              </div>
+            ) : null}
+
             {isRegistered ? (
               <div
                 style={{
@@ -1038,12 +1144,14 @@ function AuctionRegisterForm({
             ) : null}
 
             {(() => {
-              const disabled = apply.isPending || isRegistered;
+              const disabled = apply.isPending || isRegistered || notVerified;
               const label = isRegistered
                 ? "Already in the pool"
-                : apply.isPending
-                  ? "Submitting…"
-                  : "Enter the auction ▸";
+                : notVerified
+                  ? "Verification required"
+                  : apply.isPending
+                    ? "Submitting…"
+                    : "Enter the auction ▸";
               return (
                 <button
                   type="submit"
@@ -1083,8 +1191,16 @@ function AuctionRegisterForm({
               ) : null}
             </p>
 
-            {games.length === 0 ? (
+            {gamesQ.isLoading ? (
               <span style={{ fontSize: 13, color: SQ.mute }}>Loading games…</span>
+            ) : gamesQ.isError ? (
+              <span style={{ fontSize: 13, color: SQ.ember }}>
+                Couldn&rsquo;t load the games list — refresh to retry.
+              </span>
+            ) : games.length === 0 ? (
+              <span style={{ fontSize: 13, color: SQ.mute }}>
+                No games are open for registration right now.
+              </span>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {games.map((g) => {

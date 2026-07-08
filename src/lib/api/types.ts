@@ -295,6 +295,8 @@ export interface MatchDetail {
   matchType?: MatchType;
   pointsPerKill: number;
   placementPoints: string;
+  /** Configurable hours before scheduled start when match registration closes. */
+  registrationLockHours: number;
   participants: ParticipantView[];
 }
 
@@ -485,6 +487,8 @@ export interface ApplyRequest {
   note?: string;
   /** SQUAD registrations: the invite/roster cap for the squad (from the announcement's teamSize). */
   teamSize?: number;
+  /** The registration call this entry responds to, so the server can reject a closed/deleted call. */
+  announcementId?: string;
 }
 
 /** EXPIRED = a still-pending invite voided when the registration locked. */
@@ -518,6 +522,8 @@ export interface RegistrationView {
   acceptedCount: number;
   /** SQUAD registrations: the invite/roster cap (null = uncapped). */
   teamSize: number | null;
+  /** AUCTION entries: true once drawn into a completed auction — the player may re-enter the next pool. */
+  consumed: boolean;
 }
 
 export interface InviteView {

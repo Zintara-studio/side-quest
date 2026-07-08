@@ -30,7 +30,10 @@ export function LoginForm() {
     setPending(true);
     try {
       const role = await login({ identifier: email, password });
-      router.push(role === "ADMIN" ? "/admin" : "/");
+      // Honour a ?next= redirect (e.g. a "sign in to register" link), but only same-origin paths.
+      const next = new URLSearchParams(window.location.search).get("next");
+      const safeNext = next && next.startsWith("/") && !next.startsWith("//") ? next : null;
+      router.push(safeNext ?? (role === "ADMIN" ? "/admin" : "/"));
     } catch (err) {
       setError(apiErrorMessage(err, "Invalid email or password."));
     } finally {

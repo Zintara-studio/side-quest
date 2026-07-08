@@ -8,7 +8,43 @@ import type {
   MatchSummary,
   PlayerSummary,
 } from "@/lib/api/types";
-import type { GameCard, Standing, PlayerRow, Announcement } from "@/lib/mock/league";
+import type { AnnouncementTag } from "@/components/sidequest/tokens";
+
+// Player-facing display shapes the adapters below map backend DTOs onto.
+export interface Standing {
+  rank: string;
+  name: string;
+  sub: string;
+  gp: number;
+  w: number;
+  pts: number;
+  best: string;
+  form: string;
+  formColor: string;
+}
+
+export interface PlayerRow {
+  rank: string;
+  name: string;
+  fr: string;
+  gp: number;
+  pts: number;
+  tags: string;
+}
+
+export interface GameCard {
+  name: string;
+  players: number;
+  pop: number;
+  next: string;
+  format: string;
+}
+
+export interface Announcement {
+  tag: AnnouncementTag;
+  title: string;
+  date: string;
+}
 
 const NA = "—";
 const pad2 = (n: number) => String(n).padStart(2, "0");

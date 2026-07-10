@@ -12,8 +12,9 @@ import lombok.Setter;
 import java.time.Instant;
 
 /**
- * Singleton league configuration (season + scoring rules) edited from admin settings. Stored as a
- * single row keyed by {@link #SINGLETON_ID}.
+ * Singleton league configuration (season window rules) edited from admin settings. Stored as a single
+ * row keyed by {@link #SINGLETON_ID}. Scoring is now configured per-game (see {@link Game}) rather than
+ * league-wide, and registration windows are opened per announcement.
  */
 @Entity
 @Table(name = "league_settings")
@@ -33,21 +34,6 @@ public class LeagueSettings {
 
     @Column(name = "season_name", nullable = false)
     private String seasonName = "Season 04";
-
-    /** Points awarded per kill in the scoring engine. */
-    @Column(name = "points_per_kill", nullable = false)
-    private int pointsPerKill = 1;
-
-    /**
-     * Placement points by finishing position, highest-first, as a comma-separated list.
-     * e.g. "15,12,10,8,6,4,2,1" → 1st gets 15, 2nd gets 12, ...
-     */
-    @Column(name = "placement_points", nullable = false, length = 512)
-    private String placementPoints = "15,12,10,8,6,4,2,1";
-
-    /** Master switch for registrations across the league. */
-    @Column(name = "registration_open", nullable = false)
-    private boolean registrationOpen = true;
 
     /**
      * How many hours before a match its registration locks: past this point no new entries or invites,

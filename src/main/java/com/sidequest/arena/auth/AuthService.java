@@ -6,8 +6,14 @@ import com.sidequest.arena.auth.dto.LogoutRequest;
 import com.sidequest.arena.auth.dto.MeResponse;
 import com.sidequest.arena.auth.dto.RefreshRequest;
 import com.sidequest.arena.auth.dto.RegisterRequest;
+import com.sidequest.arena.auth.dto.RegisterResponse;
+import com.sidequest.arena.auth.dto.VerifyEmailRequest;
+import com.sidequest.arena.auth.dto.EmailRequest;
+import com.sidequest.arena.auth.dto.ResetPasswordRequest;
+import com.sidequest.arena.auth.dto.GoogleLoginRequest;
 import com.sidequest.arena.common.ApiException;
 import com.sidequest.arena.common.ErrorCode;
+import com.sidequest.arena.model.OtpPurpose;
 import com.sidequest.arena.model.Player;
 import com.sidequest.arena.model.PlayerStatus;
 import com.sidequest.arena.model.RefreshToken;
@@ -47,22 +53,36 @@ public class AuthService {
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtService jwtService;
     private final PasswordEncoder passwordEncoder;
+    private final AuthRateLimiter rateLimiter;
+    private final OtpService otpService;
+    private final GoogleTokenVerifier googleTokenVerifier;
 
     public AuthService(UserRepository userRepository,
                        PlayerRepository playerRepository,
                        RefreshTokenRepository refreshTokenRepository,
                        JwtService jwtService,
-                       PasswordEncoder passwordEncoder) {
+                       PasswordEncoder passwordEncoder,
+                       AuthRateLimiter rateLimiter,
+                       OtpService otpService,
+                       GoogleTokenVerifier googleTokenVerifier) {
         this.userRepository = userRepository;
         this.playerRepository = playerRepository;
         this.refreshTokenRepository = refreshTokenRepository;
         this.jwtService = jwtService;
         this.passwordEncoder = passwordEncoder;
+        this.rateLimiter = rateLimiter;
+        this.otpService = otpService;
+        this.googleTokenVerifier = googleTokenVerifier;
     }
 
-    /** Registers a new PLAYER user plus a PENDING player profile and issues a fresh token pair. */
+    /**
+     * Registers a new PLAYER account (UNVERIFIED) plus a PENDING player profile and emails a 6-digit
+     * verification code. NO session is issued here — the account must verify its email first
+     * ({@link #verifyEmail}), which stops mass fake sign-ups from ever producing a usable account.
+     */
     @Transactional
-    public AuthResponse register(RegisterRequest request) {
+    public RegisterResponse register(RegisterRequest request) {
+        rateLimiter.checkRegister();
         if (userRepository.existsByEmailIgnoreCase(request.email())) {
             throw new ApiException(ErrorCode.EMAIL_TAKEN, "Email already registered");
         }
@@ -72,6 +92,7 @@ public class AuthService {
         user.setEmail(request.email());
         user.setPhone(request.phone());
         user.setRole(Role.PLAYER);
+        user.setEmailVerified(false);
         user.setPasswordHash(passwordEncoder.encode(request.password()));
         user = userRepository.save(user);
 
@@ -81,12 +102,112 @@ public class AuthService {
         player.setStatus(PlayerStatus.PENDING);
         playerRepository.save(player);
 
+        otpService.generate(user.getEmail(), OtpPurpose.VERIFY_EMAIL);
+        return new RegisterResponse(user.getEmail(), true);
+    }
+
+    /**
+     * Confirms a new account's email with its OTP: marks the user verified, promotes their Player to
+     * VERIFIED (auction-eligible), and issues the first session.
+     */
+    @Transactional
+    public AuthResponse verifyEmail(VerifyEmailRequest request) {
+        rateLimiter.checkOtpVerify(request.email());
+        otpService.verifyAndConsume(request.email(), OtpPurpose.VERIFY_EMAIL, request.code());
+
+        User user = userRepository.findByEmailIgnoreCase(request.email())
+                .orElseThrow(() -> new ApiException(ErrorCode.BAD_REQUEST, "That code is invalid or has expired."));
+        user.setEmailVerified(true);
+        userRepository.save(user);
+        promoteToVerified(user);
+
+        ensureNotSuspended(user);
+        return issueTokens(user);
+    }
+
+    /** Re-sends a verification code. Always succeeds silently (no account enumeration). */
+    @Transactional
+    public void resendVerification(EmailRequest request) {
+        rateLimiter.checkOtpResend(request.email());
+        userRepository.findByEmailIgnoreCase(request.email())
+                .filter(u -> !u.isEmailVerified())
+                .ifPresent(u -> otpService.generateIfAllowed(u.getEmail(), OtpPurpose.VERIFY_EMAIL));
+    }
+
+    /** Starts a password reset by emailing an OTP. Always succeeds silently (no account enumeration). */
+    @Transactional
+    public void requestPasswordReset(EmailRequest request) {
+        rateLimiter.checkOtpResend(request.email());
+        userRepository.findByEmailIgnoreCase(request.email())
+                .ifPresent(u -> otpService.generateIfAllowed(u.getEmail(), OtpPurpose.RESET_PASSWORD));
+    }
+
+    /**
+     * Completes a password reset with its OTP: sets the new password and revokes ALL of the user's
+     * refresh tokens (cuts off any compromised session). Does not auto-login — the user signs in fresh.
+     */
+    @Transactional
+    public void resetPassword(ResetPasswordRequest request) {
+        rateLimiter.checkOtpVerify(request.email());
+        otpService.verifyAndConsume(request.email(), OtpPurpose.RESET_PASSWORD, request.code());
+
+        User user = userRepository.findByEmailIgnoreCase(request.email())
+                .orElseThrow(() -> new ApiException(ErrorCode.BAD_REQUEST, "That code is invalid or has expired."));
+        user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
+        // A successful reset also proves email control — verify + promote if not already.
+        if (!user.isEmailVerified()) {
+            user.setEmailVerified(true);
+            promoteToVerified(user);
+        }
+        userRepository.save(user);
+        refreshTokenRepository.revokeAllForUser(user.getId());
+    }
+
+    /**
+     * Google Sign-In: verifies the id_token server-side, upserts a verified User + Player, and issues the
+     * same session a password login would. Google-created users get a random, un-guessable password hash
+     * so the password path can never authenticate them.
+     */
+    @Transactional
+    public AuthResponse loginWithGoogle(GoogleLoginRequest request) {
+        GoogleTokenVerifier.GoogleIdentity identity = googleTokenVerifier.verify(request.idToken());
+        if (!identity.emailVerified() || identity.email() == null || identity.email().isBlank()) {
+            throw new ApiException(ErrorCode.UNAUTHORIZED, "Google account email is not verified");
+        }
+
+        User user = userRepository.findByEmailIgnoreCase(identity.email()).orElse(null);
+        if (user == null) {
+            user = new User();
+            user.setName(identity.name() != null ? identity.name() : identity.email());
+            user.setEmail(identity.email());
+            user.setRole(Role.PLAYER);
+            user.setEmailVerified(true);
+            user.setPasswordHash(passwordEncoder.encode(newRawRefreshToken())); // random, unusable password
+            user = userRepository.save(user);
+
+            Player player = new Player();
+            player.setUser(user);
+            player.setGamerTag(user.getName());
+            player.setStatus(PlayerStatus.VERIFIED); // Google verified the email → auction-eligible
+            playerRepository.save(player);
+        } else if (!user.isEmailVerified()) {
+            // Google just proved ownership of a previously-UNVERIFIED account. Invalidate any password an
+            // attacker may have pre-set on it (account pre-hijacking) by overwriting with a random unusable
+            // hash; the legitimate owner can set a real password later via the reset-password flow.
+            user.setEmailVerified(true);
+            user.setPasswordHash(passwordEncoder.encode(newRawRefreshToken()));
+            userRepository.save(user);
+            promoteToVerified(user);
+        }
+
+        ensureNotSuspended(user);
         return issueTokens(user);
     }
 
     /** Authenticates by email or phone + password and issues a fresh token pair. */
     @Transactional
     public AuthResponse login(LoginRequest request) {
+        rateLimiter.checkLogin(request.identifier());
         User user = userRepository.findByEmailIgnoreCase(request.identifier())
                 .or(() -> userRepository.findByPhone(request.identifier()))
                 .orElseThrow(() -> new ApiException(ErrorCode.INVALID_CREDENTIALS, "Invalid credentials"));
@@ -95,6 +216,9 @@ public class AuthService {
             throw new ApiException(ErrorCode.INVALID_CREDENTIALS, "Invalid credentials");
         }
 
+        if (!user.isEmailVerified()) {
+            throw new ApiException(ErrorCode.EMAIL_NOT_VERIFIED, "Please verify your email before signing in.");
+        }
         ensureNotSuspended(user);
         return issueTokens(user);
     }
@@ -110,6 +234,9 @@ public class AuthService {
             throw new ApiException(ErrorCode.TOKEN_INVALID, "Refresh token is invalid");
         }
 
+        if (!token.getUser().isEmailVerified()) {
+            throw new ApiException(ErrorCode.EMAIL_NOT_VERIFIED, "Please verify your email before signing in.");
+        }
         ensureNotSuspended(token.getUser());
 
         // Rotate: revoke the presented token before minting a replacement.
@@ -171,6 +298,19 @@ public class AuthService {
     }
 
     // ---- helpers ----
+
+    /**
+     * Email verification is the platform's verification step: promote a PENDING player to VERIFIED
+     * (auction/franchise-eligible). No-op if they were already promoted, flagged or suspended.
+     */
+    private void promoteToVerified(User user) {
+        playerRepository.findByUserId(user.getId())
+                .filter(player -> player.getStatus() == PlayerStatus.PENDING)
+                .ifPresent(player -> {
+                    player.setStatus(PlayerStatus.VERIFIED);
+                    playerRepository.save(player);
+                });
+    }
 
     /** Blocks a suspended player from acquiring or renewing a session. */
     private void ensureNotSuspended(User user) {

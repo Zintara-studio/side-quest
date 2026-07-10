@@ -2,6 +2,7 @@ package com.sidequest.arena.registrations;
 
 import com.sidequest.arena.announcements.AnnouncementService;
 import com.sidequest.arena.model.Match;
+import com.sidequest.arena.model.MatchStatus;
 import com.sidequest.arena.repo.MatchRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,6 +11,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.EnumSet;
 
 /**
  * Periodically locks a match's registrations once it reaches the configured lock window: the confirmed
@@ -20,6 +22,14 @@ import java.time.Instant;
 public class RegistrationLockService {
 
     private static final Logger log = LoggerFactory.getLogger(RegistrationLockService.class);
+
+    /**
+     * Statuses whose registrations can still need locking. COMPLETED and CANCELLED fixtures are
+     * terminal — results-publication and cancellation both close their calls — so the sweep skips the
+     * ever-growing history instead of re-querying every match ever played, every minute.
+     */
+    private static final EnumSet<MatchStatus> SWEEPABLE =
+            EnumSet.of(MatchStatus.SCHEDULED, MatchStatus.LIVE, MatchStatus.AWAITING_RESULT);
 
     private final MatchRepository matchRepository;
     private final RegistrationService registrationService;
@@ -38,19 +48,20 @@ public class RegistrationLockService {
         try {
             int lockHours = registrationService.lockHours();
             Instant now = Instant.now();
-            for (Match match : matchRepository.findAll()) {
+            // Bounded candidate set: only non-terminal fixtures whose lock window has opened
+            // (scheduledAt − lockHours ≤ now  ⇔  scheduledAt ≤ now + lockHours).
+            Instant cutoff = now.plus(Duration.ofHours(lockHours));
+            for (Match match : matchRepository.findByStatusInAndScheduledAtBefore(SWEEPABLE, cutoff)) {
                 if (match.getScheduledAt() == null) {
                     continue;
                 }
-                if (now.isAfter(match.getScheduledAt().minus(Duration.ofHours(lockHours)))) {
-                    int locked = registrationService.lockMatchRegistrations(match.getId());
-                    if (locked > 0) {
-                        log.info("Locked {} registration(s) for match {}", locked, match.getId());
-                    }
-                    // Once the window passes, close the linked registration call so its Register button
-                    // disappears (idempotent — a no-op once already closed).
-                    announcementService.closeForMatch(match.getId());
+                int locked = registrationService.lockMatchRegistrations(match.getId());
+                if (locked > 0) {
+                    log.info("Locked {} registration(s) for match {}", locked, match.getId());
                 }
+                // Once the window passes, close the linked registration call so its Register button
+                // disappears (idempotent — a no-op once already closed).
+                announcementService.closeForMatch(match.getId());
             }
         } catch (Exception ex) {
             log.warn("Registration lock sweep failed", ex);

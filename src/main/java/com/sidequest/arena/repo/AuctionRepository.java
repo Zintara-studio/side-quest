@@ -13,8 +13,9 @@ public interface AuctionRepository extends JpaRepository<Auction, UUID> {
 
     List<Auction> findByStatus(AuctionStatus status);
 
-    List<Auction> findByStatusIn(Collection<AuctionStatus> statuses);
-
     /** The single "active" auction — most recent DRAFT/PAUSED/LIVE. */
     Optional<Auction> findFirstByStatusInOrderByCreatedAtDesc(Collection<AuctionStatus> statuses);
+
+    /** True when a non-completed auction has its pool locked — i.e. auction registration is closed. */
+    boolean existsByPoolLockedAtIsNotNullAndStatusNot(AuctionStatus status);
 }

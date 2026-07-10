@@ -9,8 +9,4 @@ import java.util.UUID;
 public interface FranchiseRepository extends JpaRepository<Franchise, UUID> {
 
     List<Franchise> findAllByOrderByPointsDescNameAsc();
-
-    List<Franchise> findByActive(boolean active);
-
-    List<Franchise> findBySeasonId(String seasonId);
 }

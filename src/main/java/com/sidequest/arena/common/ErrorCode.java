@@ -13,6 +13,7 @@ public enum ErrorCode {
     TOKEN_EXPIRED(HttpStatus.UNAUTHORIZED),
     TOKEN_INVALID(HttpStatus.UNAUTHORIZED),
     FORBIDDEN(HttpStatus.FORBIDDEN),
+    EMAIL_NOT_VERIFIED(HttpStatus.FORBIDDEN),
     NOT_FOUND(HttpStatus.NOT_FOUND),
     CONFLICT(HttpStatus.CONFLICT),
     EMAIL_TAKEN(HttpStatus.CONFLICT),

@@ -8,5 +8,6 @@ import java.util.UUID;
 
 public interface AuditLogRepository extends JpaRepository<AuditLog, UUID> {
 
-    List<AuditLog> findAllByOrderByCreatedAtDesc();
+    /** Top-N recent entries — the audit table is append-only and grows forever, so never findAll it. */
+    List<AuditLog> findTop50ByOrderByCreatedAtDesc();
 }

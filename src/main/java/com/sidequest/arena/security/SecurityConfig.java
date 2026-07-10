@@ -59,8 +59,10 @@ public class SecurityConfig {
                         .requestMatchers("/docs/**", "/swagger-ui/**", "/swagger-ui.html",
                                 "/api-docs/**", "/v3/api-docs/**", "/h2-console/**",
                                 "/actuator/health", "/actuator/info").permitAll()
-                        // --- auth (public) ---
-                        .requestMatchers("/auth/register", "/auth/login", "/auth/refresh").permitAll()
+                        // --- auth (public, pre-session) ---
+                        .requestMatchers("/auth/register", "/auth/login", "/auth/refresh",
+                                "/auth/verify-email", "/auth/resend-verification",
+                                "/auth/forgot-password", "/auth/reset-password", "/auth/google").permitAll()
                         // --- authenticated franchise reads (must precede the broad permitAll GET below,
                         //     otherwise these would fall through to public and break current-user lookup) ---
                         .requestMatchers(HttpMethod.GET, "/franchises/mine",
@@ -70,7 +72,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET,
                                 "/players/**", "/franchises/**", "/games/**", "/matches/**",
                                 "/standings/**", "/leaderboard/**", "/announcements/**",
-                                "/seasons/**", "/auctions/**").permitAll()
+                                "/seasons/**", "/auctions/**", "/media/**").permitAll()
                         // --- realtime handshake is authenticated at the WS layer ---
                         .requestMatchers("/ws/**", "/live/**").permitAll()
                         // --- everything else requires a valid token ---
@@ -78,7 +80,9 @@ public class SecurityConfig {
                 .exceptionHandling(e -> e
                         .authenticationEntryPoint(authEntryPoint)
                         .accessDeniedHandler(accessDeniedHandler))
-                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
+                // Bound the raw body of POST /media before anything buffers it (heap-exhaustion guard).
+                .addFilterBefore(new RequestSizeLimitFilter(), JwtAuthFilter.class);
 
         return http.build();
     }

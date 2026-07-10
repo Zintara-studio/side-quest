@@ -5,6 +5,7 @@ import com.sidequest.arena.model.RegistrationStatus;
 import com.sidequest.arena.model.RegistrationType;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
@@ -22,9 +23,8 @@ public interface RegistrationRepository extends JpaRepository<Registration, UUID
 
     List<Registration> findByPlayerId(UUID playerId);
 
-    List<Registration> findByPlayerIdAndTypeOrderByCreatedAtDesc(UUID playerId, RegistrationType type);
-
-    List<Registration> findByMatchIdAndStatus(UUID matchId, RegistrationStatus status);
+    /** Batch variant for the auction scout map — all AUCTION regs for a set of players, newest first. */
+    List<Registration> findByPlayerIdInAndTypeOrderByCreatedAtDesc(Collection<UUID> playerIds, RegistrationType type);
 
     List<Registration> findByMatchId(UUID matchId);
 

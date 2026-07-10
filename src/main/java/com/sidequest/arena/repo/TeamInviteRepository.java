@@ -1,6 +1,5 @@
 package com.sidequest.arena.repo;
 
-import com.sidequest.arena.model.InviteStatus;
 import com.sidequest.arena.model.TeamInvite;
 import org.springframework.data.jpa.repository.JpaRepository;
 
@@ -15,7 +14,4 @@ public interface TeamInviteRepository extends JpaRepository<TeamInvite, UUID> {
     List<TeamInvite> findByInvitedPlayerIdOrderByCreatedAtDesc(UUID invitedPlayerId);
 
     Optional<TeamInvite> findByRegistrationIdAndInvitedPlayerId(UUID registrationId, UUID invitedPlayerId);
-
-    boolean existsByRegistrationIdAndInvitedPlayerIdAndStatus(UUID registrationId, UUID invitedPlayerId,
-                                                              InviteStatus status);
 }

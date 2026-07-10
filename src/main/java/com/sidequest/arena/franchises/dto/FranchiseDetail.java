@@ -8,6 +8,7 @@ package com.sidequest.arena.franchises.dto;
  * @param name          franchise name
  * @param tag           short team tag
  * @param logoUrl       logo image url (nullable)
+ * @param bannerUrl     wide banner image url (nullable)
  * @param points        season points
  * @param rank          current standings rank
  * @param active        whether the franchise's season is ongoing
@@ -22,6 +23,7 @@ public record FranchiseDetail(
         String name,
         String tag,
         String logoUrl,
+        String bannerUrl,
         int points,
         int rank,
         boolean active,

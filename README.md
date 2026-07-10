@@ -11,65 +11,51 @@ license: other
 
 # Side Quest — Backend
 
-A Spring Boot implementation of the **Side Quest Backend Architecture** — a modular REST API for an
-amateur esports league: players, franchises, games, matches, registrations, standings, announcements,
-a realtime hub, and an admin control room. One API surface, shared by the player app and admin panel,
-separated by role.
+A **Spring Boot (Java 21)** REST API for running an amateur, multi-game **esports league** end to end:
+players and franchises, a pre-season player **auction**, match scheduling with live rooms and per-round
+scoring, registrations, standings, announcements, disputes, notifications, and an admin control room.
+One API surface (`/v1`), shared by the player app and the admin panel, separated by role.
 
-> Runs out of the box with an **in-memory H2** database seeded with a demo league (Season 04) — no
-> external services required. Swap to PostgreSQL with the `postgres` profile.
+> **Runs out of the box.** The default `dev` profile uses an **in-memory H2** database seeded with a
+> demo league (Season 04) — no external services required. Swap to PostgreSQL with the `postgres`
+> profile for a persistent, production-shaped deployment.
 
-- **Base URL:** `/v1`  ·  **Swagger UI:** `/v1/docs`  ·  **OpenAPI:** `/v1/api-docs`  ·  **Health:** `/v1/actuator/health`
-- On a deployed Hugging Face Space the API is at `https://<your-space>.hf.space/v1/...`
+- **Base URL:** `/v1` · **Swagger UI:** `/v1/docs` (dev) · **OpenAPI:** `/v1/api-docs` · **Health:** `/v1/actuator/health`
+- **~16.8K LOC** across 238 files · **118 REST endpoints** · **~35 JPA entities** · **26 integration tests**
 
-## Run locally
+## Quick start
 
 ```bash
-# with Java 21 + Maven
-mvn spring-boot:run                    # → http://localhost:8080/v1
+# needs a full JDK 21 (not just a JRE) + the bundled Maven wrapper
+./mvnw spring-boot:run                 # → http://localhost:8080/v1/docs   (dev: H2 + seeded demo league)
 
-# or as a jar
-mvn -DskipTests package && java -jar target/sidequest-backend.jar
+# or build and run the jar
+./mvnw -DskipTests package && java -jar target/sidequest-backend.jar
 ```
 
-## Run with Docker
-
 ```bash
+# Docker
 docker build -t sidequest-backend .
-docker run --rm -p 8080:8080 sidequest-backend
-# → http://localhost:8080/v1/docs
+docker run --rm -p 8080:8080 sidequest-backend        # → http://localhost:8080/v1/docs
 ```
 
-## Deploy to Hugging Face Spaces (Docker SDK)
-
-This repo is a ready-to-deploy **Docker Space**: the root `Dockerfile` builds and runs the app, and
-the YAML header above tells Spaces to use the Docker SDK on port `8080`.
+A full **PostgreSQL + backend + frontend** stack lives in `../docker-compose.yml`:
 
 ```bash
-pip install -U huggingface_hub
-huggingface-cli login                                  # paste a write token
-huggingface-cli repo create sidequest-backend --type space --space_sdk docker
-
-git remote add space https://huggingface.co/spaces/<your-username>/sidequest-backend
-git push space main
+cd ..                          # the workspace root ("SideQuests arena/")
+docker compose up --build      # frontend :3000, backend :8080, Postgres :5433
 ```
 
-Spaces builds the `Dockerfile`, runs the container, and routes traffic to `app_port: 8080`. The
-container runs as the non-root uid `1000` that Spaces expects, listens on `0.0.0.0:8080`, writes
-nothing to disk (H2 is in-memory), and logs to stdout. Once it's **Running**, open
-`https://<your-username>-sidequest-backend.hf.space/v1/docs`.
+## Demo credentials
 
-> Tip: to keep public demo data resettable, leave the default `dev` profile (in-memory H2 + seed).
-> For a persistent DB, set `SPRING_PROFILES_ACTIVE=postgres` and the `SPRING_DATASOURCE_*` secrets in
-> the Space settings.
+Every seeded account uses the password `password`.
 
-## Demo credentials (password is `password` for every seeded account)
-
-| Email                   | Role              |
-|-------------------------|-------------------|
-| `admin@sidequest.gg`    | ADMIN             |
-| `manager@sidequest.gg`  | FRANCHISE_MANAGER |
-| `raghavan@sidequest.gg` | PLAYER            |
+| Email                   | Role                  |
+|-------------------------|-----------------------|
+| `admin@sidequest.gg`    | `ADMIN`               |
+| `vortex@sidequest.gg`   | franchise owner (RXG) |
+| `raghavan@sidequest.gg` | `PLAYER` (RXG)        |
+| `blitz@sidequest.gg`    | verified free agent   |
 
 ```bash
 TOKEN=$(curl -s -X POST localhost:8080/v1/auth/login -H 'Content-Type: application/json' \
@@ -77,62 +63,57 @@ TOKEN=$(curl -s -X POST localhost:8080/v1/auth/login -H 'Content-Type: applicati
 curl localhost:8080/v1/auth/me -H "Authorization: Bearer $TOKEN"
 ```
 
-## API surface (base `/v1`)
+## What's inside
 
-| Group | Routes |
-|-------|--------|
-| **Auth** | `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me` |
-| **Players** | `GET /players`, `GET /players/{id}`, `GET /players/{id}/matches`, `GET /players/{id}/usernames`, `PATCH /players/{id}`, `PATCH /players/{id}/status` 🔒 |
-| **Franchises** | `GET /franchises`, `GET /franchises/{id}`, `GET /franchises/{id}/roster`, `GET /franchises/{id}/matches`, `POST /franchises` 🔒, `PATCH /franchises/{id}` 🔒, `POST /franchises/{id}/roster` 🔒 |
-| **Games** | `GET /games`, `GET /games/{id}`, `PATCH /games/{id}` 🔒 |
-| **Matches** | `GET /matches`, `GET /matches/{id}`, `GET /matches/{id}/leaderboard`, `POST /matches` 🔒, `PATCH /matches/{id}` 🔒, `POST /matches/{id}/results` 🔒 |
-| **Registrations** | `POST /registrations`, `GET /registrations` 🔒, `GET /registrations/{id}` 🔒, `POST /registrations/{id}/approve` 🔒, `POST /registrations/{id}/reject` 🔒 |
-| **Standings** | `GET /standings`, `GET /leaderboard/players`, `GET /leaderboard/games/{id}` |
-| **Announcements** | `GET /announcements`, `GET /announcements/{id}`, `POST /announcements` 🔒, `PATCH /announcements/{id}` 🔒, `DELETE /announcements/{id}` 🔒 |
-| **Realtime (WS)** | `WS /ws/live/standings`, `WS /ws/live/matches/{id}`, `WS /ws/live/me?token=<jwt>` |
-| **Media** | `POST /uploads/sign`, `POST /uploads/avatar` |
-| **Admin & Settings** | `GET /admin/overview` 🔒, `GET /settings` 🔒, `PATCH /settings` 🔒, `GET /admin/disputes` 🔒, `POST /admin/disputes/{id}/resolve` 🔒, `GET /admin/team` 🔒 |
+**Package-by-feature** under `com.sidequest.arena` — each domain owns its `Controller + Service + dto/`,
+with shared `model/` (entities + enums), `repo/` (Spring Data), `common/` (error envelope, pagination),
+`security/` (JWT + method security), and `config/` (seeder, cache, OpenAPI).
 
-🔒 = ADMIN-only (enforced by method security). Public catalog reads are open; all mutations require a token.
+| Area | What it does |
+|------|--------------|
+| **Auth** | Email+password with OTP email verification, Google sign-in, JWT access (1h) + rotating refresh (30d), BCrypt, roles `PLAYER` / `FRANCHISE_MANAGER` / `ADMIN` |
+| **Franchises / Players** | Rosters, leadership invites, per-player privacy, DB-blob media (avatars/logos/banners), designation tags |
+| **Games / Scoring** | Per-game system-wide scoring config (points-per-kill, placement ladder, standings weight); an idempotent recompute engine |
+| **Matches** | Schedule → live room (polled messages) → lineups → per-round results → standings; admin void/delete/reschedule with frozen-season guards |
+| **Registrations** | Solo / squad (with invites) / FFA / franchise-proposal / auction-pool entries; self-service withdrawal |
+| **Auctions** | Pre-season player auction: draft → lobby → live bidding (1s sweep, anti-snipe) → assign / re-auction / add-funds → complete, with restart recovery |
+| **Seasons** | Finish snapshots a frozen `SeasonStanding`; start resets franchise points (season-scoped); an all-time table |
+| **Comms** | Announcements + registration calls, disputes, in-app notifications, an admin audit trail |
+| **Realtime** | Raw WebSocket hub `/ws/live/{standings,matches/{id},auctions/{id},me}` — the auction channel is bidders-only |
 
-## Data model
+## Documentation
 
-8 core entities — `User`, `Player`, `Franchise`, `Game`, `Match`, `ResultRow`, `Registration`,
-`Announcement` — plus supporting tables (`MatchParticipant`, `PlayerGameUsername`,
-`PlayerGameProficiency`, `LeagueSettings`, `Dispute`, `RefreshToken`, `AuditLog`). Relationships:
-Franchise 1—N Player · Player N—N Game (proficiency) · Match N—N Franchise (participants) ·
-Match 1—N ResultRow · Registration 1—1 Player|Squad · Announcement N—1 Match (optional).
+Layered docs live in [`docs/`](./docs) — start with the [architecture](./docs/architecture.md) and the
+[developer guide](./docs/contributing.md):
 
-## Stack & cross-cutting concerns
+| Doc | |
+|-----|--|
+| [architecture.md](./docs/architecture.md) | Request flow, auth, scoring engine, concurrency, realtime, caching |
+| [structure.md](./docs/structure.md) | Package tree → responsibility |
+| [tech-stack.md](./docs/tech-stack.md) | Every layer, version, and why |
+| [data-model.md](./docs/data-model.md) | Entities, relationships, enums, invariants |
+| [api.md](./docs/api.md) | Full REST + WebSocket reference (base `/v1`) |
+| [setup.md](./docs/setup.md) | Run, profiles, env vars, Docker, deploy |
+| [testing.md](./docs/testing.md) | The integration suite + verification practice |
+| [troubleshooting.md](./docs/troubleshooting.md) | Common issues → fixes |
+| [status.md](./docs/status.md) | Feature inventory, limitations, roadmap |
+| [caching-hld.md](./docs/caching-hld.md) | Caching design (HLD) |
 
-| Layer | Choice |
-|-------|--------|
-| Runtime | Java 21, Spring Boot 3.3 |
-| API | REST + JSON, OpenAPI / Swagger UI |
-| Persistence | Spring Data JPA — H2 (dev) / PostgreSQL (`postgres` profile) |
-| Auth | JWT access (15 min) + rotating refresh, BCrypt, roles PLAYER / FRANCHISE_MANAGER / ADMIN |
-| Realtime | WebSocket hub (`/ws/live/**`), in-process pub/sub (Redis-swappable) |
-| Scoring | Idempotent recompute of points + standings on result publish, with live emit |
-| Ops | `{ code, message, details }` error envelope · admin audit trail · actuator health |
+## Stack
+
+Java 21 · Spring Boot 3 (Web MVC, Data JPA, Security, WebSocket, Cache, Mail, Actuator, Validation) ·
+Hibernate + **H2 (dev) / PostgreSQL (prod)** · **jjwt** for JWT + BCrypt (+ `google-api-client` for
+Google sign-in) · **Caffeine** cache (evict-on-write) · **springdoc-openapi** / Swagger UI · Lombok ·
+Maven. Deliberately *not* used: Redis (in-process pub/sub instead), S3 (media are DB blobs), Flyway (a
+roadmap item — schema is `ddl-auto: validate/update`).
 
 ## Test
 
 ```bash
-mvn test     # SideQuestApiIntegrationTest — 11 end-to-end tests
+./mvnw test            # SideQuestApiIntegrationTest — 26 end-to-end tests against H2
 ```
 
-Covers the auth/token flow, registration, RBAC (401 anon / 403 player / 201 admin), the scoring
-engine (schedule → publish results → standings recompute + per-match leaderboard), refresh-token
-rotation, the admin overview, and the error envelope.
-
-## Layout
-
-```
-com.sidequest.arena
-├── model/      JPA entities + enums          ├── audit/     admin audit trail
-├── repo/       Spring Data repositories      ├── realtime/  WebSocket hub
-├── common/     error envelope, pagination    ├── scoring/   standings recompute engine
-├── security/   JWT, SecurityConfig, roles    ├── config/    OpenAPI, data seeder
-└── <domain>/   auth · players · franchises · games · matches · registrations ·
-                standings · announcements · admin   (Controller + Service + dto/ each)
-```
+Covers the auth/token flow, RBAC (401 anon / 403 non-admin / 200 admin), the scoring engine
+(schedule → publish → recompute + per-match leaderboard), the season-freeze invariant, match lifecycle
+and void/delete guards, per-game scoring + weight, roster tags, registration withdrawal, auction
+pool-lock, media caps, and the per-field privacy matrix. See [docs/testing.md](./docs/testing.md).

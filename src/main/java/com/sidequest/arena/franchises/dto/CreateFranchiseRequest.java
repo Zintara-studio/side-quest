@@ -9,13 +9,15 @@ import jakarta.validation.constraints.Size;
  *
  * @param name     franchise name (required)
  * @param tag      short team tag (required, max 16 chars)
- * @param seasonId season to assign the franchise to (optional)
- * @param logoUrl  logo image url (optional)
+ * @param seasonId  season to assign the franchise to (optional)
+ * @param logoUrl   logo image url (optional)
+ * @param bannerUrl wide banner image url (optional)
  */
 public record CreateFranchiseRequest(
         @NotBlank String name,
         @NotBlank @Size(max = 16) String tag,
         String seasonId,
-        String logoUrl
+        String logoUrl,
+        String bannerUrl
 ) {
 }

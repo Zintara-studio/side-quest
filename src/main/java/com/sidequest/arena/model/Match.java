@@ -56,6 +56,13 @@ public class Match extends BaseEntity {
     private String format;
 
     /**
+     * Lobby / room code for the current live session. Set by an admin when the match is started and
+     * shown only to participants in the match room; cleared when the match ends. Nullable.
+     */
+    @Column(name = "room_id")
+    private String roomId;
+
+    /**
      * Scoring weights for this fixture. {@code pointsPerKill} multiplies each kill; {@code placementPoints}
      * is a comma-separated, highest-first list of points awarded by finishing position in a round (e.g.
      * "15,12,10,8,6,4,2,1"). Defaulted from {@link LeagueSettings} at creation and adjustable per match

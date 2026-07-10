@@ -2,6 +2,7 @@ package com.sidequest.arena.model;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.Index;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
@@ -14,7 +15,8 @@ import lombok.Setter;
 /** Player N—N Game proficiency: a self-rated skill (0–100) for a title the player competes in. */
 @Entity
 @Table(name = "player_game_proficiencies", uniqueConstraints =
-        @UniqueConstraint(name = "uk_player_game", columnNames = {"player_id", "game_id"}))
+        @UniqueConstraint(name = "uk_player_game", columnNames = {"player_id", "game_id"}),
+        indexes = @Index(name = "idx_pgp_game", columnList = "game_id"))
 @Getter
 @Setter
 @NoArgsConstructor

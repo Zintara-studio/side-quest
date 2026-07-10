@@ -11,6 +11,7 @@ import com.sidequest.arena.model.Match;
 import com.sidequest.arena.config.CacheConfig;
 import com.sidequest.arena.repo.GameRepository;
 import com.sidequest.arena.repo.MatchRepository;
+import com.sidequest.arena.scoring.ScoringService;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
@@ -29,13 +30,16 @@ public class GameService {
 
     private final GameRepository gameRepository;
     private final MatchRepository matchRepository;
+    private final ScoringService scoringService;
     private final AuditService auditService;
 
     public GameService(GameRepository gameRepository,
                        MatchRepository matchRepository,
+                       ScoringService scoringService,
                        AuditService auditService) {
         this.gameRepository = gameRepository;
         this.matchRepository = matchRepository;
+        this.scoringService = scoringService;
         this.auditService = auditService;
     }
 
@@ -92,13 +96,58 @@ public class GameService {
             game.setGameType(request.gameType());
             changes.add("gameType=" + request.gameType());
         }
+        if (request.pointsPerKill() != null) {
+            game.setPointsPerKill(Math.max(0, request.pointsPerKill()));
+            changes.add("pointsPerKill=" + game.getPointsPerKill());
+        }
+        if (request.placementPoints() != null) {
+            game.setPlacementPoints(normalizePlacementPoints(request.placementPoints()));
+            changes.add("placementPoints=" + game.getPlacementPoints());
+        }
+        boolean weightChanged = false;
+        if (request.standingsWeight() != null) {
+            int newWeight = Math.max(0, request.standingsWeight());
+            weightChanged = newWeight != game.getStandingsWeight();
+            game.setStandingsWeight(newWeight);
+            changes.add("standingsWeight=" + newWeight);
+        }
 
         Game saved = gameRepository.save(game);
+
+        // A changed standings weight re-weights this title's matches in the LIVE current-season table.
+        // Season-scoped + snapshot-preserving, so finished seasons are never altered.
+        if (weightChanged) {
+            scoringService.recomputeStandings();
+        }
 
         String summary = changes.isEmpty() ? "no changes" : String.join(", ", changes);
         auditService.record("game.update", "Game", id.toString(), summary);
 
         return toDetail(saved);
+    }
+
+    /** Validate + normalize a placement-points ladder: blank → "", else comma-separated integers. */
+    private static String normalizePlacementPoints(String raw) {
+        String trimmed = raw.trim();
+        if (trimmed.isEmpty()) {
+            return "";
+        }
+        String[] parts = trimmed.split(",", -1);
+        StringBuilder out = new StringBuilder();
+        for (String part : parts) {
+            String p = part.trim();
+            try {
+                Integer.parseInt(p);
+            } catch (NumberFormatException ex) {
+                throw ApiException.badRequest(
+                        "placementPoints must be a comma-separated list of integers; bad entry: '" + part + "'");
+            }
+            if (out.length() > 0) {
+                out.append(",");
+            }
+            out.append(p);
+        }
+        return out.toString();
     }
 
     // ---- mappers ----
@@ -111,7 +160,10 @@ public class GameService {
                 game.getGameType().name(),
                 game.getIconUrl(),
                 game.isEnabled(),
-                game.getPopularity()
+                game.getPopularity(),
+                game.getPointsPerKill(),
+                game.getPlacementPoints(),
+                game.getStandingsWeight()
         );
     }
 
@@ -129,6 +181,9 @@ public class GameService {
                 game.getIconUrl(),
                 game.isEnabled(),
                 game.getPopularity(),
+                game.getPointsPerKill(),
+                game.getPlacementPoints(),
+                game.getStandingsWeight(),
                 matches
         );
     }

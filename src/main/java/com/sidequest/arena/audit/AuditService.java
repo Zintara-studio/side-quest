@@ -36,8 +36,9 @@ public class AuditService {
         repo.save(log);
     }
 
+    /** The most recent entries (bounded at the DB — the audit table is append-only, never findAll it). */
     @Transactional(readOnly = true)
     public List<AuditLog> recent() {
-        return repo.findAllByOrderByCreatedAtDesc();
+        return repo.findTop50ByOrderByCreatedAtDesc();
     }
 }

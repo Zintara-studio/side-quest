@@ -160,6 +160,12 @@ public class AnnouncementService {
     @Transactional
     public void delete(String id) {
         Announcement announcement = require(id);
+        // Deleting an OPEN registration call must not strand its live sign-ups — run the same voiding
+        // path close() uses, so applicants are told instead of holding registrations for a call that no
+        // longer exists.
+        if (announcement.isRegistrationOpen()) {
+            close(id);
+        }
         announcementRepository.delete(announcement);
         auditService.record("announcement.delete", "Announcement", announcement.getId().toString(),
                 announcement.getTitle());
@@ -197,6 +203,23 @@ public class AnnouncementService {
             announcementRepository.save(a);
             auditService.record("announcement.close", "Announcement", a.getId().toString(),
                     "auto-closed (match finished)");
+        }
+    }
+
+    /**
+     * Auction pool locked: close every open AUCTION registration call so the Register button disappears
+     * everywhere and the call reads closed — the same effect an admin closing it by hand would have.
+     * Pool registrations themselves stay ACTIVE (never voided): the locked pool still feeds the lots and
+     * they are only consumed when the auction completes. No-op when none are open.
+     */
+    @Transactional
+    public void closeAuctionCalls() {
+        for (Announcement a : announcementRepository
+                .findByRegistrationOpenTrueAndRegistrationType(RegistrationType.AUCTION)) {
+            a.setRegistrationOpen(false);
+            announcementRepository.save(a);
+            auditService.record("announcement.close", "Announcement", a.getId().toString(),
+                    "auto-closed (auction pool locked)");
         }
     }
 

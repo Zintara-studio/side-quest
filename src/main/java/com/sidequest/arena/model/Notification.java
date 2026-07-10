@@ -20,7 +20,10 @@ import lombok.Setter;
  */
 @Entity
 @Table(name = "notifications", indexes = {
-        @Index(name = "idx_notifications_user", columnList = "user_id")
+        @Index(name = "idx_notifications_user", columnList = "user_id"),
+        // Covers the unread-count/badge reads. Added under a NEW name (Hibernate update would silently
+        // skip a same-named index with changed columns on an existing database).
+        @Index(name = "idx_notifications_user_read", columnList = "user_id, is_read")
 })
 @Getter
 @Setter

@@ -6,11 +6,14 @@ import com.sidequest.arena.common.ApiException;
 import com.sidequest.arena.config.CacheConfig;
 import com.sidequest.arena.model.Franchise;
 import com.sidequest.arena.model.LeagueSettings;
+import com.sidequest.arena.model.NotificationType;
 import com.sidequest.arena.model.Player;
 import com.sidequest.arena.model.PlayerFranchiseHistory;
 import com.sidequest.arena.model.Season;
 import com.sidequest.arena.model.SeasonStanding;
 import com.sidequest.arena.model.SeasonStatus;
+import com.sidequest.arena.model.User;
+import com.sidequest.arena.notifications.NotificationService;
 import com.sidequest.arena.repo.FranchiseRepository;
 import com.sidequest.arena.repo.LeagueSettingsRepository;
 import com.sidequest.arena.repo.PlayerFranchiseHistoryRepository;
@@ -50,6 +53,7 @@ public class SeasonService {
     private final PlayerFranchiseHistoryRepository playerFranchiseHistoryRepository;
     private final LeagueSettingsRepository leagueSettingsRepository;
     private final AnnouncementService announcementService;
+    private final NotificationService notificationService;
     private final AuditService auditService;
 
     public SeasonService(SeasonRepository seasonRepository,
@@ -59,6 +63,7 @@ public class SeasonService {
                          PlayerFranchiseHistoryRepository playerFranchiseHistoryRepository,
                          LeagueSettingsRepository leagueSettingsRepository,
                          AnnouncementService announcementService,
+                         NotificationService notificationService,
                          AuditService auditService) {
         this.seasonRepository = seasonRepository;
         this.seasonStandingRepository = seasonStandingRepository;
@@ -67,6 +72,7 @@ public class SeasonService {
         this.playerFranchiseHistoryRepository = playerFranchiseHistoryRepository;
         this.leagueSettingsRepository = leagueSettingsRepository;
         this.announcementService = announcementService;
+        this.notificationService = notificationService;
         this.auditService = auditService;
     }
 
@@ -175,12 +181,15 @@ public class SeasonService {
 
     /**
      * Admin: finish the active season — snapshot its franchises' final standings and mark it FINISHED.
-     * Idempotent per season (re-snapshots). 409 if there is no active season.
+     * Idempotent per season (re-snapshots). 409 if there is no active season. Serialized against other
+     * lifecycle transitions via the settings-singleton row lock, so a double-click / concurrent admin
+     * can't double-snapshot (the loser re-reads FINISHED and gets the 409).
      */
     @CacheEvict(cacheNames = {CacheConfig.STANDINGS, CacheConfig.FRANCHISES, CacheConfig.PLAYERS,
             CacheConfig.LEADERBOARD_PLAYERS}, allEntries = true)
     @Transactional
     public SeasonView finish() {
+        leagueSettingsRepository.lockById(LeagueSettings.SINGLETON_ID);
         Season active = seasonRepository.findFirstByStatusOrderByStartedAtDesc(SeasonStatus.ACTIVE)
                 .orElseThrow(() -> ApiException.conflict("No active season to finish"));
         snapshot(active.getCode());
@@ -204,6 +213,9 @@ public class SeasonService {
             CacheConfig.LEADERBOARD_PLAYERS}, allEntries = true)
     @Transactional
     public SeasonView start(StartSeasonRequest req) {
+        // Serialize against concurrent lifecycle transitions (see finish()) — otherwise two starts with
+        // different codes could both pass the no-active-season check and leave TWO active seasons.
+        leagueSettingsRepository.lockById(LeagueSettings.SINGLETON_ID);
         String code = req.code().trim();
         if (activeOrNull() != null) {
             throw ApiException.conflict(
@@ -309,6 +321,14 @@ public class SeasonService {
         }
         playerRepository.saveAll(detached);
         // Leadership slots are intentionally NOT cleared — owner/manager/IGL persist across seasons.
+
+        // Tell the released players — otherwise their franchise just silently vanishes from My Team.
+        List<User> releasedUsers = detached.stream().map(Player::getUser).filter(u -> u != null).toList();
+        notificationService.createMany(releasedUsers, NotificationType.GENERAL,
+                "Season ended — rosters reset",
+                "The season is over and playing rosters were released for the next auction. "
+                        + "Your career stats and season history are unaffected.",
+                "/my/registrations");
     }
 
     /** Recompute and persist a frozen standings snapshot for the given season code. */

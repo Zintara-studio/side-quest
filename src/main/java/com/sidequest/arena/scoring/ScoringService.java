@@ -4,11 +4,14 @@ import com.sidequest.arena.model.Franchise;
 import com.sidequest.arena.model.Match;
 import com.sidequest.arena.model.Player;
 import com.sidequest.arena.model.ResultRow;
+import com.sidequest.arena.model.Season;
+import com.sidequest.arena.model.SeasonStatus;
 import com.sidequest.arena.realtime.RealtimeService;
 import com.sidequest.arena.repo.FranchiseRepository;
 import com.sidequest.arena.repo.MatchRoundPlayerResultRepository;
 import com.sidequest.arena.repo.PlayerRepository;
 import com.sidequest.arena.repo.ResultRowRepository;
+import com.sidequest.arena.repo.SeasonRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.sidequest.arena.config.CacheConfig;
@@ -22,7 +25,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 /**
  * The scoring engine. On result publish it performs a full, idempotent recompute of franchise
@@ -39,17 +41,20 @@ public class ScoringService {
     private final PlayerRepository playerRepo;
     private final ResultRowRepository resultRowRepo;
     private final MatchRoundPlayerResultRepository playerResultRepo;
+    private final SeasonRepository seasonRepo;
     private final RealtimeService realtime;
 
     public ScoringService(FranchiseRepository franchiseRepo,
                           PlayerRepository playerRepo,
                           ResultRowRepository resultRowRepo,
                           MatchRoundPlayerResultRepository playerResultRepo,
+                          SeasonRepository seasonRepo,
                           RealtimeService realtime) {
         this.franchiseRepo = franchiseRepo;
         this.playerRepo = playerRepo;
         this.resultRowRepo = resultRowRepo;
         this.playerResultRepo = playerResultRepo;
+        this.seasonRepo = seasonRepo;
         this.realtime = realtime;
     }
 
@@ -71,48 +76,53 @@ public class ScoringService {
     }
 
     /**
-     * Full recompute: franchise points = sum of its result-row totals from matches in the franchise's
-     * <em>current</em> season (season-scoped, so a new season starts from a clean slate); ranks by
-     * points desc. Player points, by contrast, are a season-independent CAREER total aggregated from
-     * the player's own performance across every match/season, so they accumulate and never reset.
-     * Idempotent — recomputes from the retained result history every time.
+     * Full recompute: franchise points = sum of its result-row totals from matches in the <em>active</em>
+     * season (season-scoped, so a new season starts from a clean slate); ranks by points desc. Player
+     * points, by contrast, are a season-independent CAREER total aggregated from the player's own
+     * performance across every match/season, so they accumulate and never reset. Idempotent — recomputes
+     * from the retained result history every time.
+     *
+     * <p>The franchise table is only recomputed while a season is ACTIVE. Off-season (a finished season
+     * with no successor started yet) the live franchise points still reflect the just-finished season, so
+     * a later scoring-weight edit or a match void must NOT retroactively re-weight them — the block is
+     * skipped and the finished season's standings stay frozen. Player career points are recomputed
+     * unconditionally, since they are not season-scoped.
      */
     @CacheEvict(cacheNames = {CacheConfig.STANDINGS, CacheConfig.LEADERBOARD_PLAYERS,
             CacheConfig.GAME_RANKINGS, CacheConfig.FRANCHISES, CacheConfig.PLAYERS}, allEntries = true)
     @Transactional
     public void recomputeStandings() {
         List<Franchise> franchises = franchiseRepo.findAll();
-        Map<UUID, String> seasonByFranchise = franchises.stream()
-                .collect(Collectors.toMap(Franchise::getId,
-                        f -> f.getSeasonId() == null ? "" : f.getSeasonId()));
 
-        // Only count result rows whose match is in the franchise's current season.
-        Map<UUID, Integer> pointsByFranchise = new HashMap<>();
-        for (ResultRow r : resultRowRepo.findAll()) {
-            Franchise fr = r.getFranchise();
-            if (fr == null) {
-                continue;
+        String activeSeason = seasonRepo.findFirstByStatusOrderByStartedAtDesc(SeasonStatus.ACTIVE)
+                .map(Season::getCode).orElse(null);
+        if (activeSeason != null) {
+            // One aggregate query returns each franchise's un-rounded, per-game-weighted total for the
+            // ACTIVE season (excluding cancelled fixtures) — instead of materializing every ResultRow
+            // ever and lazy-loading its match per row. Rounding happens ONCE per franchise below (never
+            // per row — that would drift for fractional weights like a 0.75× title), and the arithmetic
+            // stays in double/long so an extreme total × weight can never wrap the int; the write
+            // saturates into the column's range.
+            Map<UUID, Double> pointsByFranchise = new HashMap<>();
+            for (Object[] row : resultRowRepo.aggregateFranchisePoints(activeSeason)) {
+                if (row[0] != null && row[1] != null) {
+                    pointsByFranchise.merge((UUID) row[0], ((Number) row[1]).doubleValue(), Double::sum);
+                }
             }
-            Match match = r.getMatch();
-            String matchSeason = match != null && match.getSeasonId() != null ? match.getSeasonId() : "";
-            String franchiseSeason = seasonByFranchise.getOrDefault(fr.getId(), "");
-            if (!franchiseSeason.equals(matchSeason)) {
-                continue;
-            }
-            pointsByFranchise.merge(fr.getId(), r.getTotal(), Integer::sum);
-        }
 
-        for (Franchise f : franchises) {
-            f.setPoints(pointsByFranchise.getOrDefault(f.getId(), 0));
+            for (Franchise f : franchises) {
+                long rounded = Math.round(pointsByFranchise.getOrDefault(f.getId(), 0.0));
+                f.setPoints((int) Math.max(0, Math.min(Integer.MAX_VALUE, rounded)));
+            }
+            // Rank by points desc, then name for stable ordering.
+            franchises.sort(Comparator.comparingInt(Franchise::getPoints).reversed()
+                    .thenComparing(Franchise::getName, Comparator.nullsLast(String::compareTo)));
+            int rank = 1;
+            for (Franchise f : franchises) {
+                f.setRank(rank++);
+            }
+            franchiseRepo.saveAll(franchises);
         }
-        // Rank by points desc, then name for stable ordering.
-        franchises.sort(Comparator.comparingInt(Franchise::getPoints).reversed()
-                .thenComparing(Franchise::getName, Comparator.nullsLast(String::compareTo)));
-        int rank = 1;
-        for (Franchise f : franchises) {
-            f.setRank(rank++);
-        }
-        franchiseRepo.saveAll(franchises);
 
         // Players are NOT seasonal — their points are a CAREER total that accumulates across all
         // seasons and survives franchise resets. It is the sum of: (a) their individual kills in

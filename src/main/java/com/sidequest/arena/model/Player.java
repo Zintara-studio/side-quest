@@ -49,6 +49,29 @@ public class Player extends BaseEntity {
     @Column(columnDefinition = "text")
     private String bio;
 
+    // ---- contact / identity (per-field privacy; private by default) ----
+
+    /** Real name for the profile / auction paperwork. Private unless {@link #realNamePublic}. */
+    @Column(name = "real_name")
+    private String realName;
+
+    /** Contact phone (distinct from the account login phone on {@link User}). Private unless {@link #phonePublic}. */
+    @Column(name = "phone")
+    private String phone;
+
+    /** Public-facing contact email (distinct from the login email on {@link User}). Private unless {@link #contactEmailPublic}. */
+    @Column(name = "contact_email")
+    private String contactEmail;
+
+    @Column(name = "real_name_public", nullable = false)
+    private boolean realNamePublic = false;
+
+    @Column(name = "phone_public", nullable = false)
+    private boolean phonePublic = false;
+
+    @Column(name = "contact_email_public", nullable = false)
+    private boolean contactEmailPublic = false;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 32)
     private PlayerStatus status = PlayerStatus.PENDING;

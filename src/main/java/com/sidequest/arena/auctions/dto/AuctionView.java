@@ -12,6 +12,7 @@ import java.util.List;
  * @param title          auction title
  * @param seasonId       season the auction feeds (nullable)
  * @param status         {@code DRAFT} / {@code LOBBY} / {@code LIVE} / {@code PAUSED} / {@code COMPLETED}
+ * @param poolLocked     whether the registration pool has been frozen (auction registration is closed)
  * @param basePrice      opening bid for the first bid on a lot
  * @param bidTimerSeconds countdown length; a bid resets the deadline to now + this
  * @param antiSnipeSeconds anti-snipe cushion (config; carried for the client)
@@ -31,6 +32,7 @@ public record AuctionView(
         String title,
         String seasonId,
         String status,
+        boolean poolLocked,
         long basePrice,
         int bidTimerSeconds,
         int antiSnipeSeconds,

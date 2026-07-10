@@ -47,18 +47,6 @@ public class SettingsService {
             settings.setSeasonName(request.seasonName());
             changes.add("seasonName=" + request.seasonName());
         }
-        if (request.pointsPerKill() != null) {
-            settings.setPointsPerKill(request.pointsPerKill());
-            changes.add("pointsPerKill=" + request.pointsPerKill());
-        }
-        if (request.placementPoints() != null) {
-            settings.setPlacementPoints(request.placementPoints());
-            changes.add("placementPoints=" + request.placementPoints());
-        }
-        if (request.registrationOpen() != null) {
-            settings.setRegistrationOpen(request.registrationOpen());
-            changes.add("registrationOpen=" + request.registrationOpen());
-        }
         if (request.registrationLockHours() != null) {
             settings.setRegistrationLockHours(Math.max(0, request.registrationLockHours()));
             changes.add("registrationLockHours=" + settings.getRegistrationLockHours());
@@ -82,9 +70,6 @@ public class SettingsService {
         return new SettingsView(
                 settings.getSeasonId(),
                 settings.getSeasonName(),
-                settings.getPointsPerKill(),
-                settings.getPlacementPoints(),
-                settings.isRegistrationOpen(),
                 settings.getRegistrationLockHours(),
                 settings.getUpdatedAt());
     }

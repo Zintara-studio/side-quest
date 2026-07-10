@@ -1,5 +1,6 @@
 package com.sidequest.arena.realtime;
 
+import com.sidequest.arena.auctions.AuctionService;
 import com.sidequest.arena.security.JwtService;
 import io.jsonwebtoken.Claims;
 import org.springframework.lang.NonNull;
@@ -20,6 +21,7 @@ import java.util.regex.Pattern;
  * <ul>
  *   <li>{@code /ws/live/standings} → standings ticks</li>
  *   <li>{@code /ws/live/matches/{id}} → live scores for one match</li>
+ *   <li>{@code /ws/live/auctions/{id}?token=&lt;jwt&gt;} → live bid updates (bidders + admins only)</li>
  *   <li>{@code /ws/live/me?token=&lt;jwt&gt;} → personal pushes for the authenticated user</li>
  * </ul>
  */
@@ -27,14 +29,18 @@ import java.util.regex.Pattern;
 public class LiveWebSocketHandler extends TextWebSocketHandler {
 
     private static final Pattern MATCH_PATH = Pattern.compile(".*/live/matches/([^/]+)$");
+    private static final Pattern AUCTION_PATH = Pattern.compile(".*/live/auctions/([^/]+)$");
     private static final Pattern TOKEN_PARAM = Pattern.compile("(?:^|&)token=([^&]+)");
 
     private final RealtimeService realtime;
     private final JwtService jwtService;
+    private final AuctionService auctionService;
 
-    public LiveWebSocketHandler(RealtimeService realtime, JwtService jwtService) {
+    public LiveWebSocketHandler(RealtimeService realtime, JwtService jwtService,
+                                AuctionService auctionService) {
         this.realtime = realtime;
         this.jwtService = jwtService;
+        this.auctionService = auctionService;
     }
 
     @Override
@@ -48,10 +54,29 @@ public class LiveWebSocketHandler extends TextWebSocketHandler {
         String topic;
 
         Matcher m = MATCH_PATH.matcher(path);
+        Matcher am = AUCTION_PATH.matcher(path);
         if (path.endsWith("/live/standings")) {
             topic = RealtimeService.STANDINGS_TOPIC;
         } else if (m.matches()) {
             topic = RealtimeService.matchTopic(m.group(1));
+        } else if (am.matches()) {
+            // Live bid updates are bidders-only: validate the token, then check the user is an admin or a
+            // participating franchise owner/manager. Spectators are refused (they keep polling).
+            Claims claims = parseToken(uri.getQuery());
+            UUID userId = claims == null ? null : subjectOf(claims);
+            UUID auctionId;
+            try {
+                auctionId = UUID.fromString(am.group(1));
+            } catch (RuntimeException ex) {
+                session.close(CloseStatus.BAD_DATA);
+                return;
+            }
+            boolean isAdmin = claims != null && "ADMIN".equals(claims.get("role", String.class));
+            if (userId == null || !auctionService.canWatchLive(auctionId, userId, isAdmin)) {
+                session.close(CloseStatus.POLICY_VIOLATION);
+                return;
+            }
+            topic = RealtimeService.auctionTopic(auctionId);
         } else if (path.endsWith("/live/me")) {
             UUID userId = resolveUser(uri.getQuery());
             if (userId == null) {
@@ -83,6 +108,12 @@ public class LiveWebSocketHandler extends TextWebSocketHandler {
     }
 
     private UUID resolveUser(String query) {
+        Claims claims = parseToken(query);
+        return claims == null ? null : subjectOf(claims);
+    }
+
+    /** Parse+validate the {@code ?token=} JWT from a WS query string, or null when absent/invalid. */
+    private Claims parseToken(String query) {
         if (query == null) {
             return null;
         }
@@ -91,7 +122,14 @@ public class LiveWebSocketHandler extends TextWebSocketHandler {
             return null;
         }
         try {
-            Claims claims = jwtService.parse(tm.group(1));
+            return jwtService.parse(tm.group(1));
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static UUID subjectOf(Claims claims) {
+        try {
             return UUID.fromString(claims.getSubject());
         } catch (RuntimeException e) {
             return null;
@@ -103,6 +141,7 @@ public class LiveWebSocketHandler extends TextWebSocketHandler {
         return Map.of(
                 "/ws/live/standings", "Live leaderboard ticks",
                 "/ws/live/matches/{id}", "Live score updates for a match",
+                "/ws/live/auctions/{id}?token=<jwt>", "Live bid updates (bidders + admins only)",
                 "/ws/live/me?token=<jwt>", "Personal pushes (reg status, alerts)");
     }
 }

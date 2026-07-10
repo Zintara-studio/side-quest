@@ -24,6 +24,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <jjwt.version>0.12.6</jjwt.version>
         <springdoc.version>2.6.0</springdoc.version>
+        <google-api-client.version>2.7.0</google-api-client.version>
     </properties>
 
     <dependencies>
@@ -50,6 +51,20 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- Email (Gmail SMTP). Auto-configures a JavaMailSender only when spring.mail.host is set;
+             unset in dev, so EmailService falls back to logging the OTP to the console. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-mail</artifactId>
+        </dependency>
+
+        <!-- Google Sign-In: verifies the Google id_token server-side (signature / audience / issuer / exp). -->
+        <dependency>
+            <groupId>com.google.api-client</groupId>
+            <artifactId>google-api-client</artifactId>
+            <version>${google-api-client.version}</version>
         </dependency>
 
         <!-- Caching: Spring Cache abstraction backed by Caffeine (in-process, TTL'd) -->

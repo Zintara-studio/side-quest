@@ -13,6 +13,7 @@ import com.sidequest.arena.model.PlayerGameUsername;
 import com.sidequest.arena.model.NotificationType;
 import com.sidequest.arena.model.PlayerStatus;
 import com.sidequest.arena.model.ResultRow;
+import com.sidequest.arena.media.MediaRefs;
 import com.sidequest.arena.notifications.NotificationService;
 import com.sidequest.arena.players.dto.PlayerDetail;
 import com.sidequest.arena.players.dto.PlayerMatchView;
@@ -29,6 +30,7 @@ import com.sidequest.arena.repo.RefreshTokenRepository;
 import com.sidequest.arena.repo.ResultRowRepository;
 import com.sidequest.arena.config.CacheConfig;
 import com.sidequest.arena.security.SecurityUtils;
+import com.sidequest.arena.security.UserPrincipal;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
@@ -36,6 +38,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -57,6 +61,7 @@ public class PlayerService {
     private final AuditService auditService;
     private final NotificationService notificationService;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final PlayerProfileWriter profileWriter;
 
     public PlayerService(PlayerRepository playerRepository,
                          FranchiseRepository franchiseRepository,
@@ -66,7 +71,8 @@ public class PlayerService {
                          PlayerGameProficiencyRepository playerGameProficiencyRepository,
                          AuditService auditService,
                          NotificationService notificationService,
-                         RefreshTokenRepository refreshTokenRepository) {
+                         RefreshTokenRepository refreshTokenRepository,
+                         PlayerProfileWriter profileWriter) {
         this.playerRepository = playerRepository;
         this.franchiseRepository = franchiseRepository;
         this.matchParticipantRepository = matchParticipantRepository;
@@ -76,6 +82,7 @@ public class PlayerService {
         this.auditService = auditService;
         this.notificationService = notificationService;
         this.refreshTokenRepository = refreshTokenRepository;
+        this.profileWriter = profileWriter;
     }
 
     /**
@@ -140,9 +147,16 @@ public class PlayerService {
         }
         UUID franchiseId = franchise.getId();
 
+        // One query for ALL of the franchise's result rows (keyed by match), instead of one
+        // result-row query per historical match.
+        Map<UUID, ResultRow> rowByMatch = resultRowRepository
+                .findByFranchiseIdOrderByCreatedAtDesc(franchiseId).stream()
+                .filter(r -> r.getMatch() != null)
+                .collect(Collectors.toMap(r -> r.getMatch().getId(), r -> r, (a, b) -> a));
+
         return matchParticipantRepository.findByFranchiseId(franchiseId).stream()
                 .map(MatchParticipant::getMatch)
-                .map(match -> toMatchView(match, franchiseId))
+                .map(match -> toMatchView(match, rowByMatch.get(match.getId())))
                 .sorted(Comparator.comparing(PlayerMatchView::scheduledAt,
                         Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();
@@ -183,11 +197,13 @@ public class PlayerService {
             throw ApiException.forbidden("You may only edit your own profile");
         }
 
-        if (request.gamerTag() != null) {
-            player.setGamerTag(request.gamerTag());
-        }
+        // The gamer tag (username) is claimed at signup and is immutable — the request field is ignored
+        // here so it can never be changed via profile edit (nor via any other path).
         if (request.avatarUrl() != null) {
-            player.setAvatarUrl(request.avatarUrl());
+            // Only accept a server-issued /media/{id} reference (or blank to clear) — never an arbitrary
+            // external/data URL, which would be rendered as an <img> to every viewer of the profile.
+            String avatar = MediaRefs.normalize(request.avatarUrl(), "avatarUrl");
+            player.setAvatarUrl(avatar.isEmpty() ? null : avatar);
         }
         if (request.region() != null) {
             player.setRegion(request.region());
@@ -195,9 +211,48 @@ public class PlayerService {
         if (request.bio() != null) {
             player.setBio(request.bio());
         }
+        if (request.realName() != null) {
+            player.setRealName(request.realName().isBlank() ? null : request.realName().trim());
+        }
+        if (request.phone() != null) {
+            player.setPhone(request.phone().isBlank() ? null : request.phone().trim());
+        }
+        if (request.contactEmail() != null) {
+            player.setContactEmail(request.contactEmail().isBlank() ? null : request.contactEmail().trim());
+        }
+        if (request.realNamePublic() != null) {
+            player.setRealNamePublic(request.realNamePublic());
+        }
+        if (request.phonePublic() != null) {
+            player.setPhonePublic(request.phonePublic());
+        }
+        if (request.contactEmailPublic() != null) {
+            player.setContactEmailPublic(request.contactEmailPublic());
+        }
 
         Player saved = playerRepository.save(player);
+
+        // Per-game skill + handle go through the single canonical writer shared with auction registration.
+        if (request.proficiencies() != null) {
+            profileWriter.upsert(saved, request.proficiencies().stream()
+                    .filter(e -> e != null && e.gameId() != null)
+                    .map(PlayerService::toUpsert)
+                    .toList());
+        }
+
         return toDetail(saved);
+    }
+
+    /** Map a profile-form game line to the shared writer's input, parsing the string game id. */
+    private static PlayerProfileWriter.Upsert toUpsert(UpdatePlayerRequest.GameEntry e) {
+        UUID gameId;
+        try {
+            gameId = UUID.fromString(e.gameId());
+        } catch (IllegalArgumentException ex) {
+            throw ApiException.badRequest("Invalid game id: " + e.gameId());
+        }
+        return new PlayerProfileWriter.Upsert(gameId, e.rating(), e.handle(), e.handlePublic(),
+                e.rankTier(), e.kd(), e.accountLevel());
     }
 
     /**
@@ -240,16 +295,40 @@ public class PlayerService {
                 && player.getUser().getId().equals(SecurityUtils.currentUserId());
     }
 
-    private PlayerMatchView toMatchView(Match match, UUID franchiseId) {
-        Integer rank = null;
-        Integer total = null;
-        for (ResultRow row : resultRowRepository.findByMatchIdOrderByRankAsc(match.getId())) {
-            if (franchiseId.equals(row.getFranchise().getId())) {
-                rank = row.getRank();
-                total = row.getTotal();
-                break;
-            }
+    /**
+     * Whether the current caller may see a player's private contact fields. True for an admin, the
+     * profile owner, or an owner/manager of the player's franchise; false for spectators and unrelated
+     * viewers. Self-contained from the target player (its franchise's leader user-ids), so it needs no
+     * franchise-service dependency. Must run inside the read transaction (lazy associations).
+     */
+    private static boolean canViewPrivate(Player target) {
+        Optional<UserPrincipal> principal = SecurityUtils.currentPrincipal();
+        if (principal.isEmpty()) {
+            return false;
         }
+        if (SecurityUtils.isAdmin()) {
+            return true;
+        }
+        UUID viewerId = principal.get().getUserId();
+        if (target.getUser() != null && viewerId.equals(target.getUser().getId())) {
+            return true;
+        }
+        Franchise franchise = target.getFranchise();
+        if (franchise == null) {
+            return false;
+        }
+        return leads(franchise.getOwnerPlayer(), viewerId)
+                || leads(franchise.getManagerPlayer(), viewerId);
+    }
+
+    /** Whether the given leadership slot is held by the viewer (by user id). */
+    private static boolean leads(Player slot, UUID viewerId) {
+        return slot != null && slot.getUser() != null && viewerId.equals(slot.getUser().getId());
+    }
+
+    private static PlayerMatchView toMatchView(Match match, ResultRow row) {
+        Integer rank = row != null ? row.getRank() : null;
+        Integer total = row != null ? row.getTotal() : null;
         return new PlayerMatchView(
                 match.getId().toString(),
                 match.getGame().getName(),
@@ -285,12 +364,24 @@ public class PlayerService {
                         .map(PlayerService::toProficiencyView)
                         .toList();
 
+        // Per-field privacy: a private contact field is nulled for viewers who may not see it.
+        boolean privileged = canViewPrivate(player);
+        String realName = privileged || player.isRealNamePublic() ? player.getRealName() : null;
+        String phone = privileged || player.isPhonePublic() ? player.getPhone() : null;
+        String contactEmail = privileged || player.isContactEmailPublic() ? player.getContactEmail() : null;
+
         return new PlayerDetail(
                 player.getId().toString(),
                 player.getGamerTag(),
                 player.getAvatarUrl(),
                 player.getRegion(),
                 player.getBio(),
+                realName,
+                phone,
+                contactEmail,
+                player.isRealNamePublic(),
+                player.isPhonePublic(),
+                player.isContactEmailPublic(),
                 player.getStatus().name(),
                 player.getPoints(),
                 new PlayerDetail.UserMini(player.getUser().getName()),

@@ -4,6 +4,7 @@ import com.sidequest.arena.model.Role;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Service;
 
@@ -34,6 +35,13 @@ public class JwtService {
         if (!devProfile && (secret == null || secret.isBlank() || DEV_DEFAULT_SECRET.equals(secret))) {
             throw new IllegalStateException(
                     "SIDEQUEST_JWT_SECRET must be set to a strong, non-default secret when not running the dev profile");
+        }
+        if (DEV_DEFAULT_SECRET.equals(secret)) {
+            // Loud reminder: an unconfigured launch defaults to the dev profile + this committed secret. Safe
+            // for local dev only — a public deploy MUST set SPRING_PROFILES_ACTIVE=postgres + SIDEQUEST_JWT_SECRET.
+            LoggerFactory.getLogger(JwtService.class).warn(
+                    "SECURITY: signing JWTs with the COMMITTED dev-only secret. Do NOT expose this instance "
+                    + "publicly — set SPRING_PROFILES_ACTIVE=postgres and a strong SIDEQUEST_JWT_SECRET for deploy.");
         }
         this.props = props;
         this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));

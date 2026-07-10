@@ -24,6 +24,9 @@ public record InviteView(
         String captainGamerTag,
         List<String> games,
         String status,
+        /** The squad registration's status (e.g. FORMING) — lets the client show a Leave button only
+         *  while the squad is still forming. */
+        String registrationStatus,
         String message,
         Instant createdAt,
         List<MemberView> members

@@ -13,6 +13,8 @@ import java.util.UUID;
  * the service); AUCTION and PLAYER applications need no name.
  *
  * @param type          registration type (PLAYER, SQUAD, FRANCHISE or AUCTION), required
+ * @param realName      the applicant's real name, persisted onto their profile so franchises/admins
+ *                      can see who they're registering/drafting; mandatory in the UI, nullable here
  * @param squadName     proposed squad/franchise name (required for SQUAD/FRANCHISE), nullable otherwise
  * @param franchiseTag  requested franchise abbreviation (FRANCHISE only, e.g. "RXG"); nullable → derived
  * @param games         game titles being registered for; required non-empty for PLAYER/SQUAD/AUCTION,
@@ -30,6 +32,7 @@ import java.util.UUID;
  */
 public record ApplyRequest(
         @NotNull RegistrationType type,
+        @Size(max = 80) String realName,
         String squadName,
         @Size(max = 16) String franchiseTag,
         List<String> games,

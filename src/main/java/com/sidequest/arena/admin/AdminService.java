@@ -8,12 +8,15 @@ import com.sidequest.arena.audit.AuditService;
 import com.sidequest.arena.common.ApiException;
 import com.sidequest.arena.model.AuditLog;
 import com.sidequest.arena.model.Dispute;
+import com.sidequest.arena.model.DisputeCategory;
 import com.sidequest.arena.model.DisputeStatus;
 import com.sidequest.arena.model.Match;
 import com.sidequest.arena.model.MatchStatus;
+import com.sidequest.arena.model.NotificationType;
 import com.sidequest.arena.model.RegistrationStatus;
 import com.sidequest.arena.model.Role;
 import com.sidequest.arena.model.User;
+import com.sidequest.arena.notifications.NotificationService;
 import com.sidequest.arena.repo.DisputeRepository;
 import com.sidequest.arena.repo.FranchiseRepository;
 import com.sidequest.arena.repo.GameRepository;
@@ -46,6 +49,7 @@ public class AdminService {
     private final UserRepository userRepository;
     private final RegistrationRepository registrationRepository;
     private final DisputeRepository disputeRepository;
+    private final NotificationService notificationService;
     private final AuditService auditService;
 
     public AdminService(PlayerRepository playerRepository,
@@ -55,6 +59,7 @@ public class AdminService {
                         UserRepository userRepository,
                         RegistrationRepository registrationRepository,
                         DisputeRepository disputeRepository,
+                        NotificationService notificationService,
                         AuditService auditService) {
         this.playerRepository = playerRepository;
         this.franchiseRepository = franchiseRepository;
@@ -63,6 +68,7 @@ public class AdminService {
         this.userRepository = userRepository;
         this.registrationRepository = registrationRepository;
         this.disputeRepository = disputeRepository;
+        this.notificationService = notificationService;
         this.auditService = auditService;
     }
 
@@ -116,6 +122,19 @@ public class AdminService {
         dispute.setResolvedAt(Instant.now());
 
         Dispute saved = disputeRepository.save(dispute);
+
+        // Close the loop with the person who raised it — otherwise a dispute resolution is invisible.
+        User raiser = saved.getRaisedBy();
+        if (raiser != null) {
+            boolean isResult = saved.getCategory() == DisputeCategory.RESULT && saved.getMatch() != null;
+            String link = isResult ? "/match/" + saved.getMatch().getId() : "/notifications";
+            String body = (dismiss ? "Your dispute was reviewed and dismissed." : "Your dispute was resolved.")
+                    + (request.resolution() != null && !request.resolution().isBlank()
+                            ? " " + request.resolution().trim() : "");
+            notificationService.create(raiser,
+                    isResult ? NotificationType.RESULT : NotificationType.GENERAL,
+                    dismiss ? "Dispute dismissed" : "Dispute resolved", body, link);
+        }
 
         auditService.record("dispute.resolve", "Dispute", saved.getId().toString(),
                 (dismiss ? "dismissed" : "resolved") + ": " + request.resolution());

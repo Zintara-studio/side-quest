@@ -66,6 +66,13 @@ public class AuctionController {
         return auctionService.updateConfig(id, request);
     }
 
+    /** Freeze the registration pool (close auction sign-ups) — required before opening the hall (admin). */
+    @PostMapping("/{id}/lock-pool")
+    @PreAuthorize("hasRole('ADMIN')")
+    public AuctionView lockPool(@PathVariable String id) {
+        return auctionService.lockPool(id);
+    }
+
     /** DRAFT -> LOBBY: open the hall for participating franchises to join (admin only). */
     @PostMapping("/{id}/open-hall")
     @PreAuthorize("hasRole('ADMIN')")
@@ -132,6 +139,13 @@ public class AuctionController {
     @PreAuthorize("hasRole('ADMIN')")
     public AuctionView complete(@PathVariable String id) {
         return auctionService.complete(id);
+    }
+
+    /** DRAFT/LOBBY -> CANCELLED: call off an auction that never went live (admin only). */
+    @PostMapping("/{id}/cancel")
+    @PreAuthorize("hasRole('ADMIN')")
+    public AuctionView cancel(@PathVariable String id) {
+        return auctionService.cancel(id);
     }
 
     /** Put a specific queued lot on the block (admin only). */

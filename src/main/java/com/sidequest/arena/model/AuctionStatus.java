@@ -8,6 +8,8 @@ package com.sidequest.arena.model;
  *   <li>{@code LIVE} — bidding is open and the sweep auto-advances the block;</li>
  *   <li>{@code PAUSED} — temporarily halted by an admin (the sweep skips it);</li>
  *   <li>{@code COMPLETED} — finished; no more lots on the block.</li>
+ *   <li>{@code CANCELLED} — called off before bidding (DRAFT/LOBBY only); the pool registrations stay
+ *       live and feed the next auction. A cancelled auction is never the "active" one.</li>
  * </ul>
  */
 public enum AuctionStatus {
@@ -16,5 +18,6 @@ public enum AuctionStatus {
     LOBBY,
     LIVE,
     PAUSED,
-    COMPLETED
+    COMPLETED,
+    CANCELLED
 }

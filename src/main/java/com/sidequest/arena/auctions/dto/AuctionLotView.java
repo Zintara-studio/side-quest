@@ -9,6 +9,8 @@ import java.util.List;
  * @param id                       lot id
  * @param playerId                 the player up for auction
  * @param gamerTag                 the player's public handle
+ * @param realName                 the player's real name from registration (nullable; hidden from
+ *                                 spectators — only bidders/admin scouting the pool see it)
  * @param status                   {@code QUEUED} / {@code ON_BLOCK} / {@code SOLD} / {@code UNSOLD}
  * @param currentBid               current top bid (0 until first bid)
  * @param minNextBid               smallest amount the next bid may be
@@ -28,6 +30,7 @@ public record AuctionLotView(
         String id,
         String playerId,
         String gamerTag,
+        String realName,
         String status,
         long currentBid,
         long minNextBid,

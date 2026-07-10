@@ -8,8 +8,13 @@ import org.junit.jupiter.api.MethodOrderer.OrderAnnotation;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
+import com.sidequest.arena.email.EmailSender;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -21,7 +26,13 @@ import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -31,6 +42,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * public catalog reads, the scoring engine, and the error envelope.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@Import(SideQuestApiIntegrationTest.TestEmailConfig.class)
 @TestMethodOrder(OrderAnnotation.class)
 class SideQuestApiIntegrationTest {
 
@@ -39,6 +51,35 @@ class SideQuestApiIntegrationTest {
 
     @Autowired
     ObjectMapper mapper;
+
+    @Autowired
+    RecordingEmailSender emails;
+
+    /** Test-only email transport that captures the 6-digit OTP so tests can read it. */
+    @TestConfiguration
+    static class TestEmailConfig {
+        @Bean
+        @Primary
+        RecordingEmailSender recordingEmailSender() {
+            return new RecordingEmailSender();
+        }
+    }
+
+    static class RecordingEmailSender implements EmailSender {
+        private final Map<String, String> lastCode = new ConcurrentHashMap<>();
+
+        @Override
+        public void send(String to, String subject, String body) {
+            Matcher m = Pattern.compile("\\d{6}").matcher(body);
+            if (m.find()) {
+                lastCode.put(to.trim().toLowerCase(), m.group());
+            }
+        }
+
+        String codeFor(String email) {
+            return lastCode.get(email.trim().toLowerCase());
+        }
+    }
 
     // TestRestTemplate's root URI already includes the server context path (/v1), so paths here
     // are context-relative.
@@ -95,6 +136,74 @@ class SideQuestApiIntegrationTest {
         return parse(res).get("accessToken").asText();
     }
 
+    private ResponseEntity<String> getResp(String path, String token) {
+        return rest.exchange(BASE + path, HttpMethod.GET, new HttpEntity<>(headers(token)), String.class);
+    }
+
+    private ResponseEntity<String> delete(String path, String token) {
+        return rest.exchange(BASE + path, HttpMethod.DELETE, new HttpEntity<>(headers(token)), String.class);
+    }
+
+    private String franchiseIdByTag(String tag) {
+        for (JsonNode f : get("/franchises", null).get("items")) {
+            if (tag.equals(f.get("tag").asText())) {
+                return f.get("id").asText();
+            }
+        }
+        return null;
+    }
+
+    private boolean hasNotificationType(String token, String type) {
+        for (JsonNode n : get("/notifications", token)) {
+            if (type.equals(n.get("type").asText())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** A franchise's current league points from the public standings (0 if not ranked). */
+    private int pointsOf(String franchiseId) {
+        for (JsonNode s : get("/standings", null).get("standings")) {
+            if (franchiseId.equals(s.get("franchiseId").asText())) {
+                return s.get("points").asInt();
+            }
+        }
+        return 0;
+    }
+
+    /** Create a fixture (future) for RXG+MOTI and publish a result where RXG wins big. Returns match id. */
+    private String createAndPublishRxgWin(String admin) {
+        String gameId = get("/games", null).get(0).get("id").asText();
+        String rxg = franchiseIdByTag("RXG");
+        String moti = franchiseIdByTag("MOTI");
+        ObjectNode create = mapper.createObjectNode();
+        create.put("gameId", gameId);
+        create.put("scheduledAt", Instant.now().plus(Duration.ofDays(2)).toString());
+        create.put("matchType", "FRANCHISE");
+        create.putArray("participantFranchiseIds").add(rxg).add(moti);
+        String matchId = parse(post("/matches", create, admin)).get("id").asText();
+        ObjectNode results = mapper.createObjectNode();
+        var rows = results.putArray("rows");
+        rows.addObject().put("franchiseId", rxg).put("kills", 30).put("placePts", 15);
+        rows.addObject().put("franchiseId", moti).put("kills", 2).put("placePts", 2);
+        assertThat(post("/matches/" + matchId + "/results", results, admin).getStatusCode().is2xxSuccessful())
+                .isTrue();
+        return matchId;
+    }
+
+    private String playerIdOf(String token) {
+        return get("/auth/me", token).get("player").get("id").asText();
+    }
+
+    private String franchiseIdOf(String token) {
+        return get("/auth/me", token).get("player").get("franchiseId").asText();
+    }
+
+    /** A 1x1 transparent PNG, base64-encoded (valid magic bytes for the upload sniff). */
+    private static final String PNG_1x1 =
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
     // ---------- tests ----------
 
     @Test
@@ -146,21 +255,89 @@ class SideQuestApiIntegrationTest {
 
     @Test
     @Order(5)
-    void registerThenLoginNewPlayer() {
+    void registerVerifyThenLoginNewPlayer() {
         String email = "rookie_" + UUID.randomUUID().toString().substring(0, 8) + "@sidequest.gg";
         ObjectNode body = mapper.createObjectNode();
         body.put("name", "Test Rookie");
         body.put("email", email);
         body.put("password", "password123");
-        ResponseEntity<String> res = post("/auth/register", body, null);
-        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-        JsonNode created = parse(res);
-        assertThat(created.get("accessToken").asText()).isNotBlank();
-        assertThat(created.get("user").get("role").asText()).isEqualTo("PLAYER");
 
-        // and they can authenticate
+        // 1) register: no session, verification required
+        ResponseEntity<String> res = post("/auth/register", body, null);
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+        assertThat(parse(res).get("verificationRequired").asBoolean()).isTrue();
+
+        // 2) login before verifying is blocked with a distinct code
+        ObjectNode creds = mapper.createObjectNode();
+        creds.put("identifier", email);
+        creds.put("password", "password123");
+        ResponseEntity<String> early = post("/auth/login", creds, null);
+        assertThat(early.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(parse(early).get("code").asText()).isEqualTo("EMAIL_NOT_VERIFIED");
+
+        // 3) verify with the emailed OTP → session issued
+        String code = emails.codeFor(email);
+        assertThat(code).matches("\\d{6}");
+        ObjectNode verify = mapper.createObjectNode();
+        verify.put("email", email);
+        verify.put("code", code);
+        ResponseEntity<String> verified = post("/auth/verify-email", verify, null);
+        assertThat(verified.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(parse(verified).get("accessToken").asText()).isNotBlank();
+
+        // 4) now login works and the player was promoted to VERIFIED by email verification
         String token = login(email, "password123");
-        assertThat(get("/auth/me", token).get("player")).isNotNull();
+        JsonNode me = get("/auth/me", token);
+        assertThat(me.get("player")).isNotNull();
+        assertThat(me.get("player").get("status").asText()).isEqualTo("VERIFIED");
+    }
+
+    @Test
+    @Order(30)
+    void otpWrongCodeReplayAndForgotPassword() {
+        String email = "otp_" + UUID.randomUUID().toString().substring(0, 8) + "@sidequest.gg";
+        ObjectNode reg = mapper.createObjectNode();
+        reg.put("name", "OTP Tester");
+        reg.put("email", email);
+        reg.put("password", "password123");
+        assertThat(post("/auth/register", reg, null).getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+        String code = emails.codeFor(email);
+
+        // wrong code is rejected with a generic 400
+        ObjectNode wrong = mapper.createObjectNode();
+        wrong.put("email", email);
+        wrong.put("code", code.equals("000000") ? "111111" : "000000");
+        assertThat(post("/auth/verify-email", wrong, null).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+
+        // correct code works once
+        ObjectNode right = mapper.createObjectNode();
+        right.put("email", email);
+        right.put("code", code);
+        assertThat(post("/auth/verify-email", right, null).getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        // replaying the same (consumed) code fails
+        assertThat(post("/auth/verify-email", right, null).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+
+        // forgot-password never leaks existence (204 for unknown and known emails alike)
+        ObjectNode unknown = mapper.createObjectNode();
+        unknown.put("email", "nobody_" + UUID.randomUUID() + "@nowhere.test");
+        assertThat(post("/auth/forgot-password", unknown, null).getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        ObjectNode known = mapper.createObjectNode();
+        known.put("email", email);
+        assertThat(post("/auth/forgot-password", known, null).getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+
+        // reset with the emailed code, then the new password logs in and the old one fails
+        String resetCode = emails.codeFor(email);
+        ObjectNode reset = mapper.createObjectNode();
+        reset.put("email", email);
+        reset.put("code", resetCode);
+        reset.put("newPassword", "brandNewPass1");
+        assertThat(post("/auth/reset-password", reset, null).getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        assertThat(login(email, "brandNewPass1")).isNotBlank();
+        ObjectNode oldCreds = mapper.createObjectNode();
+        oldCreds.put("identifier", email);
+        oldCreds.put("password", "password123");
+        assertThat(post("/auth/login", oldCreds, null).getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
     }
 
     @Test
@@ -272,6 +449,179 @@ class SideQuestApiIntegrationTest {
         assertThat(reused.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
     }
 
+    // ---------- Phase 4: per-game scoring config + weight, franchise roster tags ----------
+
+    /**
+     * Per-game scoring config is publicly visible and admin-editable; changing a game's standings weight
+     * re-weights that title's contribution to the LIVE current-season franchise table (up when heavier,
+     * gone when zeroed) — a bad placement ladder is rejected.
+     */
+    @Test
+    @Order(43)
+    void perGameScoringConfigAndWeight() {
+        String admin = login("admin@sidequest.gg", "password");
+        String rxg = franchiseIdByTag("RXG");
+        JsonNode games = get("/games", null);
+        String gameId = games.get(0).get("id").asText();
+        // Scoring config surfaces publicly.
+        assertThat(games.get(0).has("pointsPerKill")).isTrue();
+        assertThat(games.get(0).has("placementPoints")).isTrue();
+        assertThat(games.get(0).has("standingsWeight")).isTrue();
+
+        ObjectNode w = mapper.createObjectNode();
+        w.put("standingsWeight", 100);
+        assertThat(patch("/games/" + gameId, w, admin).getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        createAndPublishRxgWin(admin); // publishes a games[0] result for RXG
+        int p100 = pointsOf(rxg);
+
+        // Double the weight → this title's contribution doubles → RXG's live points rise.
+        w.put("standingsWeight", 200);
+        assertThat(parse(patch("/games/" + gameId, w, admin)).get("standingsWeight").asInt()).isEqualTo(200);
+        assertThat(pointsOf(rxg)).isGreaterThan(p100);
+
+        // Zero the weight → this title contributes nothing → live points drop below the 1.00× baseline.
+        w.put("standingsWeight", 0);
+        assertThat(patch("/games/" + gameId, w, admin).getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(pointsOf(rxg)).isLessThan(p100);
+
+        // A malformed placement ladder is rejected.
+        ObjectNode badLadder = mapper.createObjectNode();
+        badLadder.put("placementPoints", "10,abc,5");
+        assertThat(patch("/games/" + gameId, badLadder, admin).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+
+        // An out-of-range weight is rejected up front (bounded so it can't overflow the standings math).
+        ObjectNode hugeWeight = mapper.createObjectNode();
+        hugeWeight.put("standingsWeight", 2_000_000_000);
+        assertThat(patch("/games/" + gameId, hugeWeight, admin).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        ObjectNode negWeight = mapper.createObjectNode();
+        negWeight.put("standingsWeight", -5);
+        assertThat(patch("/games/" + gameId, negWeight, admin).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+
+        // Restore the baseline weight so later reads aren't skewed.
+        w.put("standingsWeight", 100);
+        assertThat(patch("/games/" + gameId, w, admin).getStatusCode()).isEqualTo(HttpStatus.OK);
+    }
+
+    /** Franchise-private roster tags: set by the franchise's leadership, hidden from everyone else. */
+    @Test
+    @Order(44)
+    void rosterPlayerTagsLeaderScoped() {
+        String vortex = login("vortex@sidequest.gg", "password");   // RXG owner
+        String echo = login("echo@sidequest.gg", "password");       // MOTI owner (other franchise)
+        String raghavan = login("raghavan@sidequest.gg", "password"); // RXG plain member
+        String rxg = franchiseIdOf(vortex);
+        String raghavanId = playerIdOf(raghavan);
+
+        // Owner sets tags (with a case-duplicate that gets de-duped).
+        ObjectNode body = mapper.createObjectNode();
+        body.putArray("tags").add("Valorant 1").add("BGMI 2").add("valorant 1");
+        assertThat(putTags(rxg, raghavanId, body, vortex).getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(tagsFor(get("/franchises/" + rxg + "/roster", vortex), raghavanId))
+                .containsExactly("Valorant 1", "BGMI 2");
+
+        // Hidden from spectators and other franchises' leaders.
+        assertThat(tagsFor(get("/franchises/" + rxg + "/roster", null), raghavanId)).isNull();
+        assertThat(tagsFor(get("/franchises/" + rxg + "/roster", echo), raghavanId)).isNull();
+
+        // A plain roster member or another franchise's owner can't set tags.
+        assertThat(putTags(rxg, raghavanId, body, raghavan).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(putTags(rxg, raghavanId, body, echo).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+
+        // Oversized payloads are rejected up front (list cap 20, per-tag cap 40 chars).
+        ObjectNode tooMany = mapper.createObjectNode();
+        var many = tooMany.putArray("tags");
+        for (int i = 0; i < 21; i++) {
+            many.add("tag " + i);
+        }
+        assertThat(putTags(rxg, raghavanId, tooMany, vortex).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        ObjectNode tooLong = mapper.createObjectNode();
+        tooLong.putArray("tags").add("x".repeat(41));
+        assertThat(putTags(rxg, raghavanId, tooLong, vortex).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    private ResponseEntity<String> putTags(String franchiseId, String playerId, ObjectNode body, String token) {
+        return rest.exchange(BASE + "/franchises/" + franchiseId + "/roster/" + playerId + "/tags",
+                HttpMethod.PUT, new HttpEntity<>(body, headers(token)), String.class);
+    }
+
+    /** The tags list for a player in a roster payload, or null when the field is absent/hidden. */
+    private List<String> tagsFor(JsonNode roster, String playerId) {
+        for (JsonNode m : roster) {
+            if (playerId.equals(m.get("playerId").asText())) {
+                JsonNode t = m.get("tags");
+                if (t == null || t.isNull()) {
+                    return null;
+                }
+                List<String> out = new ArrayList<>();
+                t.forEach(x -> out.add(x.asText()));
+                return out;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Locking the auction pool must have the same public effect as an admin closing the AUCTION
+     * registration call from the announcements page: the call flips registrationOpen=false (Register
+     * button gone) AND new pool applies are rejected. Runs after every test that enters the pool
+     * (locking is one-way for the seeded auction).
+     */
+    @Test
+    @Order(46)
+    void lockPoolClosesAuctionRegistrationCall() {
+        String admin = login("admin@sidequest.gg", "password");
+        String blitz = login("blitz@sidequest.gg", "password"); // free agent already in the pool
+
+        // The seeded AUCTION registration call starts open.
+        assertThat(auctionCallOpen()).isTrue();
+
+        String auctionId = get("/auctions/active", null).get("id").asText();
+        assertThat(post("/auctions/" + auctionId + "/lock-pool", null, admin).getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+
+        // The call auto-closed — same effect as Close registration — and new applies are rejected.
+        assertThat(auctionCallOpen()).isFalse();
+        ObjectNode apply = mapper.createObjectNode();
+        apply.put("type", "AUCTION");
+        apply.putArray("games").add("Valorant");
+        assertThat(post("/registrations", apply, blitz).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    /** Whether any AUCTION-type registration call is currently open. */
+    private boolean auctionCallOpen() {
+        for (JsonNode a : get("/announcements?limit=100", null).get("items")) {
+            if ("AUCTION".equals(a.path("registrationType").asText())
+                    && a.path("registrationOpen").asBoolean()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * A match belonging to a FINISHED season is frozen history — it can no longer be voided (cancel or
+     * delete), since the recompute engine deliberately never rewrites finished-season standings, so a
+     * void would leave the frozen snapshot permanently over-crediting the fixture. Runs LAST (@Order 90)
+     * because it finishes the active season, a one-way global state change.
+     */
+    @Test
+    @Order(90)
+    void finishedSeasonMatchCannotBeVoided() {
+        String admin = login("admin@sidequest.gg", "password");
+        String matchId = createAndPublishRxgWin(admin);
+
+        // Finish the active season → the match now belongs to frozen history.
+        assertThat(post("/seasons/finish", null, admin).getStatusCode().is2xxSuccessful()).isTrue();
+
+        // Cancel and delete are both refused for the now-historical fixture.
+        ObjectNode toCancelled = mapper.createObjectNode();
+        toCancelled.put("status", "CANCELLED");
+        assertThat(patch("/matches/" + matchId, toCancelled, admin).getStatusCode())
+                .isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(delete("/matches/" + matchId, admin).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
     @Test
     @Order(11)
     void adminOverviewReportsKpis() {
@@ -280,5 +630,473 @@ class SideQuestApiIntegrationTest {
         assertThat(overview.get("totals").get("players").asInt()).isGreaterThan(0);
         assertThat(overview.has("pendingRegistrations")).isTrue();
         assertThat(overview.has("openDisputes")).isTrue();
+    }
+
+    // ---------- Phase 2: profiles, per-field privacy, media, autofill ----------
+
+    /**
+     * The per-field privacy matrix: a player's private contact fields (realName/phone/contactEmail,
+     * seeded private) are visible to the owner, an admin, and the player's own franchise owner/manager,
+     * but NULL to spectators and to leaders of OTHER franchises.
+     */
+    @Test
+    @Order(20)
+    void profileContactPrivacyMatrix() {
+        String raghavan = login("raghavan@sidequest.gg", "password"); // RXG member (target)
+        String vortex = login("vortex@sidequest.gg", "password");     // RXG OWNER (same franchise)
+        String echo = login("echo@sidequest.gg", "password");         // MOTI owner (other franchise)
+        String admin = login("admin@sidequest.gg", "password");
+        String raghavanId = playerIdOf(raghavan);
+
+        // Spectator (no token): private fields are stripped to null; public fields still present.
+        JsonNode asSpectator = get("/players/" + raghavanId, null);
+        assertThat(asSpectator.get("gamerTag").asText()).isEqualTo("Raghavan");
+        assertThat(hidden(asSpectator, "realName")).isTrue();
+        assertThat(hidden(asSpectator, "phone")).isTrue();
+        assertThat(hidden(asSpectator, "contactEmail")).isTrue();
+        // The visibility flags themselves are non-sensitive and always present.
+        assertThat(asSpectator.get("realNamePublic").asBoolean()).isFalse();
+
+        // Owner sees their own private fields.
+        assertThat(get("/players/" + raghavanId, raghavan).get("realName").asText()).contains("real name");
+        // Admin sees everything.
+        assertThat(get("/players/" + raghavanId, admin).hasNonNull("phone")).isTrue();
+        // Same-franchise owner (RXG) sees their roster member's private fields.
+        assertThat(get("/players/" + raghavanId, vortex).get("contactEmail").asText())
+                .isEqualTo("raghavan@sidequest.gg");
+        // A leader of a DIFFERENT franchise (MOTI) is treated as a spectator for this player.
+        assertThat(hidden(get("/players/" + raghavanId, echo), "realName")).isTrue();
+    }
+
+    /**
+     * A player can flip a game handle to private via the profile edit (the shared writer), and rating
+     * updates land — spectators then stop seeing that handle while the owner still does.
+     */
+    @Test
+    @Order(21)
+    void selfProfileEditTogglesHandlePrivacyAndRating() {
+        String raghavan = login("raghavan@sidequest.gg", "password");
+        String raghavanId = playerIdOf(raghavan);
+        String valorantId = null;
+        for (JsonNode g : get("/games", null)) {
+            if ("Valorant".equals(g.get("name").asText())) {
+                valorantId = g.get("id").asText();
+            }
+        }
+        assertThat(valorantId).isNotNull();
+
+        // Baseline: the Valorant handle is public (spectator can see it).
+        assertThat(handleVisible(get("/players/" + raghavanId + "/usernames", null), "RXG_Raghavan")).isTrue();
+
+        // Self edit: bump the rating and make the Valorant handle private.
+        ObjectNode edit = mapper.createObjectNode();
+        var profs = edit.putArray("proficiencies");
+        ObjectNode entry = profs.addObject();
+        entry.put("gameId", valorantId);
+        entry.put("rating", 97);
+        entry.put("handle", "RXG_Raghavan");
+        entry.put("handlePublic", false);
+        assertThat(patch("/players/" + raghavanId, edit, raghavan).getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        // Spectator no longer sees the now-private handle; the owner still does.
+        assertThat(handleVisible(get("/players/" + raghavanId + "/usernames", null), "RXG_Raghavan")).isFalse();
+        assertThat(handleVisible(get("/players/" + raghavanId + "/usernames", raghavan), "RXG_Raghavan")).isTrue();
+
+        // Rating update landed (visible publicly on the profile).
+        boolean sawRating = false;
+        for (JsonNode p : get("/players/" + raghavanId, null).get("proficiencies")) {
+            if (valorantId.equals(p.get("gameId").asText())) {
+                assertThat(p.get("rating").asInt()).isEqualTo(97);
+                sawRating = true;
+            }
+        }
+        assertThat(sawRating).isTrue();
+
+        // A player cannot edit someone else's profile.
+        String vortex = login("vortex@sidequest.gg", "password");
+        assertThat(patch("/players/" + raghavanId, edit, vortex).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    private static boolean handleVisible(JsonNode usernames, String handle) {
+        for (JsonNode u : usernames) {
+            if (handle.equals(u.get("handle").asText())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether a field is absent/null. The API serialises with {@code non_null} inclusion, so a stripped
+     * (private, nulled) field is OMITTED from the JSON entirely — {@code node.get(field)} returns Java
+     * null rather than a NullNode.
+     */
+    private static boolean hidden(JsonNode node, String field) {
+        JsonNode v = node.get(field);
+        return v == null || v.isNull();
+    }
+
+    /**
+     * The roster endpoint exposes members' private contact fields only to that franchise's leadership
+     * or an admin — never to spectators or to another franchise's owner.
+     */
+    @Test
+    @Order(22)
+    void rosterPrivateFieldsAreLeaderScoped() {
+        String vortex = login("vortex@sidequest.gg", "password"); // RXG owner
+        String echo = login("echo@sidequest.gg", "password");     // MOTI owner
+        String rxgId = franchiseIdOf(vortex);
+
+        // Spectator: contact fields null for every roster member.
+        for (JsonNode m : get("/franchises/" + rxgId + "/roster", null)) {
+            assertThat(hidden(m, "realName")).isTrue();
+            assertThat(hidden(m, "phone")).isTrue();
+        }
+        // RXG owner: contact fields populated.
+        boolean sawPrivate = false;
+        for (JsonNode m : get("/franchises/" + rxgId + "/roster", vortex)) {
+            if (m.hasNonNull("realName")) {
+                sawPrivate = true;
+            }
+        }
+        assertThat(sawPrivate).isTrue();
+        // Other franchise's owner: still stripped (cross-franchise peek blocked).
+        for (JsonNode m : get("/franchises/" + rxgId + "/roster", echo)) {
+            assertThat(hidden(m, "realName")).isTrue();
+        }
+    }
+
+    /** Media upload: validates type + size, stores the bytes, and serves them back publicly. */
+    @Test
+    @Order(23)
+    void mediaUploadValidatesAndServes() {
+        String raghavan = login("raghavan@sidequest.gg", "password");
+
+        // Unauthenticated upload is rejected.
+        ObjectNode good = mapper.createObjectNode();
+        good.put("data", PNG_1x1);
+        good.put("kind", "avatar");
+        assertThat(post("/media", good, null).getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+
+        // Valid PNG stored → returns a /media/{id} url.
+        ResponseEntity<String> up = post("/media", good, raghavan);
+        assertThat(up.getStatusCode()).isEqualTo(HttpStatus.OK);
+        String url = parse(up).get("url").asText();
+        assertThat(url).startsWith("/media/");
+
+        // The bytes are served publicly with the sniffed content type.
+        ResponseEntity<byte[]> served = rest.exchange(BASE + url, HttpMethod.GET,
+                new HttpEntity<>(headers(null)), byte[].class);
+        assertThat(served.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(served.getHeaders().getContentType().toString()).isEqualTo("image/png");
+        assertThat(served.getBody().length).isGreaterThan(0);
+
+        // Non-image bytes are rejected.
+        ObjectNode notImage = mapper.createObjectNode();
+        notImage.put("data", "AAAAAAAA"); // valid base64, not an image
+        notImage.put("kind", "avatar");
+        assertThat(post("/media", notImage, raghavan).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+
+        // Oversized avatar (> 32KB decoded) is rejected before it is even stored.
+        ObjectNode tooBig = mapper.createObjectNode();
+        tooBig.put("data", "A".repeat(60_000)); // ~45KB decoded > 32KB avatar cap
+        tooBig.put("kind", "avatar");
+        assertThat(post("/media", tooBig, raghavan).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+
+        // Setting the avatar via the profile PATCH persists the url.
+        ObjectNode setAvatar = mapper.createObjectNode();
+        setAvatar.put("avatarUrl", url);
+        String raghavanId = playerIdOf(raghavan);
+        assertThat(patch("/players/" + raghavanId, setAvatar, raghavan).getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(get("/players/" + raghavanId, null).get("avatarUrl").asText()).isEqualTo(url);
+
+        // An arbitrary external / data URL is rejected — only server-issued /media refs are accepted
+        // (otherwise a profile becomes a tracking beacon for every viewer).
+        ObjectNode extAvatar = mapper.createObjectNode();
+        extAvatar.put("avatarUrl", "https://evil.example/track.png");
+        assertThat(patch("/players/" + raghavanId, extAvatar, raghavan).getStatusCode())
+                .isEqualTo(HttpStatus.BAD_REQUEST);
+        ObjectNode dataAvatar = mapper.createObjectNode();
+        dataAvatar.put("avatarUrl", "data:image/png;base64,AAAA");
+        assertThat(patch("/players/" + raghavanId, dataAvatar, raghavan).getStatusCode())
+                .isEqualTo(HttpStatus.BAD_REQUEST);
+
+        // A base64 payload beyond the DTO cap is rejected (defence-in-depth against giant request bodies).
+        ObjectNode hugeData = mapper.createObjectNode();
+        hugeData.put("data", "A".repeat(400_001));
+        hugeData.put("kind", "avatar");
+        assertThat(post("/media", hugeData, raghavan).getStatusCode().is4xxClientError()).isTrue();
+    }
+
+    /**
+     * Regression guard for the shared writer: re-entering the auction pool with a proficiency line that
+     * carries NO handle must not silently re-publicize a handle the player deliberately set private.
+     */
+    @Test
+    @Order(25)
+    void auctionEntryDoesNotRepublicizePrivateHandle() {
+        String blitz = login("blitz@sidequest.gg", "password"); // VERIFIED, no franchise
+        String blitzId = playerIdOf(blitz);
+        String valorantId = null;
+        for (JsonNode g : get("/games", null)) {
+            if ("Valorant".equals(g.get("name").asText())) valorantId = g.get("id").asText();
+        }
+        assertThat(valorantId).isNotNull();
+
+        // 1) set a PRIVATE handle via profile edit
+        ObjectNode edit = mapper.createObjectNode();
+        var profs = edit.putArray("proficiencies");
+        ObjectNode e = profs.addObject();
+        e.put("gameId", valorantId);
+        e.put("rating", 70);
+        e.put("handle", "BlitzSecret");
+        e.put("handlePublic", false);
+        assertThat(patch("/players/" + blitzId, edit, blitz).getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(handleVisible(get("/players/" + blitzId + "/usernames", null), "BlitzSecret")).isFalse();
+
+        // 2) enter the auction pool with a proficiency for the SAME game but NO handle
+        ObjectNode apply = mapper.createObjectNode();
+        apply.put("type", "AUCTION");
+        apply.putArray("games").add("Valorant");
+        ObjectNode ap = apply.putArray("proficiencies").addObject();
+        ap.put("gameId", valorantId);
+        ap.put("rating", 75);
+        ResponseEntity<String> reg = post("/registrations", apply, blitz);
+        assertThat(reg.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+
+        // 3) the handle must STILL be private (spectator can't see it; owner still can)
+        assertThat(handleVisible(get("/players/" + blitzId + "/usernames", null), "BlitzSecret")).isFalse();
+        assertThat(handleVisible(get("/players/" + blitzId + "/usernames", blitz), "BlitzSecret")).isTrue();
+    }
+
+    /**
+     * Player self-service withdrawal: cancelling your own registration marks it WITHDRAWN (a neutral
+     * void, NOT the punitive REJECTED) and frees you to re-enter; you can't cancel someone else's.
+     * Runs after @Order 25 (which put blitz in the auction pool) and before the pool lock @Order 46.
+     */
+    @Test
+    @Order(26)
+    void playerCanWithdrawOwnRegistration() {
+        String blitz = login("blitz@sidequest.gg", "password");
+        // Find blitz's live AUCTION entry created at @Order 25.
+        String regId = null;
+        for (JsonNode r : get("/registrations/mine", blitz)) {
+            if ("AUCTION".equals(r.path("type").asText()) && "ACTIVE".equals(r.path("status").asText())) {
+                regId = r.get("id").asText();
+            }
+        }
+        assertThat(regId).isNotNull();
+
+        // Withdraw it → 200, and it becomes WITHDRAWN (neutral), not REJECTED.
+        assertThat(post("/registrations/" + regId + "/cancel", null, blitz).getStatusCode()).isEqualTo(HttpStatus.OK);
+        String finalRegId = regId;
+        boolean withdrawn = false;
+        for (JsonNode r : get("/registrations/mine", blitz)) {
+            if (r.get("id").asText().equals(finalRegId)) {
+                withdrawn = "WITHDRAWN".equals(r.path("status").asText());
+            }
+        }
+        assertThat(withdrawn).isTrue();
+
+        // Withdrawing freed the pool slot — blitz can re-enter.
+        ObjectNode reapply = mapper.createObjectNode();
+        reapply.put("type", "AUCTION");
+        reapply.putArray("games").add("Valorant");
+        assertThat(post("/registrations", reapply, blitz).getStatusCode()).isEqualTo(HttpStatus.CREATED);
+
+        // A different player can't cancel blitz's registration.
+        String raghavan = login("raghavan@sidequest.gg", "password");
+        assertThat(post("/registrations/" + finalRegId + "/cancel", null, raghavan).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    // ---------- Phase 3: match lifecycle, room, and notifications ----------
+
+    /**
+     * End-to-end match room lifecycle: start (→LIVE, notifies participants), participant-gated room
+     * reads, admin messages, end (→AWAITING_RESULT, room closed), reschedule guards, and delete rules.
+     */
+    @Test
+    @Order(40)
+    void matchRoomLifecycleAndVisibility() {
+        String admin = login("admin@sidequest.gg", "password");
+        String raghavan = login("raghavan@sidequest.gg", "password"); // RXG member
+        String blitz = login("blitz@sidequest.gg", "password");        // verified, no franchise (non-participant)
+        String gameId = get("/games", null).get(0).get("id").asText();
+        String rxg = franchiseIdByTag("RXG");
+        String moti = franchiseIdByTag("MOTI");
+        String raghavanId = playerIdOf(raghavan);
+
+        // Admin schedules a FRANCHISE fixture with RXG + MOTI.
+        ObjectNode create = mapper.createObjectNode();
+        create.put("gameId", gameId);
+        create.put("scheduledAt", Instant.now().plus(Duration.ofDays(3)).toString());
+        create.put("matchType", "FRANCHISE");
+        create.putArray("participantFranchiseIds").add(rxg).add(moti);
+        ResponseEntity<String> created = post("/matches", create, admin);
+        assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        String matchId = parse(created).get("id").asText();
+
+        // Field raghavan for RXG (notifies him).
+        ObjectNode lineup = mapper.createObjectNode();
+        lineup.putArray("playerIds").add(raghavanId);
+        assertThat(rest.exchange(BASE + "/matches/" + matchId + "/lineups/" + rxg, HttpMethod.PUT,
+                new HttpEntity<>(lineup, headers(admin)), String.class).getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(hasNotificationType(raghavan, "MATCH")).isTrue();
+
+        // Before start, the room is not readable by a spectator (401) — start it.
+        assertThat(getResp("/matches/" + matchId + "/room", null).getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+
+        ObjectNode startBody = mapper.createObjectNode();
+        startBody.put("roomId", "LOBBY-9F3");
+        startBody.put("venue", "Main Stage");
+        ResponseEntity<String> started = post("/matches/" + matchId + "/start", startBody, admin);
+        assertThat(started.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(parse(started).get("status").asText()).isEqualTo("LIVE");
+
+        // Room visibility: participant sees the lobby code; a non-participant is forbidden; spectator 401.
+        JsonNode room = get("/matches/" + matchId + "/room", raghavan);
+        assertThat(room.get("live").asBoolean()).isTrue();
+        assertThat(room.get("roomId").asText()).isEqualTo("LOBBY-9F3");
+        assertThat(room.get("venue").asText()).isEqualTo("Main Stage");
+        assertThat(getResp("/matches/" + matchId + "/room", blitz).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(getResp("/matches/" + matchId + "/room", null).getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+
+        // The live match shows up on the participant's home "match rooms".
+        boolean inMyRooms = false;
+        for (JsonNode m : get("/matches/my-rooms", raghavan)) {
+            if (matchId.equals(m.get("id").asText())) {
+                inMyRooms = true;
+            }
+        }
+        assertThat(inMyRooms).isTrue();
+
+        // Admin posts a room message; the participant sees it; a non-admin cannot post.
+        ObjectNode msg = mapper.createObjectNode();
+        msg.put("body", "Check in on the lobby, we start in 5.");
+        assertThat(post("/matches/" + matchId + "/messages", msg, admin).getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(post("/matches/" + matchId + "/messages", msg, raghavan).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN);
+        JsonNode roomAfter = get("/matches/" + matchId + "/room", raghavan);
+        assertThat(roomAfter.get("messages")).hasSize(1);
+        assertThat(roomAfter.get("messages").get(0).get("body").asText()).contains("lobby");
+
+        // End the match: → AWAITING_RESULT, room closed (roomId cleared), messages can't be posted.
+        assertThat(post("/matches/" + matchId + "/end", null, admin).getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(get("/matches/" + matchId, null).get("status").asText()).isEqualTo("AWAITING_RESULT");
+        JsonNode closedRoom = get("/matches/" + matchId + "/room", raghavan);
+        assertThat(closedRoom.get("live").asBoolean()).isFalse();
+        assertThat(hidden(closedRoom, "roomId")).isTrue();
+        assertThat(post("/matches/" + matchId + "/messages", msg, admin).getStatusCode())
+                .isEqualTo(HttpStatus.BAD_REQUEST);
+
+        // Reschedule: a past time is rejected; a future time is accepted (still not completed).
+        ObjectNode pastReschedule = mapper.createObjectNode();
+        pastReschedule.put("scheduledAt", Instant.now().minus(Duration.ofDays(1)).toString());
+        assertThat(post("/matches/" + matchId + "/reschedule", pastReschedule, admin).getStatusCode())
+                .isEqualTo(HttpStatus.BAD_REQUEST);
+        ObjectNode futureReschedule = mapper.createObjectNode();
+        futureReschedule.put("scheduledAt", Instant.now().plus(Duration.ofDays(5)).toString());
+        assertThat(post("/matches/" + matchId + "/reschedule", futureReschedule, admin).getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+
+        // Delete: a player can't; the admin can, and the fixture is gone.
+        assertThat(delete("/matches/" + matchId, raghavan).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(delete("/matches/" + matchId, admin).getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        assertThat(getResp("/matches/" + matchId, null).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    /** Deleting a completed match drops its published points back out of the standings (recompute). */
+    @Test
+    @Order(41)
+    void completedMatchDeletionRestoresStandings() {
+        String admin = login("admin@sidequest.gg", "password");
+        String rxg = franchiseIdByTag("RXG");
+        int before = pointsOf(rxg);
+
+        String matchId = createAndPublishRxgWin(admin);
+        assertThat(pointsOf(rxg)).isGreaterThan(before); // the win added points
+
+        // A completed match CAN be deleted (admin voiding an unfair fixture); its points drop out.
+        assertThat(delete("/matches/" + matchId, admin).getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        assertThat(getResp("/matches/" + matchId, null).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(pointsOf(rxg)).isEqualTo(before); // recompute restored the prior standings
+    }
+
+    /**
+     * Lifecycle state-machine guards: the generic PATCH only owns the CANCELLED transition (others must
+     * go through start/end/results); a cancelled match can't be started; a published match is locked
+     * against start / reschedule / schedule-edit; but it CAN be cancelled (voiding an unfair result),
+     * which drops its points from the standings.
+     */
+    @Test
+    @Order(42)
+    void matchLifecycleGuards() {
+        String admin = login("admin@sidequest.gg", "password");
+        String gameId = get("/games", null).get(0).get("id").asText();
+        String future = Instant.now().plus(Duration.ofDays(4)).toString();
+        String rxg = franchiseIdByTag("RXG");
+
+        // A fresh SCHEDULED fixture.
+        ObjectNode create = mapper.createObjectNode();
+        create.put("gameId", gameId);
+        create.put("scheduledAt", future);
+        create.put("matchType", "FRANCHISE");
+        String schedId = parse(post("/matches", create, admin)).get("id").asText();
+
+        // PATCH can't force LIVE (must use /start); it CAN cancel a scheduled fixture.
+        ObjectNode toLive = mapper.createObjectNode();
+        toLive.put("status", "LIVE");
+        assertThat(patch("/matches/" + schedId, toLive, admin).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        ObjectNode toCancelled = mapper.createObjectNode();
+        toCancelled.put("status", "CANCELLED");
+        assertThat(patch("/matches/" + schedId, toCancelled, admin).getStatusCode()).isEqualTo(HttpStatus.OK);
+        // A cancelled fixture can't be started.
+        assertThat(post("/matches/" + schedId + "/start", null, admin).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+
+        // A completed fixture: start/reschedule/schedule-edit are locked, but cancel is allowed and voids
+        // its standings contribution.
+        int before = pointsOf(rxg);
+        String completedId = createAndPublishRxgWin(admin);
+        assertThat(pointsOf(rxg)).isGreaterThan(before);
+        assertThat(post("/matches/" + completedId + "/start", null, admin).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        ObjectNode resched = mapper.createObjectNode();
+        resched.put("scheduledAt", future);
+        assertThat(post("/matches/" + completedId + "/reschedule", resched, admin).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(patch("/matches/" + completedId, resched, admin).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        // Cancel a completed match → 200, and its points drop back out of the standings.
+        assertThat(patch("/matches/" + completedId, toCancelled, admin).getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(pointsOf(rxg)).isEqualTo(before);
+
+        // A cancelled fixture is terminal: re-publishing results can't silently resurrect it to COMPLETED.
+        ObjectNode revive = mapper.createObjectNode();
+        revive.putArray("rows").addObject().put("franchiseId", rxg).put("kills", 5).put("placePts", 5);
+        assertThat(post("/matches/" + completedId + "/results", revive, admin).getStatusCode())
+                .isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(pointsOf(rxg)).isEqualTo(before); // still voided
+    }
+
+    /** Franchise branding (logo/banner) is self-service for the owner or an admin, forbidden otherwise. */
+    @Test
+    @Order(24)
+    void franchiseBrandingOwnerOrAdminOnly() {
+        String vortex = login("vortex@sidequest.gg", "password");  // RXG owner
+        String raghavan = login("raghavan@sidequest.gg", "password"); // RXG plain member
+        String rxgId = franchiseIdOf(vortex);
+
+        ObjectNode branding = mapper.createObjectNode();
+        branding.put("logoUrl", "/media/" + UUID.randomUUID());
+        branding.put("bannerUrl", "/media/" + UUID.randomUUID());
+
+        // A plain roster member (not owner/admin) cannot rebrand the franchise.
+        assertThat(patch("/franchises/" + rxgId + "/branding", branding, raghavan).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN);
+
+        // The owner can, and the values round-trip on the detail.
+        ResponseEntity<String> ok = patch("/franchises/" + rxgId + "/branding", branding, vortex);
+        assertThat(ok.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode detail = get("/franchises/" + rxgId, null);
+        assertThat(detail.get("logoUrl").asText()).isEqualTo(branding.get("logoUrl").asText());
+        assertThat(detail.get("bannerUrl").asText()).isEqualTo(branding.get("bannerUrl").asText());
     }
 }

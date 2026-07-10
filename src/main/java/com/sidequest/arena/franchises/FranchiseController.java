@@ -12,6 +12,8 @@ import com.sidequest.arena.franchises.dto.FranchiseMatchView;
 import com.sidequest.arena.franchises.dto.FranchiseMineView;
 import com.sidequest.arena.franchises.dto.FranchiseSummary;
 import com.sidequest.arena.franchises.dto.RosterMember;
+import com.sidequest.arena.franchises.dto.SetRosterTagsRequest;
+import com.sidequest.arena.franchises.dto.UpdateBrandingRequest;
 import com.sidequest.arena.franchises.dto.UpdateFranchiseRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -21,6 +23,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -65,6 +68,14 @@ public class FranchiseController {
         return franchiseService.roster(id);
     }
 
+    /** Set a roster player's franchise-private designation tags (owner/manager/admin; enforced in service). */
+    @PutMapping("/{id}/roster/{playerId}/tags")
+    @PreAuthorize("isAuthenticated()")
+    public List<RosterMember> setRosterTags(@PathVariable String id, @PathVariable String playerId,
+                                            @Valid @RequestBody SetRosterTagsRequest request) {
+        return franchiseService.setRosterTags(id, playerId, request.tags());
+    }
+
     /** Matches the franchise has played, newest first, with results when published. */
     @GetMapping("/{id}/matches")
     public List<FranchiseMatchView> matches(@PathVariable String id) {
@@ -83,6 +94,14 @@ public class FranchiseController {
     @PreAuthorize("hasRole('ADMIN')")
     public FranchiseDetail update(@PathVariable String id, @Valid @RequestBody UpdateFranchiseRequest request) {
         return franchiseService.update(id, request);
+    }
+
+    /** Update a franchise's logo/banner (franchise owner or admin; ownership enforced in the service). */
+    @PatchMapping("/{id}/branding")
+    @PreAuthorize("isAuthenticated()")
+    public FranchiseDetail updateBranding(@PathVariable String id,
+                                          @Valid @RequestBody UpdateBrandingRequest request) {
+        return franchiseService.updateBranding(id, request);
     }
 
     /** Assign a player to the franchise's roster (admin only); returns the updated roster. */

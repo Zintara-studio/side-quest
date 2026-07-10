@@ -43,6 +43,10 @@ public class Franchise extends BaseEntity {
     @Column(name = "logo_url")
     private String logoUrl;
 
+    /** Wide hero/banner image url (nullable). */
+    @Column(name = "banner_url")
+    private String bannerUrl;
+
     @Column(nullable = false)
     private int points = 0;
 

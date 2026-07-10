@@ -14,9 +14,11 @@ import com.sidequest.arena.franchises.dto.FranchiseMatchView;
 import com.sidequest.arena.franchises.dto.FranchiseMineView;
 import com.sidequest.arena.franchises.dto.FranchiseSummary;
 import com.sidequest.arena.franchises.dto.RosterMember;
+import com.sidequest.arena.franchises.dto.UpdateBrandingRequest;
 import com.sidequest.arena.franchises.dto.UpdateFranchiseRequest;
 import com.sidequest.arena.model.Franchise;
 import com.sidequest.arena.model.FranchiseInvite;
+import com.sidequest.arena.model.FranchisePlayerTag;
 import com.sidequest.arena.model.FranchiseRole;
 import com.sidequest.arena.model.InviteStatus;
 import com.sidequest.arena.model.Match;
@@ -30,8 +32,10 @@ import com.sidequest.arena.model.RegistrationType;
 import com.sidequest.arena.model.ResultRow;
 import com.sidequest.arena.model.Role;
 import com.sidequest.arena.model.User;
+import com.sidequest.arena.media.MediaRefs;
 import com.sidequest.arena.notifications.NotificationService;
 import com.sidequest.arena.repo.FranchiseInviteRepository;
+import com.sidequest.arena.repo.FranchisePlayerTagRepository;
 import com.sidequest.arena.repo.FranchiseRepository;
 import com.sidequest.arena.repo.MatchParticipantRepository;
 import com.sidequest.arena.repo.PlayerRepository;
@@ -42,14 +46,19 @@ import com.sidequest.arena.repo.UserRepository;
 import com.sidequest.arena.seasons.SeasonService;
 import com.sidequest.arena.seasons.dto.SeasonView;
 import com.sidequest.arena.security.SecurityUtils;
+import com.sidequest.arena.security.UserPrincipal;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * Read/write operations for the franchises (teams) domain: the league table, franchise detail and
@@ -65,6 +74,7 @@ public class FranchiseService {
     private final ResultRowRepository resultRowRepository;
     private final RegistrationRepository registrationRepository;
     private final FranchiseInviteRepository franchiseInviteRepository;
+    private final FranchisePlayerTagRepository franchisePlayerTagRepository;
     private final NotificationService notificationService;
     private final SeasonService seasonService;
     private final AuditService auditService;
@@ -76,6 +86,7 @@ public class FranchiseService {
                             ResultRowRepository resultRowRepository,
                             RegistrationRepository registrationRepository,
                             FranchiseInviteRepository franchiseInviteRepository,
+                            FranchisePlayerTagRepository franchisePlayerTagRepository,
                             NotificationService notificationService,
                             SeasonService seasonService,
                             AuditService auditService) {
@@ -86,6 +97,7 @@ public class FranchiseService {
         this.resultRowRepository = resultRowRepository;
         this.registrationRepository = registrationRepository;
         this.franchiseInviteRepository = franchiseInviteRepository;
+        this.franchisePlayerTagRepository = franchisePlayerTagRepository;
         this.notificationService = notificationService;
         this.seasonService = seasonService;
         this.auditService = auditService;
@@ -126,9 +138,15 @@ public class FranchiseService {
     public List<FranchiseMatchView> matches(String id) {
         Franchise franchise = require(id);
         UUID franchiseId = franchise.getId();
+        // One query for ALL of the franchise's result rows (keyed by match), instead of one
+        // result-row query per historical match.
+        Map<UUID, ResultRow> rowByMatch = resultRowRepository
+                .findByFranchiseIdOrderByCreatedAtDesc(franchiseId).stream()
+                .filter(r -> r.getMatch() != null)
+                .collect(Collectors.toMap(r -> r.getMatch().getId(), r -> r, (a, b) -> a));
         return matchParticipantRepository.findByFranchiseId(franchiseId).stream()
                 .map(MatchParticipant::getMatch)
-                .map(match -> toMatchView(match, franchiseId))
+                .map(match -> toMatchView(match, rowByMatch.get(match.getId())))
                 .sorted(Comparator.comparing(FranchiseMatchView::scheduledAt,
                         Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();
@@ -143,8 +161,16 @@ public class FranchiseService {
         Franchise franchise = new Franchise();
         franchise.setName(req.name());
         franchise.setTag(req.tag());
-        franchise.setSeasonId(req.seasonId());
-        franchise.setLogoUrl(req.logoUrl());
+        // Default to the active season (mirrors match creation and from-proposal) — a season-less
+        // franchise would be invisible in the season-scoped live standings.
+        String seasonId = req.seasonId();
+        if (seasonId == null || seasonId.isBlank()) {
+            SeasonView current = seasonService.current();
+            seasonId = current != null ? current.code() : null;
+        }
+        franchise.setSeasonId(seasonId);
+        franchise.setLogoUrl(emptyToNull(MediaRefs.normalize(req.logoUrl(), "logoUrl")));
+        franchise.setBannerUrl(emptyToNull(MediaRefs.normalize(req.bannerUrl(), "bannerUrl")));
         franchise.setPoints(0);
         franchise.setRank(0);
         franchise.setActive(true);
@@ -167,7 +193,10 @@ public class FranchiseService {
             franchise.setTag(req.tag());
         }
         if (req.logoUrl() != null) {
-            franchise.setLogoUrl(req.logoUrl());
+            franchise.setLogoUrl(emptyToNull(MediaRefs.normalize(req.logoUrl(), "logoUrl")));
+        }
+        if (req.bannerUrl() != null) {
+            franchise.setBannerUrl(emptyToNull(MediaRefs.normalize(req.bannerUrl(), "bannerUrl")));
         }
         if (req.points() != null) {
             franchise.setPoints(req.points());
@@ -181,6 +210,35 @@ public class FranchiseService {
         return toDetail(saved);
     }
 
+    /**
+     * Self-service branding update (franchise owner or admin): set the logo and/or banner image only.
+     * A blank value clears the image; nulls are left unchanged. Kept separate from the admin
+     * {@link #update} so an owner can manage their own look without touching name/tag/points/active.
+     */
+    @CacheEvict(cacheNames = {CacheConfig.FRANCHISES, CacheConfig.PLAYERS}, allEntries = true)
+    @Transactional
+    public FranchiseDetail updateBranding(String id, UpdateBrandingRequest req) {
+        Franchise franchise = require(id);
+        requireOwnerOrAdmin(franchise);
+
+        if (req.logoUrl() != null) {
+            franchise.setLogoUrl(emptyToNull(MediaRefs.normalize(req.logoUrl(), "logoUrl")));
+        }
+        if (req.bannerUrl() != null) {
+            franchise.setBannerUrl(emptyToNull(MediaRefs.normalize(req.bannerUrl(), "bannerUrl")));
+        }
+
+        Franchise saved = franchiseRepository.save(franchise);
+        auditService.record("franchise.branding", "Franchise", saved.getId().toString(),
+                "Updated branding for " + saved.getName());
+        return toDetail(saved);
+    }
+
+    /** Blank/empty → null (clear the column); otherwise the value. */
+    private static String emptyToNull(String v) {
+        return v == null || v.isEmpty() ? null : v;
+    }
+
     /** Assign a player to the franchise's roster and return the updated roster. */
     @CacheEvict(cacheNames = {CacheConfig.FRANCHISES, CacheConfig.PLAYERS}, allEntries = true)
     @Transactional
@@ -188,8 +246,17 @@ public class FranchiseService {
         Franchise franchise = require(id);
         Player player = requirePlayer(req.playerId());
 
+        // Never silently poach: a player already rostered elsewhere must be released first (this is a
+        // deliberate two-step so a cross-franchise transfer can't happen by accident).
+        if (player.getFranchise() != null && !player.getFranchise().getId().equals(franchise.getId())) {
+            throw ApiException.conflict(player.getGamerTag() + " is already rostered on "
+                    + player.getFranchise().getName() + " — release them there first.");
+        }
+
         player.setFranchise(franchise);
         playerRepository.save(player);
+        notify(player, franchise, "You've been rostered",
+                "An admin added you to " + franchise.getName() + "'s roster.");
 
         auditService.record("franchise.roster.assign", "Franchise", franchise.getId().toString(), req.playerId());
         return rosterOf(franchise);
@@ -241,7 +308,7 @@ public class FranchiseService {
         // Transferring ownership removes the previous owner from the roster (not a silent demotion).
         demoteOutgoingLeader(saved, outgoing, player);
 
-        notify(player, "You're now a franchise owner",
+        notify(player, saved, "You're now a franchise owner",
                 "You were made owner of " + franchise.getName() + ".");
         auditService.record("franchise.owner.set", "Franchise", saved.getId().toString(),
                 player.getGamerTag() + " is now owner of " + saved.getName());
@@ -267,7 +334,7 @@ public class FranchiseService {
         // Replacing the manager removes the previous manager from the roster (not a silent demotion).
         demoteOutgoingLeader(saved, outgoing, player);
 
-        notify(player, "You're now a franchise manager",
+        notify(player, saved, "You're now a franchise manager",
                 "You were made manager of " + franchise.getName() + ".");
         auditService.record("franchise.manager.set", "Franchise", saved.getId().toString(),
                 player.getGamerTag() + " is now manager of " + saved.getName());
@@ -430,7 +497,7 @@ public class FranchiseService {
         registration.setStatus(RegistrationStatus.APPROVED);
         registrationRepository.save(registration);
 
-        notify(applicant, "Franchise approved",
+        notify(applicant, saved, "Franchise approved",
                 "Your franchise '" + saved.getName() + "' was created. You're the owner.");
         auditService.record("franchise.fromProposal", "Franchise", saved.getId().toString(),
                 "Created " + saved.getName() + " from proposal " + registrationId);
@@ -725,11 +792,13 @@ public class FranchiseService {
         }
     }
 
-    private void notify(Player player, String title, String body) {
+    /** Notify a player about a franchise event, deep-linking to the franchise page. */
+    private void notify(Player player, Franchise franchise, String title, String body) {
         if (player.getUser() != null) {
+            // The franchise is passed explicitly so the link can never degrade to the id-less
+            // "/franchise/" page when the player's franchise ref is unset/not-yet-flushed.
             notificationService.create(player.getUser(), NotificationType.GENERAL, title, body,
-                    "/franchise/" + (player.getFranchise() != null
-                            ? player.getFranchise().getId() : ""));
+                    franchise != null ? "/franchise/" + franchise.getId() : "/my/franchise");
         }
     }
 
@@ -754,16 +823,105 @@ public class FranchiseService {
     }
 
     private List<RosterMember> rosterOf(Franchise franchise) {
+        // A franchise's own leadership (or an admin) sees the roster's private contact fields + tags;
+        // spectators and other franchises' leaders do not. Franchise-scoped: we only load THIS franchise's
+        // players/tags and only check leadership of THIS franchise, so private data never crosses franchises.
+        boolean privileged = canSeeRosterPrivate(franchise);
+        Map<UUID, List<String>> tagsByPlayer = privileged
+                ? franchisePlayerTagRepository.findByFranchiseId(franchise.getId()).stream()
+                        .filter(t -> t.getPlayer() != null)
+                        .collect(Collectors.groupingBy(t -> t.getPlayer().getId(),
+                                Collectors.mapping(FranchisePlayerTag::getLabel, Collectors.toList())))
+                : Map.of();
         return playerRepository.findByFranchiseId(franchise.getId()).stream()
                 .map(p -> new RosterMember(
                         p.getId().toString(),
                         p.getGamerTag(),
                         p.getAvatarUrl(),
                         p.getStatus() != null ? p.getStatus().name() : null,
-                        roleOf(p, franchise)))
+                        roleOf(p, franchise),
+                        privileged ? p.getRealName() : null,
+                        privileged ? p.getPhone() : null,
+                        privileged ? p.getContactEmail() : null,
+                        privileged ? tagsByPlayer.getOrDefault(p.getId(), List.of()) : null))
                 // Leaders first (OWNER, then MANAGER), then the rest.
                 .sorted(Comparator.comparingInt(FranchiseService::rosterRoleOrder))
                 .toList();
+    }
+
+    /**
+     * Set the franchise-private designation tags (e.g. "Valorant 1") on one of a franchise's roster
+     * players. Allowed for the franchise's owner/manager or an admin (the same audience who sets lineups
+     * and sees the roster). Replaces the player's tags for this franchise; the labels are trimmed,
+     * de-duplicated (case-insensitive) and capped. Returns the updated roster.
+     */
+    @CacheEvict(cacheNames = {CacheConfig.FRANCHISES, CacheConfig.PLAYERS}, allEntries = true)
+    @Transactional
+    public List<RosterMember> setRosterTags(String id, String playerId, List<String> tags) {
+        Franchise franchise = require(id);
+        if (!canSeeRosterPrivate(franchise)) {
+            throw ApiException.forbidden(
+                    "Only this franchise's owner, manager, or an admin can tag its roster.");
+        }
+        Player player = requirePlayer(playerId);
+        if (player.getFranchise() == null || !player.getFranchise().getId().equals(franchise.getId())) {
+            throw ApiException.badRequest("Player is not on this franchise's roster.");
+        }
+
+        // Replace this player's tags for this franchise. Trim, cap length, de-dupe case-insensitively, cap count.
+        franchisePlayerTagRepository.deleteByFranchiseIdAndPlayerId(franchise.getId(), player.getId());
+        franchisePlayerTagRepository.flush();
+        LinkedHashMap<String, String> unique = new LinkedHashMap<>();
+        if (tags != null) {
+            for (String raw : tags) {
+                if (raw == null) {
+                    continue;
+                }
+                String label = raw.trim();
+                if (label.isEmpty()) {
+                    continue;
+                }
+                if (label.length() > 40) {
+                    label = label.substring(0, 40);
+                }
+                unique.putIfAbsent(label.toLowerCase(), label);
+                if (unique.size() >= 20) {
+                    break;
+                }
+            }
+        }
+        for (String label : unique.values()) {
+            FranchisePlayerTag tag = new FranchisePlayerTag();
+            tag.setFranchise(franchise);
+            tag.setPlayer(player);
+            tag.setLabel(label);
+            franchisePlayerTagRepository.save(tag);
+        }
+        auditService.record("franchise.roster.tags", "Franchise", franchise.getId().toString(),
+                player.getGamerTag() + " tags: " + String.join(", ", unique.values()));
+        return rosterOf(franchise);
+    }
+
+    /**
+     * Whether the current caller may see this franchise's roster's private contact fields: an admin, or
+     * an owner/manager of THIS franchise. Spectators and unrelated franchise leaders get false.
+     */
+    private boolean canSeeRosterPrivate(Franchise franchise) {
+        if (SecurityUtils.isAdmin()) {
+            return true;
+        }
+        Optional<UserPrincipal> principal = SecurityUtils.currentPrincipal();
+        if (principal.isEmpty()) {
+            return false;
+        }
+        UUID viewerId = principal.get().getUserId();
+        return leadsFranchise(franchise.getOwnerPlayer(), viewerId)
+                || leadsFranchise(franchise.getManagerPlayer(), viewerId);
+    }
+
+    /** Whether the given leadership slot is held by the viewer (by user id). */
+    private static boolean leadsFranchise(Player slot, UUID viewerId) {
+        return slot != null && slot.getUser() != null && viewerId.equals(slot.getUser().getId());
     }
 
     private static int rosterRoleOrder(RosterMember m) {
@@ -793,6 +951,7 @@ public class FranchiseService {
                 f.getName(),
                 f.getTag(),
                 f.getLogoUrl(),
+                f.getBannerUrl(),
                 f.getPoints(),
                 f.getRank(),
                 f.isActive(),
@@ -807,11 +966,7 @@ public class FranchiseService {
         return p == null ? null : new FranchiseDetail.PersonView(p.getId().toString(), p.getGamerTag());
     }
 
-    private FranchiseMatchView toMatchView(Match match, UUID franchiseId) {
-        ResultRow row = resultRowRepository.findByMatchIdOrderByRankAsc(match.getId()).stream()
-                .filter(r -> r.getFranchise() != null && franchiseId.equals(r.getFranchise().getId()))
-                .findFirst()
-                .orElse(null);
+    private FranchiseMatchView toMatchView(Match match, ResultRow row) {
         Integer rank = row != null ? row.getRank() : null;
         Integer total = row != null ? row.getTotal() : null;
         String gameName = match.getGame() != null ? match.getGame().getName() : null;

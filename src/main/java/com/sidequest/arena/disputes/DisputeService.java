@@ -7,11 +7,15 @@ import com.sidequest.arena.model.Dispute;
 import com.sidequest.arena.model.DisputeCategory;
 import com.sidequest.arena.model.DisputeStatus;
 import com.sidequest.arena.model.Match;
+import com.sidequest.arena.model.NotificationType;
 import com.sidequest.arena.model.Player;
+import com.sidequest.arena.model.Role;
 import com.sidequest.arena.model.User;
+import com.sidequest.arena.notifications.NotificationService;
 import com.sidequest.arena.repo.DisputeRepository;
 import com.sidequest.arena.repo.MatchRepository;
 import com.sidequest.arena.repo.PlayerRepository;
+import com.sidequest.arena.repo.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,15 +33,21 @@ public class DisputeService {
     private final DisputeRepository disputeRepository;
     private final MatchRepository matchRepository;
     private final PlayerRepository playerRepository;
+    private final UserRepository userRepository;
+    private final NotificationService notificationService;
     private final AuditService auditService;
 
     public DisputeService(DisputeRepository disputeRepository,
                           MatchRepository matchRepository,
                           PlayerRepository playerRepository,
+                          UserRepository userRepository,
+                          NotificationService notificationService,
                           AuditService auditService) {
         this.disputeRepository = disputeRepository;
         this.matchRepository = matchRepository;
         this.playerRepository = playerRepository;
+        this.userRepository = userRepository;
+        this.notificationService = notificationService;
         this.auditService = auditService;
     }
 
@@ -64,6 +74,19 @@ public class DisputeService {
         }
 
         Dispute saved = disputeRepository.save(dispute);
+
+        // Alert admins so a raised dispute actually reaches the triage queue.
+        String raiserTag = playerRepository.findByUserId(current.getId())
+                .map(Player::getGamerTag).orElse(current.getName());
+        String what = saved.getCategory() == DisputeCategory.RESULT && saved.getMatch() != null
+                ? "a result dispute for "
+                        + (saved.getMatch().getGame() != null ? saved.getMatch().getGame().getName() : "a match")
+                : "a " + saved.getCategory().name().toLowerCase() + " dispute";
+        for (User admin : userRepository.findByRole(Role.ADMIN)) {
+            notificationService.create(admin, NotificationType.GENERAL, "New dispute",
+                    (raiserTag != null ? raiserTag : "A player") + " raised " + what + ".", "/admin/disputes");
+        }
+
         auditService.record("dispute.raise", "Dispute", saved.getId().toString(),
                 saved.getCategory().name() + " dispute opened");
         return toView(saved);

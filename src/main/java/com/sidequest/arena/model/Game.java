@@ -42,4 +42,25 @@ public class Game extends BaseEntity {
     /** 0–100 popularity used for the games-grid bars. */
     @Column(nullable = false)
     private int popularity = 0;
+
+    // ---- per-game scoring config (the title's system-wide scoring "meta") ----
+
+    /** Points awarded per kill/score for this title. Seeds each new fixture's snapshot at creation. */
+    @Column(name = "points_per_kill", nullable = false)
+    private int pointsPerKill = 1;
+
+    /**
+     * Placement-points ladder (comma-separated, highest-first, e.g. "15,12,10,8"). Empty = kills only.
+     * Seeds each new fixture's snapshot at creation; defaults from the genre when a title is created.
+     */
+    @Column(name = "placement_points", nullable = false, length = 512)
+    private String placementPoints = "";
+
+    /**
+     * The title's weight (in basis points, 100 = 1.00×) toward a franchise's OVERALL league standings —
+     * so a more competitive title can count for more than a casual one. Applied by the scoring engine
+     * when it aggregates the current season's result totals; never rewrites finished-season snapshots.
+     */
+    @Column(name = "standings_weight", nullable = false)
+    private int standingsWeight = 100;
 }

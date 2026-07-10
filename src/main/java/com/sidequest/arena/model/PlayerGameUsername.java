@@ -2,6 +2,7 @@ package com.sidequest.arena.model;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.Index;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
@@ -12,7 +13,9 @@ import lombok.Setter;
 
 /** A player's in-game handle for a specific {@link Game}, optionally hidden from the public. */
 @Entity
-@Table(name = "player_game_usernames")
+@Table(name = "player_game_usernames", indexes = {
+        @Index(name = "idx_pgu_player", columnList = "player_id")
+})
 @Getter
 @Setter
 @NoArgsConstructor

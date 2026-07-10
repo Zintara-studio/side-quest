@@ -22,6 +22,7 @@ public interface MatchRoundPlayerResultRepository extends JpaRepository<MatchRou
      */
     @Query("select pr.player.id, sum(pr.kills * pr.matchRound.match.pointsPerKill) "
             + "from MatchRoundPlayerResult pr where pr.player is not null and pr.franchise is not null "
+            + "and pr.matchRound.match.status <> com.sidequest.arena.model.MatchStatus.CANCELLED "
             + "group by pr.player.id")
     List<Object[]> aggregatePlayerKillPoints();
 

@@ -24,6 +24,7 @@ public class WebSocketConfig implements WebSocketConfigurer {
         registry.addHandler(handler,
                         "/ws/live/standings",
                         "/ws/live/matches/*",
+                        "/ws/live/auctions/*",
                         "/ws/live/me")
                 .setAllowedOriginPatterns("*");
     }

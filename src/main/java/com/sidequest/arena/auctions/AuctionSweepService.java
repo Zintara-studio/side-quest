@@ -1,5 +1,6 @@
 package com.sidequest.arena.auctions;
 
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -19,6 +20,20 @@ public class AuctionSweepService {
 
     public AuctionSweepService(AuctionService auctionService) {
         this.auctionService = auctionService;
+    }
+
+    /**
+     * Restart recovery — runs during bean initialization, which completes BEFORE the scheduler starts
+     * ticking, so the first sweep can't instantly force-sell an on-block lot whose deadline expired
+     * while the server was down (nobody could bid during the outage).
+     */
+    @PostConstruct
+    public void recoverAfterRestart() {
+        try {
+            auctionService.recoverLiveDeadlinesAfterRestart();
+        } catch (Exception ex) {
+            log.warn("Auction restart recovery failed", ex);
+        }
     }
 
     /** Advance any LIVE auction — needs ~1s resolution to honour bid-timer deadlines. */

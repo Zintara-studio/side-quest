@@ -10,10 +10,9 @@ import com.sidequest.arena.model.LeagueSettings;
 import com.sidequest.arena.model.Match;
 import com.sidequest.arena.model.NotificationType;
 import com.sidequest.arena.model.Player;
-import com.sidequest.arena.model.PlayerGameProficiency;
-import com.sidequest.arena.model.PlayerGameUsername;
 import com.sidequest.arena.model.PlayerStatus;
 import com.sidequest.arena.model.Announcement;
+import com.sidequest.arena.model.AuctionStatus;
 import com.sidequest.arena.model.Registration;
 import com.sidequest.arena.model.RegistrationStatus;
 import com.sidequest.arena.model.RegistrationType;
@@ -22,6 +21,7 @@ import com.sidequest.arena.model.SeasonStatus;
 import com.sidequest.arena.model.TeamInvite;
 import com.sidequest.arena.model.User;
 import com.sidequest.arena.notifications.NotificationService;
+import com.sidequest.arena.players.PlayerProfileWriter;
 import com.sidequest.arena.realtime.RealtimeService;
 import com.sidequest.arena.registrations.dto.ApplyRequest;
 import com.sidequest.arena.registrations.dto.InviteRequest;
@@ -31,10 +31,9 @@ import com.sidequest.arena.registrations.dto.ReviewRequest;
 import com.sidequest.arena.repo.GameRepository;
 import com.sidequest.arena.repo.LeagueSettingsRepository;
 import com.sidequest.arena.repo.MatchRepository;
-import com.sidequest.arena.repo.PlayerGameProficiencyRepository;
-import com.sidequest.arena.repo.PlayerGameUsernameRepository;
 import com.sidequest.arena.repo.PlayerRepository;
 import com.sidequest.arena.repo.AnnouncementRepository;
+import com.sidequest.arena.repo.AuctionRepository;
 import com.sidequest.arena.repo.RegistrationRepository;
 import com.sidequest.arena.repo.SeasonRepository;
 import com.sidequest.arena.repo.TeamInviteRepository;
@@ -65,44 +64,44 @@ public class RegistrationService {
 
     private final RegistrationRepository registrationRepository;
     private final AnnouncementRepository announcementRepository;
+    private final AuctionRepository auctionRepository;
     private final PlayerRepository playerRepository;
     private final UserRepository userRepository;
     private final TeamInviteRepository teamInviteRepository;
     private final MatchRepository matchRepository;
     private final GameRepository gameRepository;
-    private final PlayerGameProficiencyRepository proficiencyRepository;
-    private final PlayerGameUsernameRepository usernameRepository;
     private final LeagueSettingsRepository leagueSettingsRepository;
     private final SeasonRepository seasonRepository;
+    private final PlayerProfileWriter profileWriter;
     private final RealtimeService realtimeService;
     private final NotificationService notificationService;
     private final AuditService auditService;
 
     public RegistrationService(RegistrationRepository registrationRepository,
                                AnnouncementRepository announcementRepository,
+                               AuctionRepository auctionRepository,
                                PlayerRepository playerRepository,
                                UserRepository userRepository,
                                TeamInviteRepository teamInviteRepository,
                                MatchRepository matchRepository,
                                GameRepository gameRepository,
-                               PlayerGameProficiencyRepository proficiencyRepository,
-                               PlayerGameUsernameRepository usernameRepository,
                                LeagueSettingsRepository leagueSettingsRepository,
                                SeasonRepository seasonRepository,
+                               PlayerProfileWriter profileWriter,
                                RealtimeService realtimeService,
                                NotificationService notificationService,
                                AuditService auditService) {
         this.registrationRepository = registrationRepository;
         this.announcementRepository = announcementRepository;
+        this.auctionRepository = auctionRepository;
         this.playerRepository = playerRepository;
         this.userRepository = userRepository;
         this.teamInviteRepository = teamInviteRepository;
         this.matchRepository = matchRepository;
         this.gameRepository = gameRepository;
-        this.proficiencyRepository = proficiencyRepository;
-        this.usernameRepository = usernameRepository;
         this.leagueSettingsRepository = leagueSettingsRepository;
         this.seasonRepository = seasonRepository;
+        this.profileWriter = profileWriter;
         this.realtimeService = realtimeService;
         this.notificationService = notificationService;
         this.auditService = auditService;
@@ -134,7 +133,11 @@ public class RegistrationService {
                             : "squadName is required for squad registrations");
         }
 
-        Player player = currentPlayer();
+        // Row-lock the applicant: every exclusivity guard below (one live entry per match, one team per
+        // match, one pool entry) is check-then-act, so two racing applies for the same player must
+        // serialize — the loser re-reads committed state and hits the normal 409s.
+        Player player = playerRepository.lockById(currentPlayer().getId())
+                .orElseThrow(() -> ApiException.notFound("Player", "current"));
 
         // If this entry is responding to a specific registration call, that call must still be open —
         // a stale link (closed/deleted call) can't submit past the UI. This is the authoritative guard.
@@ -166,6 +169,12 @@ public class RegistrationService {
             throw ApiException.badRequest(
                     "Franchise proposals can only be submitted between seasons — a season is currently active.");
         }
+        // Auction registration closes the moment an admin locks the pool for the upcoming auction.
+        if (request.type() == RegistrationType.AUCTION
+                && auctionRepository.existsByPoolLockedAtIsNotNullAndStatusNot(AuctionStatus.COMPLETED)) {
+            throw ApiException.badRequest(
+                    "Auction registration is closed — the pool has been locked for the upcoming auction.");
+        }
         // A player can only sit in the auction pool once: block a duplicate live, unconsumed entry.
         if (request.type() == RegistrationType.AUCTION) {
             boolean alreadyPooled = registrationRepository.findByPlayerId(player.getId()).stream()
@@ -191,6 +200,13 @@ public class RegistrationService {
         registration.setGames(request.games() == null
                 ? new ArrayList<>() : new ArrayList<>(request.games()));
         registration.setContact(request.contact());
+
+        // Capture the applicant's real name onto their profile so franchises/admins know who they're
+        // registering / drafting. Kept private (realNamePublic is untouched) — auction visibility is
+        // gated per-viewer by the scout check, not by the public flag.
+        if (request.realName() != null && !request.realName().isBlank()) {
+            player.setRealName(request.realName().trim());
+        }
         if (request.type() == RegistrationType.SQUAD) {
             registration.setTeamSize(request.teamSize());
         }
@@ -241,6 +257,22 @@ public class RegistrationService {
         }
         registration.setGame(game);
 
+        // General (non-match) PLAYER/SQUAD sign-ups get the same duplicate guard as match entries —
+        // without it a player could re-submit the same open call indefinitely, piling up live rows.
+        if (registration.getMatch() == null
+                && (request.type() == RegistrationType.PLAYER || request.type() == RegistrationType.SQUAD)) {
+            UUID gameId = game != null ? game.getId() : null;
+            boolean duplicate = registrationRepository.findByPlayerId(player.getId()).stream()
+                    .anyMatch(r -> r.getType() == request.type()
+                            && r.getMatch() == null
+                            && isLive(r.getStatus())
+                            && ((r.getGame() == null && gameId == null)
+                                    || (r.getGame() != null && r.getGame().getId().equals(gameId))));
+            if (duplicate) {
+                throw ApiException.conflict("You already have a live registration for this call.");
+            }
+        }
+
         Registration saved = registrationRepository.save(registration);
 
         String what = describe(saved);
@@ -270,72 +302,23 @@ public class RegistrationService {
 
         // Upsert any self-reported per-game proficiency / handles onto the player's profile so the
         // auction pool (and player profile) reflects the applicant's declared skill. Applies to any
-        // application that carries them, but primarily used by AUCTION entries.
-        upsertProficiencies(player, request.proficiencies());
+        // application that carries them, but primarily used by AUCTION entries. Routed through the same
+        // canonical writer the profile-edit screen uses, so registration and edit can never diverge.
+        // A newly-supplied handle is made public (the auction pool is scouted publicly); a BLANK handle
+        // passes handlePublic=null so it never silently re-publicizes a handle the user set private.
+        if (request.proficiencies() != null) {
+            profileWriter.upsert(player, request.proficiencies().stream()
+                    .filter(e -> e != null && e.gameId() != null)
+                    .map(e -> new PlayerProfileWriter.Upsert(e.gameId(), e.rating(), e.handle(),
+                            e.handle() != null && !e.handle().isBlank() ? Boolean.TRUE : null,
+                            e.rankTier(), e.kd(), e.accountLevel()))
+                    .toList());
+        }
 
         auditService.record("registration.apply", "Registration", saved.getId().toString(),
                 player.getGamerTag() + " registered " + what);
 
         return toView(saved);
-    }
-
-    /**
-     * Create-or-update the current player's {@link PlayerGameProficiency} (rating clamped to 0–100)
-     * and, when a handle is supplied, their {@link PlayerGameUsername} (made public) for each supplied
-     * game. Unknown/blank games are skipped. No-op when {@code entries} is null/empty.
-     */
-    private void upsertProficiencies(Player player, List<ApplyRequest.ProficiencyEntry> entries) {
-        if (entries == null || entries.isEmpty()) {
-            return;
-        }
-        List<PlayerGameProficiency> existingRatings = proficiencyRepository.findByPlayerId(player.getId());
-        List<PlayerGameUsername> existingHandles = usernameRepository.findByPlayerId(player.getId());
-        for (ApplyRequest.ProficiencyEntry entry : entries) {
-            if (entry == null || entry.gameId() == null) {
-                continue;
-            }
-            Game game = gameRepository.findById(entry.gameId()).orElse(null);
-            if (game == null) {
-                continue;
-            }
-            int rating = Math.max(0, Math.min(100, entry.rating()));
-            PlayerGameProficiency prof = existingRatings.stream()
-                    .filter(p -> p.getGame() != null && p.getGame().getId().equals(game.getId()))
-                    .findFirst()
-                    .orElseGet(() -> {
-                        PlayerGameProficiency created = new PlayerGameProficiency();
-                        created.setPlayer(player);
-                        created.setGame(game);
-                        return created;
-                    });
-            prof.setRating(rating);
-            // Optional objective signals — only overwrite when supplied so a re-submit can't wipe them.
-            if (entry.rankTier() != null && !entry.rankTier().isBlank()) {
-                prof.setRankTier(entry.rankTier().trim());
-            }
-            if (entry.kd() != null) {
-                prof.setKd(Math.max(0, entry.kd()));
-            }
-            if (entry.accountLevel() != null) {
-                prof.setAccountLevel(Math.max(0, entry.accountLevel()));
-            }
-            proficiencyRepository.save(prof);
-
-            if (entry.handle() != null && !entry.handle().isBlank()) {
-                PlayerGameUsername handle = existingHandles.stream()
-                        .filter(h -> h.getGame() != null && h.getGame().getId().equals(game.getId()))
-                        .findFirst()
-                        .orElseGet(() -> {
-                            PlayerGameUsername created = new PlayerGameUsername();
-                            created.setPlayer(player);
-                            created.setGame(game);
-                            return created;
-                        });
-                handle.setHandle(entry.handle().trim());
-                handle.setPublic(true);
-                usernameRepository.save(handle);
-            }
-        }
     }
 
     /**
@@ -489,6 +472,9 @@ public class RegistrationService {
         Match match = registration != null ? registration.getMatch() : null;
 
         if (accept && match != null) {
+            // Serialize with the invitee's own applies/accepts — the one-team-per-match guard below is
+            // check-then-act (see PlayerRepository.lockById).
+            playerRepository.lockById(invitee.getId());
             UUID matchId = match.getId();
             if (matchLocked(match)) {
                 throw ApiException.conflict(
@@ -513,9 +499,9 @@ public class RegistrationService {
                         throw ApiException.conflict("You already have a team with confirmed players for "
                                 + "this match — discard it before joining another team.");
                     }
-                    voidRegistration(own, "Auto-discarded — you joined another team for this match.");
+                    voidRegistration(own, RegistrationStatus.WITHDRAWN, "Auto-discarded — you joined another team for this match.");
                 } else if (own.getType() == RegistrationType.PLAYER) {
-                    voidRegistration(own, "Auto-withdrawn — you joined a team for this match.");
+                    voidRegistration(own, RegistrationStatus.WITHDRAWN, "Auto-withdrawn — you joined a team for this match.");
                 }
             }
         }
@@ -551,6 +537,7 @@ public class RegistrationService {
     public RegistrationView reject(String id, ReviewRequest request) {
         Registration registration = load(id);
         if (registration.getStatus() == RegistrationStatus.REJECTED
+                || registration.getStatus() == RegistrationStatus.WITHDRAWN
                 || registration.getStatus() == RegistrationStatus.APPROVED) {
             throw ApiException.conflict("This registration has already been finalized");
         }
@@ -558,7 +545,7 @@ public class RegistrationService {
                 ? request.reason().trim() : "Discarded by an admin.";
 
         registration.setReviewedBy(currentReviewer());
-        voidRegistration(registration, reason);
+        voidRegistration(registration, RegistrationStatus.REJECTED, reason);
 
         Player player = registration.getPlayer();
         if (player != null && player.getUser() != null) {
@@ -575,6 +562,67 @@ public class RegistrationService {
                 "Discarded " + describe(registration) + ": " + reason);
 
         return toView(registration);
+    }
+
+    /**
+     * Player: withdraw your OWN registration (solo entry, forming squad, or auction-pool entry). Only the
+     * owner may cancel, and only while it is still open (FORMING/ACTIVE) and — for a match entry — before
+     * the lock. This frees the player up to join another team for the same match (the two-pairs regroup).
+     * Touches only this Registration row; it can never remove anyone from a franchise ROSTER.
+     */
+    @Transactional
+    public RegistrationView cancelOwnRegistration(String id) {
+        Player player = currentPlayer();
+        Registration registration = load(id);
+        if (registration.getPlayer() == null || !registration.getPlayer().getId().equals(player.getId())) {
+            throw ApiException.forbidden("You can only cancel your own registration");
+        }
+        if (registration.getStatus() != RegistrationStatus.FORMING
+                && registration.getStatus() != RegistrationStatus.ACTIVE) {
+            throw ApiException.conflict("This registration can no longer be withdrawn");
+        }
+        if (registration.getMatch() != null && matchLocked(registration.getMatch())) {
+            throw ApiException.conflict("Registration has locked for this match — it can't be withdrawn now");
+        }
+        voidRegistration(registration, RegistrationStatus.WITHDRAWN, "Withdrawn by the player.");
+        // A forming squad's accepted members lose their team — tell them.
+        notifyAcceptedMembers(registration, false, "The captain withdrew the squad.");
+        auditService.record("registration.cancel", "Registration", registration.getId().toString(),
+                player.getGamerTag() + " withdrew " + describe(registration));
+        return toView(registration);
+    }
+
+    /**
+     * Player: leave a FORMING squad you've accepted an invite for (e.g. to accept a different squad's
+     * invite instead). Only the invited player may leave, and only while the squad is still forming.
+     * Sets the invite back to REJECTED so the captain sees the seat open again. Roster membership on a
+     * franchise is unaffected — this only touches the squad-invite row.
+     */
+    @Transactional
+    public InviteView leaveSquad(String inviteId) {
+        TeamInvite invite = loadInvite(inviteId);
+        Player invitee = invite.getInvitedPlayer();
+        if (invitee == null || invitee.getUser() == null
+                || !invitee.getUser().getId().equals(SecurityUtils.currentUserId())) {
+            throw ApiException.forbidden("You can only leave a squad you joined");
+        }
+        Registration registration = invite.getRegistration();
+        if (invite.getStatus() != InviteStatus.ACCEPTED
+                || registration == null || registration.getStatus() != RegistrationStatus.FORMING) {
+            throw ApiException.conflict("You can only leave a squad that is still forming");
+        }
+        invite.setStatus(InviteStatus.REJECTED);
+        TeamInvite saved = teamInviteRepository.save(invite);
+        Player captain = registration.getPlayer();
+        if (captain != null && captain.getUser() != null) {
+            notificationService.create(captain.getUser(), NotificationType.REGISTRATION,
+                    "A player left the squad",
+                    invitee.getGamerTag() + " left '" + nullSafe(registration.getSquadName()) + "'.",
+                    "/my/registrations");
+        }
+        auditService.record("invite.leave", "TeamInvite", saved.getId().toString(),
+                invitee.getGamerTag() + " left a squad");
+        return toInviteView(saved);
     }
 
     // ---- helpers ----
@@ -673,8 +721,13 @@ public class RegistrationService {
     }
 
     /** Void a registration: mark it REJECTED and expire any still-pending invites so they can't be accepted. */
-    private void voidRegistration(Registration reg, String reason) {
-        reg.setStatus(RegistrationStatus.REJECTED);
+    /**
+     * Void a registration to a terminal state: REJECTED for an admin's punitive discard, WITHDRAWN for a
+     * neutral player/closure void. Either way its still-pending invites are expired. {@code isLive} counts
+     * only FORMING/ACTIVE/LOCKED, so both terminal states drop it out of every exclusivity guard.
+     */
+    private void voidRegistration(Registration reg, RegistrationStatus targetStatus, String reason) {
+        reg.setStatus(targetStatus);
         reg.setReason(reason);
         registrationRepository.save(reg);
         for (TeamInvite t : teamInviteRepository.findByRegistrationIdOrderByCreatedAtAsc(reg.getId())) {
@@ -698,11 +751,24 @@ public class RegistrationService {
                     || reg.getStatus() == RegistrationStatus.ACTIVE) {
                 reg.setStatus(RegistrationStatus.LOCKED);
                 registrationRepository.save(reg);
+                int expired = 0;
                 for (TeamInvite t : teamInviteRepository.findByRegistrationIdOrderByCreatedAtAsc(reg.getId())) {
                     if (t.getStatus() == InviteStatus.PENDING) {
                         t.setStatus(InviteStatus.EXPIRED);
                         teamInviteRepository.save(t);
+                        expired++;
                     }
+                }
+                // The UI warns that pending invites are voided at lock time — tell the captain when it
+                // actually happens, so a half-formed squad isn't a match-day surprise.
+                Player applicant = reg.getPlayer();
+                if (applicant != null && applicant.getUser() != null) {
+                    String detail = reg.getType() == RegistrationType.SQUAD
+                            ? "'" + nullSafe(reg.getSquadName()) + "' is locked for the match"
+                                    + (expired > 0 ? " — " + expired + " pending invite(s) expired." : ".")
+                            : "Your entry is locked in for the match.";
+                    notificationService.create(applicant.getUser(), NotificationType.REGISTRATION,
+                            "Roster locked", detail, "/my/registrations");
                 }
                 locked++;
             }
@@ -719,7 +785,7 @@ public class RegistrationService {
         for (Registration reg : registrationRepository.findByMatchId(matchId)) {
             if (reg.getStatus() == RegistrationStatus.FORMING
                     || reg.getStatus() == RegistrationStatus.ACTIVE) {
-                voidRegistration(reg, reason);
+                voidRegistration(reg, RegistrationStatus.WITHDRAWN, reason);
                 // Don't kill a registration silently — the applicant (and any accepted squad members) are told.
                 Player applicant = reg.getPlayer();
                 if (applicant != null && applicant.getUser() != null) {
@@ -738,7 +804,7 @@ public class RegistrationService {
     public void voidPendingFranchiseProposals(String reason) {
         for (Registration reg : registrationRepository
                 .findByStatusAndTypeOrderByCreatedAtDesc(RegistrationStatus.PENDING, RegistrationType.FRANCHISE)) {
-            voidRegistration(reg, reason);
+            voidRegistration(reg, RegistrationStatus.WITHDRAWN, reason);
             Player player = reg.getPlayer();
             if (player != null && player.getUser() != null) {
                 notificationService.create(player.getUser(), NotificationType.REGISTRATION,
@@ -883,6 +949,7 @@ public class RegistrationService {
                 captain == null ? null : captain.getGamerTag(),
                 registration == null ? List.of() : List.copyOf(registration.getGames()),
                 invite.getStatus().name(),
+                registration == null ? null : registration.getStatus().name(),
                 invite.getMessage(),
                 invite.getCreatedAt(),
                 members);

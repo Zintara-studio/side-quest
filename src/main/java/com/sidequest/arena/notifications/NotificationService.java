@@ -10,7 +10,11 @@ import com.sidequest.arena.security.SecurityUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -65,6 +69,33 @@ public class NotificationService {
         n.setBody(body);
         n.setLinkUrl(linkUrl);
         return notifications.save(n);
+    }
+
+    /**
+     * Enqueue the same notification for many users in one transaction, de-duplicating by user id and
+     * skipping nulls. Used for fan-out events (e.g. notifying every player fielded for a match).
+     */
+    @Transactional
+    public void createMany(Collection<User> users, NotificationType type, String title, String body,
+                           String linkUrl) {
+        if (users == null || users.isEmpty()) {
+            return;
+        }
+        Set<UUID> seen = new HashSet<>();
+        List<Notification> batch = new ArrayList<>();
+        for (User user : users) {
+            if (user == null || user.getId() == null || !seen.add(user.getId())) {
+                continue;
+            }
+            Notification n = new Notification();
+            n.setUser(user);
+            n.setType(type);
+            n.setTitle(title);
+            n.setBody(body);
+            n.setLinkUrl(linkUrl);
+            batch.add(n);
+        }
+        notifications.saveAll(batch);
     }
 
     // ---- helpers ----

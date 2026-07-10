@@ -3,6 +3,7 @@ package com.sidequest.arena.repo;
 import com.sidequest.arena.model.MatchParticipant;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -18,6 +19,9 @@ public interface MatchParticipantRepository extends JpaRepository<MatchParticipa
     List<MatchParticipant> findByFranchiseId(UUID franchiseId);
 
     boolean existsByMatchIdAndFranchiseId(UUID matchId, UUID franchiseId);
+
+    @Modifying
+    void deleteByMatchId(UUID matchId);
 
     /** Batch-load participants for many matches at once, eager-fetching franchise (avoids the per-match N+1). */
     @EntityGraph(attributePaths = "franchise")

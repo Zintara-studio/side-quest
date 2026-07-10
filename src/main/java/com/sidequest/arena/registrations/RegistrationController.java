@@ -73,6 +73,18 @@ public class RegistrationController {
         return registrationService.respondToInvite(inviteId, false);
     }
 
+    /** Player: leave a FORMING squad you accepted (authenticated; invitee-only in service). */
+    @PostMapping("/invites/{inviteId}/leave")
+    public InviteView leaveSquad(@PathVariable String inviteId) {
+        return registrationService.leaveSquad(inviteId);
+    }
+
+    /** Player: withdraw your own registration (authenticated; owner-only in service). */
+    @PostMapping("/{id}/cancel")
+    public RegistrationView cancel(@PathVariable String id) {
+        return registrationService.cancelOwnRegistration(id);
+    }
+
     /** Admin approval queue, newest first, optionally filtered by status and type. */
     @GetMapping
     @PreAuthorize("hasRole('ADMIN')")

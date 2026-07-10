@@ -6,17 +6,23 @@ import com.sidequest.arena.matches.dto.EnterResultsRequest;
 import com.sidequest.arena.matches.dto.EnterRoundsRequest;
 import com.sidequest.arena.matches.dto.MatchDetail;
 import com.sidequest.arena.matches.dto.MatchLineupView;
+import com.sidequest.arena.matches.dto.MatchMessageView;
 import com.sidequest.arena.matches.dto.MatchPlayerView;
+import com.sidequest.arena.matches.dto.MatchRoomView;
 import com.sidequest.arena.matches.dto.MatchRoundView;
 import com.sidequest.arena.matches.dto.MatchSummary;
+import com.sidequest.arena.matches.dto.PostMatchMessageRequest;
+import com.sidequest.arena.matches.dto.RescheduleMatchRequest;
 import com.sidequest.arena.matches.dto.ResultView;
 import com.sidequest.arena.matches.dto.SetLineupRequest;
+import com.sidequest.arena.matches.dto.StartMatchRequest;
 import com.sidequest.arena.matches.dto.UpdateMatchRequest;
 import com.sidequest.arena.model.MatchStatus;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -87,6 +93,26 @@ public class MatchController {
         return matchService.players(id);
     }
 
+    /** The current user's live match rooms (for the home "match room" card). Authenticated. */
+    @GetMapping("/my-rooms")
+    public List<MatchSummary> myRooms() {
+        return matchService.myMatchRooms();
+    }
+
+    /** The match room (lobby code + venue + messages). Participants/leaders/admin only (enforced in service). */
+    @GetMapping("/{id}/room")
+    public MatchRoomView room(@PathVariable String id) {
+        return matchService.getRoom(id);
+    }
+
+    /** Admin: post a message into the live match room. */
+    @PostMapping("/{id}/messages")
+    @PreAuthorize("hasRole('ADMIN')")
+    public MatchMessageView postMessage(@PathVariable String id,
+                                        @Valid @RequestBody PostMatchMessageRequest request) {
+        return matchService.postMessage(id, request);
+    }
+
     /** Returns the per-franchise fielded lineups for a match (empty lineup where none is set). Public. */
     @GetMapping("/{id}/lineups")
     public List<MatchLineupView> lineups(@PathVariable String id) {
@@ -115,6 +141,35 @@ public class MatchController {
     @PreAuthorize("hasRole('ADMIN')")
     public MatchDetail update(@PathVariable String id, @Valid @RequestBody UpdateMatchRequest request) {
         return matchService.update(id, request);
+    }
+
+    /** Admin: take a fixture live (set room + venue) and notify participants. */
+    @PostMapping("/{id}/start")
+    @PreAuthorize("hasRole('ADMIN')")
+    public MatchDetail start(@PathVariable String id, @Valid @RequestBody(required = false) StartMatchRequest request) {
+        return matchService.start(id, request);
+    }
+
+    /** Admin: end a live fixture (→ AWAITING_RESULT), close the room, and notify participants. */
+    @PostMapping("/{id}/end")
+    @PreAuthorize("hasRole('ADMIN')")
+    public MatchDetail end(@PathVariable String id) {
+        return matchService.end(id);
+    }
+
+    /** Admin: reschedule a fixture to a new future time and notify participants. */
+    @PostMapping("/{id}/reschedule")
+    @PreAuthorize("hasRole('ADMIN')")
+    public MatchDetail reschedule(@PathVariable String id, @Valid @RequestBody RescheduleMatchRequest request) {
+        return matchService.reschedule(id, request);
+    }
+
+    /** Admin: delete a fixture (blocked once results are published). */
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Void> delete(@PathVariable String id) {
+        matchService.delete(id);
+        return ResponseEntity.noContent().build();
     }
 
     /** Admin: enters (or re-publishes) the result table for a match; returns the published leaderboard. */

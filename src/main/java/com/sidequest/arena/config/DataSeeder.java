@@ -628,6 +628,11 @@ public class DataSeeder {
         g.setGameType(gameType);
         g.setPopularity(popularity);
         g.setEnabled(true);
+        // Per-game scoring config: kills weighted 1, the genre's default placement ladder, and a
+        // standings weight of 1.00× (party/casual titles seeded a little lighter to show the concept).
+        g.setPointsPerKill(1);
+        g.setPlacementPoints(gameType.defaultPlacementPoints());
+        g.setStandingsWeight(gameType == GameType.PARTY ? 75 : 100);
         return g;
     }
 
@@ -638,6 +643,7 @@ public class DataSeeder {
         u.setPhone(phone);
         u.setRole(role);
         u.setPasswordHash(pwHash);
+        u.setEmailVerified(true); // demo accounts are pre-verified so they can sign in immediately
         return u;
     }
 
@@ -688,6 +694,10 @@ public class DataSeeder {
         p.setFranchise(franchise);
         p.setStatus(status);
         p.setRegion("IN");
+        // Seed private-by-default contact fields so the per-field privacy matrix is testable out of the box.
+        p.setRealName(name + " (real name)");
+        p.setContactEmail(email);
+        p.setPhone("+91 90000 0" + String.format("%04d", Math.abs(name.hashCode()) % 10000));
         return players.save(p);
     }
 

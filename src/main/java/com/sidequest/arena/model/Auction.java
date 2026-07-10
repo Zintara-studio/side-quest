@@ -73,6 +73,14 @@ public class Auction extends BaseEntity {
     @Column(name = "intermission_until")
     private Instant intermissionUntil;
 
+    /**
+     * Set when the admin freezes the registration pool (locking in the final set of pooled players)
+     * before the hall opens. While non-null the pool no longer syncs new registrants and auction
+     * registration is closed. {@code null} = pool still open.
+     */
+    @Column(name = "pool_locked_at")
+    private Instant poolLockedAt;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by")
     private User createdBy;

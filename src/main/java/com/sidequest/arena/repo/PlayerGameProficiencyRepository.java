@@ -1,8 +1,10 @@
 package com.sidequest.arena.repo;
 
 import com.sidequest.arena.model.PlayerGameProficiency;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
@@ -11,4 +13,8 @@ public interface PlayerGameProficiencyRepository extends JpaRepository<PlayerGam
     List<PlayerGameProficiency> findByPlayerId(UUID playerId);
 
     List<PlayerGameProficiency> findByGameId(UUID gameId);
+
+    /** Batch-load proficiencies for many players, eager-fetching the game (avoids the per-player N+1). */
+    @EntityGraph(attributePaths = "game")
+    List<PlayerGameProficiency> findByPlayerIdIn(Collection<UUID> playerIds);
 }

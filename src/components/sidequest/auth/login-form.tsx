@@ -1,10 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import axios from "axios";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { SQ, FONT } from "../tokens";
 import { useAuth, apiErrorMessage } from "@/lib/auth/context";
+import { safeNextPath } from "@/lib/nav";
 import {
   AuthCard,
   AuthField,
@@ -30,11 +32,21 @@ export function LoginForm() {
     setPending(true);
     try {
       const role = await login({ identifier: email, password });
-      // Honour a ?next= redirect (e.g. a "sign in to register" link), but only same-origin paths.
-      const next = new URLSearchParams(window.location.search).get("next");
-      const safeNext = next && next.startsWith("/") && !next.startsWith("//") ? next : null;
+      // Honour a ?next= redirect (e.g. a "sign in to register" link), but only safe same-origin paths.
+      const safeNext = safeNextPath(new URLSearchParams(window.location.search).get("next"));
       router.push(safeNext ?? (role === "ADMIN" ? "/admin" : "/"));
     } catch (err) {
+      // An unverified account isn't a dead end — route it to the verification screen.
+      const code = axios.isAxiosError(err)
+        ? (err.response?.data as { code?: string } | undefined)?.code
+        : undefined;
+      if (code === "EMAIL_NOT_VERIFIED") {
+        const params = new URLSearchParams({ email });
+        const safeNext = safeNextPath(new URLSearchParams(window.location.search).get("next"));
+        if (safeNext) params.set("next", safeNext);
+        router.push(`/verify-email?${params.toString()}`);
+        return;
+      }
       setError(apiErrorMessage(err, "Invalid email or password."));
     } finally {
       setPending(false);

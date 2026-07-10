@@ -11,6 +11,7 @@ import type {
   CreateAuctionRequest,
   PlaceBidRequest,
   CreateAnnouncementRequest,
+  UpdateAnnouncementRequest,
   CreateDisputeRequest,
   CreateFranchiseRequest,
   CreateMatchRequest,
@@ -30,9 +31,14 @@ import type {
   LoginRequest,
   MatchDetail,
   MatchLineupView,
+  MatchMessageView,
   MatchPlayerView,
+  MatchRoomView,
   MatchRoundView,
   MatchSummary,
+  StartMatchRequest,
+  UpdateMatchRequest,
+  MediaUploadResponse,
   MeResponse,
   NotificationView,
   OverviewResponse,
@@ -42,7 +48,13 @@ import type {
   PlayerMatchView,
   PlayerRankRow,
   PlayerSummary,
+  UpdateProfileRequest,
+  UpdateBrandingRequest,
   RegisterRequest,
+  RegisterResponse,
+  VerifyEmailRequest,
+  EmailRequest,
+  ResetPasswordRequest,
   RegistrationView,
   ResolveDisputeRequest,
   ResultView,
@@ -71,9 +83,19 @@ const clean = (params?: Params): Params | undefined => {
 
 export const authApi = {
   register: (body: RegisterRequest) =>
-    api.post<AuthResponse>("/auth/register", body).then((r) => r.data),
+    api.post<RegisterResponse>("/auth/register", body).then((r) => r.data),
+  verifyEmail: (body: VerifyEmailRequest) =>
+    api.post<AuthResponse>("/auth/verify-email", body).then((r) => r.data),
+  resendVerification: (body: EmailRequest) =>
+    api.post<void>("/auth/resend-verification", body).then((r) => r.data),
   login: (body: LoginRequest) =>
     api.post<AuthResponse>("/auth/login", body).then((r) => r.data),
+  google: (idToken: string) =>
+    api.post<AuthResponse>("/auth/google", { idToken }).then((r) => r.data),
+  forgotPassword: (body: EmailRequest) =>
+    api.post<void>("/auth/forgot-password", body).then((r) => r.data),
+  resetPassword: (body: ResetPasswordRequest) =>
+    api.post<void>("/auth/reset-password", body).then((r) => r.data),
   logout: (refreshToken?: string) =>
     api.post<void>("/auth/logout", { refreshToken }).then((r) => r.data),
   me: () => api.get<MeResponse>("/auth/me").then((r) => r.data),
@@ -110,6 +132,20 @@ export const playersApi = {
     api.get<UsernameView[]>(`/players/${id}/usernames`).then((r) => r.data),
   updateStatus: (id: string, status: string) =>
     api.patch<PlayerDetail>(`/players/${id}/status`, { status }).then((r) => r.data),
+  // Owner/admin profile edit: contact fields + per-field privacy + per-game skill/handle upserts.
+  updateProfile: (id: string, body: UpdateProfileRequest) =>
+    api.patch<PlayerDetail>(`/players/${id}`, body).then((r) => r.data),
+};
+
+// ---- media -----------------------------------------------------------------
+
+export const mediaApi = {
+  /**
+   * Upload a small image as base64 (data URL or bare base64) and get back its serving url. The
+   * server validates the type (magic bytes) + size cap per kind, then stores it as a DB blob.
+   */
+  upload: (data: string, kind: "avatar" | "logo" | "banner") =>
+    api.post<MediaUploadResponse>("/media", { data, kind }).then((r) => r.data),
 };
 
 // ---- franchises ------------------------------------------------------------
@@ -129,10 +165,18 @@ export const franchisesApi = {
   get: (id: string) => api.get<FranchiseDetail>(`/franchises/${id}`).then((r) => r.data),
   roster: (id: string) =>
     api.get<RosterMember[]>(`/franchises/${id}/roster`).then((r) => r.data),
+  // Owner/manager/admin sets a roster player's franchise-private designation tags.
+  setRosterTags: (id: string, playerId: string, tags: string[]) =>
+    api
+      .put<RosterMember[]>(`/franchises/${id}/roster/${playerId}/tags`, { tags })
+      .then((r) => r.data),
   matches: (id: string) =>
     api.get<FranchiseMatchView[]>(`/franchises/${id}/matches`).then((r) => r.data),
   create: (body: CreateFranchiseRequest) =>
     api.post<FranchiseDetail>("/franchises", body).then((r) => r.data),
+  // Owner/admin self-service logo + banner (ownership enforced server-side).
+  updateBranding: (id: string, body: UpdateBrandingRequest) =>
+    api.patch<FranchiseDetail>(`/franchises/${id}/branding`, body).then((r) => r.data),
   setOwner: (id: string, playerId: string) =>
     api.post<FranchiseDetail>(`/franchises/${id}/owner`, { playerId }).then((r) => r.data),
   setManager: (id: string, playerId: string) =>
@@ -202,6 +246,20 @@ export const matchesApi = {
       .then((r) => r.data),
   enterRounds: (id: string, body: EnterRoundsRequest) =>
     api.post<ResultView[]>(`/matches/${id}/rounds`, body).then((r) => r.data),
+  // ---- admin lifecycle ----
+  update: (id: string, body: UpdateMatchRequest) =>
+    api.patch<MatchDetail>(`/matches/${id}`, body).then((r) => r.data),
+  start: (id: string, body: StartMatchRequest) =>
+    api.post<MatchDetail>(`/matches/${id}/start`, body).then((r) => r.data),
+  end: (id: string) => api.post<MatchDetail>(`/matches/${id}/end`).then((r) => r.data),
+  reschedule: (id: string, scheduledAt: string) =>
+    api.post<MatchDetail>(`/matches/${id}/reschedule`, { scheduledAt }).then((r) => r.data),
+  remove: (id: string) => api.delete<void>(`/matches/${id}`).then((r) => r.data),
+  // ---- match room ----
+  room: (id: string) => api.get<MatchRoomView>(`/matches/${id}/room`).then((r) => r.data),
+  postMessage: (id: string, body: string) =>
+    api.post<MatchMessageView>(`/matches/${id}/messages`, { body }).then((r) => r.data),
+  myRooms: () => api.get<MatchSummary[]>("/matches/my-rooms").then((r) => r.data),
 };
 
 // ---- standings -------------------------------------------------------------
@@ -230,6 +288,8 @@ export const announcementsApi = {
   get: (id: string) => api.get<AnnouncementView>(`/announcements/${id}`).then((r) => r.data),
   create: (body: CreateAnnouncementRequest) =>
     api.post<AnnouncementView>("/announcements", body).then((r) => r.data),
+  update: (id: string, body: UpdateAnnouncementRequest) =>
+    api.patch<AnnouncementView>(`/announcements/${id}`, body).then((r) => r.data),
   close: (id: string) =>
     api.post<AnnouncementView>(`/announcements/${id}/close`).then((r) => r.data),
   remove: (id: string) => api.delete<void>(`/announcements/${id}`).then((r) => r.data),
@@ -259,6 +319,12 @@ export const registrationsApi = {
     api.post<InviteView>(`/registrations/invites/${inviteId}/accept`).then((r) => r.data),
   rejectInvite: (inviteId: string) =>
     api.post<InviteView>(`/registrations/invites/${inviteId}/reject`).then((r) => r.data),
+  // Player: leave a FORMING squad you accepted (invitee-only, server-enforced).
+  leaveSquad: (inviteId: string) =>
+    api.post<InviteView>(`/registrations/invites/${inviteId}/leave`).then((r) => r.data),
+  // Player: withdraw your own registration (owner-only, server-enforced).
+  cancel: (id: string) =>
+    api.post<RegistrationView>(`/registrations/${id}/cancel`).then((r) => r.data),
   // Discard a live registration or a FRANCHISE proposal. Reason is optional (body may be {}).
   reject: (id: string, reason?: string) =>
     api.post<RegistrationView>(`/registrations/${id}/reject`, { reason }).then((r) => r.data),
@@ -318,12 +384,15 @@ export const auctionsApi = {
     api.post<AuctionView>("/auctions", body).then((r) => r.data),
   update: (id: string, body: UpdateAuctionRequest) =>
     api.patch<AuctionView>(`/auctions/${id}`, body).then((r) => r.data),
+  lockPool: (id: string) =>
+    api.post<AuctionView>(`/auctions/${id}/lock-pool`).then((r) => r.data),
   openHall: (id: string) =>
     api.post<AuctionView>(`/auctions/${id}/open-hall`).then((r) => r.data),
   join: (id: string) => api.post<AuctionView>(`/auctions/${id}/join`).then((r) => r.data),
   reschedule: (id: string, scheduledAt: string) =>
     api.post<AuctionView>(`/auctions/${id}/reschedule`, { scheduledAt }).then((r) => r.data),
   start: (id: string) => api.post<AuctionView>(`/auctions/${id}/start`).then((r) => r.data),
+  cancel: (id: string) => api.post<AuctionView>(`/auctions/${id}/cancel`).then((r) => r.data),
   pause: (id: string) => api.post<AuctionView>(`/auctions/${id}/pause`).then((r) => r.data),
   resume: (id: string) => api.post<AuctionView>(`/auctions/${id}/resume`).then((r) => r.data),
   finalize: (id: string) => api.post<AuctionView>(`/auctions/${id}/finalize`).then((r) => r.data),

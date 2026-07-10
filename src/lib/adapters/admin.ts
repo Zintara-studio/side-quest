@@ -1,5 +1,6 @@
 // Adapters mapping backend admin DTOs onto the control-room display shapes.
 import type { OverviewResponse } from "@/lib/api/types";
+import { shortTime } from "@/lib/adapters/league";
 
 // Control-room display shapes the overview adapter maps backend DTOs onto.
 export interface AdminKpi {
@@ -23,13 +24,6 @@ export interface AdminTask {
 export interface AdminActivity {
   time: string;
   text: string;
-}
-
-/** ISO-8601 → "HH:MM" (24h), the activity-feed timestamp style. */
-function shortTime(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
 function prettyAction(action: string): string {
@@ -90,13 +84,14 @@ const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 /** "Needs attention" tasks derived from the real overview counts (no mock). */
 export function adaptTasks(o: OverviewResponse): AdminTask[] {
   const tasks: AdminTask[] = [];
+  // PENDING registrations are FRANCHISE-creation proposals — reviewed on the Franchises page.
   if (o.pendingRegistrations > 0)
     tasks.push({
       dot: "#B5831A",
-      title: `${plural(o.pendingRegistrations, "registration")} awaiting review`,
-      meta: "APPROVAL QUEUE",
+      title: `${plural(o.pendingRegistrations, "franchise proposal")} awaiting review`,
+      meta: "FRANCHISE PROPOSALS",
       btn: "Review",
-      href: "/admin/registrations",
+      href: "/admin/franchises",
       primary: true,
     });
   if (o.resultsToEnter > 0)

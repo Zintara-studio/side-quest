@@ -4,9 +4,6 @@
 
 @layer base {
   :root {
-    --font-display: "Space Grotesk", "Inter", system-ui, sans-serif;
-    --font-sans: "Inter", system-ui, sans-serif;
-    --font-mono: "JetBrains Mono", ui-monospace, monospace;
     color-scheme: light;
 
     /* ===== Warm Paper (light) theme ===== */
@@ -116,86 +113,7 @@
   }
 }
 
-@layer components {
-  .glass {
-    @apply bg-white/[0.03] backdrop-blur-xl border border-white/[0.06];
-  }
-  .glass-strong {
-    @apply bg-white/[0.05] backdrop-blur-2xl border border-white/[0.08];
-  }
-  .panel {
-    @apply rounded-2xl bg-bg-panel/80 border border-white/[0.06] shadow-panel backdrop-blur-xl;
-  }
-  .neon-border {
-    box-shadow:
-      0 0 0 1px rgba(0, 229, 255, 0.3),
-      0 0 24px -4px rgba(0, 229, 255, 0.25),
-      inset 0 0 0 1px rgba(255, 255, 255, 0.04);
-  }
-  .text-gradient {
-    background: linear-gradient(135deg, #00e5ff 0%, #a855f7 50%, #ec4899 100%);
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-  }
-  .text-gradient-cool {
-    background: linear-gradient(135deg, #e5e7eb 0%, #8b5cf6 50%, #00e5ff 100%);
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-  }
-  .grid-overlay {
-    background-image:
-      linear-gradient(rgba(59, 130, 246, 0.05) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(59, 130, 246, 0.05) 1px, transparent 1px);
-    background-size: 40px 40px;
-    mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
-  }
-  .stat-num {
-    font-family: var(--font-display);
-    font-variant-numeric: tabular-nums;
-    letter-spacing: -0.02em;
-  }
-  .chip {
-    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border border-white/10 bg-white/[0.04];
-  }
-  .focus-ring {
-    @apply outline-none focus-visible:ring-2 focus-visible:ring-neon-electric/60 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base;
-  }
-  .shine {
-    position: relative;
-    overflow: hidden;
-  }
-  .shine::after {
-    content: "";
-    position: absolute;
-    inset: -100% -50% auto auto;
-    width: 60%;
-    height: 300%;
-    background: linear-gradient(
-      120deg,
-      transparent 30%,
-      rgba(255, 255, 255, 0.08) 50%,
-      transparent 70%
-    );
-    transform: translateX(-100%);
-    transition: transform 0.9s ease;
-  }
-  .shine:hover::after {
-    transform: translateX(220%);
-  }
-}
-
-/* ===== Side Quest admin ("Broadcast HUD") — scoped styling ===== */
-@keyframes sqpulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.3;
-  }
-}
+/* ===== Side Quest admin — scoped scrollbar styling ===== */
 .admin-scope ::-webkit-scrollbar {
   height: 8px;
   width: 8px;
@@ -216,19 +134,4 @@
 .sq-field:focus {
   border-color: var(--sq-red);
   outline: none;
-}
-
-@layer utilities {
-  .no-scrollbar::-webkit-scrollbar {
-    display: none;
-  }
-  .no-scrollbar {
-    scrollbar-width: none;
-  }
-  .mask-fade-r {
-    mask-image: linear-gradient(90deg, black 80%, transparent 100%);
-  }
-  .mask-fade-b {
-    mask-image: linear-gradient(180deg, black 80%, transparent 100%);
-  }
 }

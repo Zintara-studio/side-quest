@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { SQ, FONT } from "../tokens";
 import { StateNote } from "../state-note";
+import { Avatar } from "../avatar";
 import { useFranchise, useFranchiseRoster, useFranchiseMatches } from "@/lib/query/hooks";
+import { mediaSrc } from "@/lib/api/client";
 import { shortDate } from "@/lib/adapters/league";
 
 const sectionLabel = {
@@ -51,6 +53,19 @@ export function FranchiseScreen({ id, base = "" }: { id?: string; base?: string 
         </div>
       ) : (
         <>
+          {mediaSrc(f.bannerUrl) ? (
+            <div
+              style={{
+                height: 150,
+                borderRadius: 10,
+                marginTop: 16,
+                backgroundImage: `url(${mediaSrc(f.bannerUrl)})`,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+                border: `1px solid ${SQ.hairline}`,
+              }}
+            />
+          ) : null}
           <div
             style={{
               display: "flex",
@@ -63,40 +78,43 @@ export function FranchiseScreen({ id, base = "" }: { id?: string; base?: string 
               borderBottom: `1px solid ${SQ.hairline}`,
             }}
           >
-            <div>
-              <div
-                style={{
-                  fontFamily: FONT.mono,
-                  fontSize: 12,
-                  letterSpacing: ".22em",
-                  textTransform: "uppercase",
-                  color: SQ.red,
-                }}
-              >
-                Rank {String(f.rank).padStart(2, "0")} · {f.points} points
-              </div>
-              <div
-                style={{
-                  fontFamily: FONT.display,
-                  fontSize: "clamp(38px,5.5vw,64px)",
-                  lineHeight: 0.92,
-                  letterSpacing: "-.03em",
-                  marginTop: 10,
-                }}
-              >
-                {f.name}
-                {f.tag ? <span style={{ color: SQ.mute }}> — {f.tag}</span> : null}
-              </div>
-              <div
-                style={{
-                  fontFamily: FONT.mono,
-                  fontSize: 12,
-                  letterSpacing: ".1em",
-                  color: SQ.mute,
-                  marginTop: 12,
-                }}
-              >
-                {f.rosterSize} PLAYERS · {f.matchesPlayed} MATCHES · {f.active ? "ACTIVE" : "INACTIVE"}
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 18 }}>
+              <Avatar url={f.logoUrl} alt={f.name} size={72} radius={12} />
+              <div>
+                <div
+                  style={{
+                    fontFamily: FONT.mono,
+                    fontSize: 12,
+                    letterSpacing: ".22em",
+                    textTransform: "uppercase",
+                    color: SQ.red,
+                  }}
+                >
+                  Rank {String(f.rank).padStart(2, "0")} · {f.points} points
+                </div>
+                <div
+                  style={{
+                    fontFamily: FONT.display,
+                    fontSize: "clamp(38px,5.5vw,64px)",
+                    lineHeight: 0.92,
+                    letterSpacing: "-.03em",
+                    marginTop: 10,
+                  }}
+                >
+                  {f.name}
+                  {f.tag ? <span style={{ color: SQ.mute }}> — {f.tag}</span> : null}
+                </div>
+                <div
+                  style={{
+                    fontFamily: FONT.mono,
+                    fontSize: 12,
+                    letterSpacing: ".1em",
+                    color: SQ.mute,
+                    marginTop: 12,
+                  }}
+                >
+                  {f.rosterSize} PLAYERS · {f.matchesPlayed} MATCHES · {f.active ? "ACTIVE" : "DISCARDED"}
+                </div>
               </div>
             </div>
             <div
@@ -171,15 +189,7 @@ export function FranchiseScreen({ id, base = "" }: { id?: string; base?: string 
                     }}
                   >
                     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                      <div
-                        style={{
-                          width: 32,
-                          height: 32,
-                          borderRadius: "50%",
-                          background: SQ.avatar,
-                          border: `1px solid ${SQ.avatarBorder}`,
-                        }}
-                      />
+                      <Avatar url={p.avatarUrl} alt={p.gamerTag} size={32} />
                       <div>
                         <div style={{ fontSize: 14.5, fontWeight: 600 }}>{p.gamerTag}</div>
                         <div

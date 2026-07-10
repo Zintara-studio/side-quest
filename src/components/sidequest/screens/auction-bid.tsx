@@ -6,6 +6,7 @@ import { StateNote } from "../state-note";
 import { Modal } from "../modal";
 import { useAuth, apiErrorMessage } from "@/lib/auth/context";
 import { useMyFranchise, useActiveAuction, useAuction, usePlaceBid, useJoinAuction } from "@/lib/query/hooks";
+import { useAuctionSocket } from "@/lib/query/use-auction-socket";
 import type { AuctionView, AuctionLotView, AuctionFranchiseView } from "@/lib/api/types";
 
 const sectionTitle = {
@@ -32,8 +33,8 @@ const eyebrow = {
   color: SQ.label,
 } as const;
 
-/** Auction credits — neutral thousands-separated integer, no currency symbol. */
-const money = (n: number) => n.toLocaleString("en-US");
+/** Auction credits with the ₡ credit mark, matching the admin auction room. */
+const money = (n: number) => `₡${(n ?? 0).toLocaleString("en-US")}`;
 const pct = (n: number) => Math.max(0, Math.min(100, n));
 const fmtWhen = (iso: string) => {
   try {
@@ -51,7 +52,7 @@ const fmtWhen = (iso: string) => {
 // ---- entry point / gating --------------------------------------------------
 
 export function AuctionBidScreen() {
-  const { isAuthenticated, hydrated } = useAuth();
+  const { isAuthenticated, hydrated, isAdmin } = useAuth();
   const mineQ = useMyFranchise(isAuthenticated);
   // Auction reads are public — anonymous fans can spectate the board (bidding still needs a franchise).
   const activeQ = useActiveAuction();
@@ -61,6 +62,21 @@ export function AuctionBidScreen() {
 
   const auction = boardQ.data ?? activeQ.data ?? null;
   const mine = mineQ.data ?? null;
+
+  // Bidder eligibility (derived, no hooks) — computed up here so the live socket can mount before the
+  // early returns. Owners/managers of a participating franchise + admins get the WebSocket feed; every
+  // other viewer stays on the poll.
+  const myFranchiseId = mine?.franchise?.id ?? "";
+  const myAF = myFranchiseId
+    ? auction?.franchises.find((f) => f.franchiseId === myFranchiseId) ?? null
+    : null;
+  const canBid = !!myAF && (mine?.myRole === "OWNER" || mine?.myRole === "MANAGER");
+  const spectator = !myAF;
+  const live = auction != null && auction.status !== "COMPLETED" && auction.status !== "CANCELLED";
+  useAuctionSocket({
+    auctionId: activeQ.data?.id,
+    enabled: (canBid || isAdmin) && live,
+  });
 
   // Still resolving auth / first payloads.
   if (!hydrated || activeQ.isLoading || mineQ.isLoading) {
@@ -87,14 +103,7 @@ export function AuctionBidScreen() {
   }
 
   // A participating franchise's owner/manager bids; everyone else (no franchise, or a franchise not in
-  // this auction) watches the same board read-only — no more dead-end. This is the spectator view.
-  const myFranchiseId = mine?.franchise?.id ?? "";
-  const myAF = myFranchiseId
-    ? auction.franchises.find((f) => f.franchiseId === myFranchiseId) ?? null
-    : null;
-  const canBid = !!myAF && (mine?.myRole === "OWNER" || mine?.myRole === "MANAGER");
-  const spectator = !myAF;
-
+  // this auction) watches the same board read-only — no more dead-end. (Eligibility computed above.)
   return (
     <BidRoom
       auction={auction}
@@ -705,6 +714,12 @@ function HeroLot({
           >
             {lot.gamerTag}
           </div>
+          {lot.realName ? (
+            // Present only for bidders/admin (the backend nulls it for spectators).
+            <div style={{ fontFamily: FONT.mono, fontSize: 12, letterSpacing: ".08em", color: SQ.mute, marginTop: 6 }}>
+              {lot.realName}
+            </div>
+          ) : null}
           {lot.games.length > 0 ? (
             <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: 6 }}>
               {lot.games.map((g) => (
@@ -1508,6 +1523,7 @@ const STATUS_COLOR: Record<AuctionView["status"], string> = {
   LOBBY: SQ.blue,
   DRAFT: SQ.mute,
   COMPLETED: SQ.green,
+  CANCELLED: SQ.mute,
 };
 
 function StatusPill({ status }: { status: AuctionView["status"] }) {

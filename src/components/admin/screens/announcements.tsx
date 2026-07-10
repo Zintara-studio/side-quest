@@ -7,14 +7,17 @@ import { StateNote } from "@/components/sidequest/state-note";
 import { SearchableSelect, type SearchableSelectOption } from "@/components/sidequest/searchable-select";
 import { MarkdownView } from "@/components/sidequest/markdown";
 import { ConfirmModal } from "@/components/sidequest/confirm-modal";
+import { Modal } from "@/components/sidequest/modal";
 import {
-  useAnnouncements,
+  useAnnouncementsInfinite,
   useCreateAnnouncement,
   useCloseAnnouncement,
   useDeleteAnnouncement,
+  useUpdateAnnouncement,
   useGames,
   useMatches,
 } from "@/lib/query/hooks";
+import { apiErrorMessage } from "@/lib/api/client";
 import { announcementTagFor, shortDate } from "@/lib/adapters/league";
 import type { AnnouncementView, RegistrationType } from "@/lib/api/types";
 
@@ -206,13 +209,20 @@ const TEMPLATES: Template[] = [
 ];
 
 export function AnnouncementsScreen() {
-  const list = useAnnouncements({ limit: 20 });
+  const list = useAnnouncementsInfinite({ limit: 20 });
   const create = useCreateAnnouncement();
   const remove = useDeleteAnnouncement();
   const close = useCloseAnnouncement();
+  const update = useUpdateAnnouncement();
   const [pendingTemplate, setPendingTemplate] = useState<Template | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [pendingClose, setPendingClose] = useState<AnnouncementView | null>(null);
+  // Inline editor for an existing post's content (title/body/category only — not its registration wiring).
+  const [editing, setEditing] = useState<AnnouncementView | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editCategory, setEditCategory] = useState("GENERAL");
+  const [editBody, setEditBody] = useState("");
+  const [editErr, setEditErr] = useState<string | null>(null);
   const gamesQ = useGames(true);
   // All matches (not just SCHEDULED) so result / recap posts can point at a
   // LIVE, AWAITING_RESULT or COMPLETED fixture too.
@@ -230,7 +240,7 @@ export function AnnouncementsScreen() {
   const [teamSize, setTeamSize] = useState(5);
   const [err, setErr] = useState<string | null>(null);
 
-  const items = list.data?.items ?? [];
+  const items = (list.data?.pages ?? []).flatMap((p) => p.items);
   const matches = matchesQ.data?.items ?? [];
   const selectedMatch = matches.find((m) => m.id === matchId);
   const matchOptions: SearchableSelectOption[] = [
@@ -261,6 +271,34 @@ export function AnnouncementsScreen() {
     } else {
       commitTemplate(t);
     }
+  };
+
+  // Open the editor prefilled with the post's current content. Guarantee the current
+  // category is a selectable option even if it isn't one of the composer's presets.
+  const openEdit = (a: AnnouncementView) => {
+    setEditing(a);
+    setEditTitle(a.title);
+    setEditBody(a.body);
+    setEditCategory(a.category);
+    setEditErr(null);
+  };
+
+  const onSaveEdit = () => {
+    if (!editing) return;
+    const title = editTitle.trim();
+    const body = editBody.trim();
+    if (!title || !body) {
+      setEditErr("Title and body are required.");
+      return;
+    }
+    setEditErr(null);
+    update.mutate(
+      { id: editing.id, body: { title, body, category: editCategory } },
+      {
+        onSuccess: () => setEditing(null),
+        onError: (e) => setEditErr(apiErrorMessage(e, "Couldn't save changes.")),
+      },
+    );
   };
 
   const onPublish = async () => {
@@ -632,6 +670,24 @@ export function AnnouncementsScreen() {
                   ) : null}
                   <button
                     type="button"
+                    onClick={() => openEdit(a)}
+                    style={{
+                      fontFamily: FONT.mono,
+                      fontSize: 10,
+                      letterSpacing: ".1em",
+                      textTransform: "uppercase",
+                      color: SQ.faint,
+                      background: "transparent",
+                      border: `1px solid ${SQ.inputBorder}`,
+                      borderRadius: 5,
+                      padding: "6px 10px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setPendingDelete(a.id)}
                     disabled={remove.isPending}
                     style={{
@@ -651,6 +707,30 @@ export function AnnouncementsScreen() {
               );
             })
           )}
+
+          {list.hasNextPage ? (
+            <div style={{ display: "flex", justifyContent: "center", marginTop: 6 }}>
+              <button
+                type="button"
+                onClick={() => list.fetchNextPage()}
+                disabled={list.isFetchingNextPage}
+                style={{
+                  fontFamily: FONT.mono,
+                  fontSize: 11,
+                  letterSpacing: ".12em",
+                  textTransform: "uppercase",
+                  color: SQ.faint,
+                  background: "transparent",
+                  border: `1px solid ${SQ.inputBorder}`,
+                  borderRadius: 6,
+                  padding: "10px 20px",
+                  cursor: list.isFetchingNextPage ? "not-allowed" : "pointer",
+                }}
+              >
+                {list.isFetchingNextPage ? "Loading…" : "Load more"}
+              </button>
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -668,7 +748,11 @@ export function AnnouncementsScreen() {
         tone="destructive"
         message={
           pendingClose
-            ? `Close registration for “${pendingClose.title}”? The Register button is removed everywhere and any still-open sign-ups are voided.`
+            ? `Close registration for “${pendingClose.title}”? The Register button is removed everywhere${
+                pendingClose.registrationType === "AUCTION"
+                  ? " — existing pool entries stay in the auction pool."
+                  : " and any still-open sign-ups are voided."
+              }`
             : ""
         }
         confirmLabel="Close registration"
@@ -690,6 +774,89 @@ export function AnnouncementsScreen() {
         }
         onClose={() => setPendingDelete(null)}
       />
+
+      <Modal open={!!editing} title="Edit announcement" onClose={() => setEditing(null)}>
+        <div style={{ ...fieldLabel, marginBottom: 8 }}>TITLE</div>
+        <input
+          className="sq-field"
+          style={inputBox}
+          value={editTitle}
+          onChange={(e) => setEditTitle(e.target.value)}
+          placeholder="Announcement title"
+        />
+
+        <div style={{ ...fieldLabel, margin: "16px 0 8px" }}>CATEGORY</div>
+        <select
+          value={editCategory}
+          onChange={(e) => setEditCategory(e.target.value)}
+          style={{ ...inputBox, cursor: "pointer" }}
+        >
+          {(CATEGORIES.includes(editCategory) ? CATEGORIES : [editCategory, ...CATEGORIES]).map(
+            (c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ),
+          )}
+        </select>
+
+        <div style={{ ...fieldLabel, margin: "16px 0 8px" }}>BODY</div>
+        <textarea
+          className="sq-field"
+          style={{ ...inputBox, minHeight: 220, lineHeight: 1.5, resize: "vertical" }}
+          value={editBody}
+          onChange={(e) => setEditBody(e.target.value)}
+          placeholder="Write the announcement copy…  (Markdown supported)"
+        />
+
+        {editErr ? (
+          <div style={{ fontFamily: FONT.mono, fontSize: 12, color: SQ.ember, marginTop: 12 }}>
+            {editErr}
+          </div>
+        ) : null}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 18 }}>
+          <button
+            type="button"
+            onClick={() => setEditing(null)}
+            style={{
+              fontFamily: FONT.mono,
+              fontSize: 11,
+              letterSpacing: ".1em",
+              textTransform: "uppercase",
+              color: SQ.faint,
+              background: "transparent",
+              border: `1px solid ${SQ.inputBorder}`,
+              borderRadius: 5,
+              padding: "10px 16px",
+              cursor: "pointer",
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onSaveEdit}
+            disabled={update.isPending || !editTitle.trim() || !editBody.trim()}
+            style={{
+              fontFamily: FONT.mono,
+              fontSize: 11,
+              letterSpacing: ".12em",
+              textTransform: "uppercase",
+              fontWeight: 700,
+              color: SQ.sidebar,
+              background: SQ.red,
+              border: "none",
+              borderRadius: 5,
+              padding: "10px 18px",
+              cursor: update.isPending ? "not-allowed" : "pointer",
+              opacity: update.isPending || !editTitle.trim() || !editBody.trim() ? 0.6 : 1,
+            }}
+          >
+            {update.isPending ? "Saving…" : "Save changes"}
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }

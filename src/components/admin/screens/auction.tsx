@@ -6,13 +6,16 @@ import { ScreenHeader } from "../screen-header";
 import { TableScroll } from "../table-scroll";
 import { StateNote } from "@/components/sidequest/state-note";
 import { Modal } from "@/components/sidequest/modal";
+import { ConfirmModal } from "@/components/sidequest/confirm-modal";
 import { SearchableSelect } from "@/components/sidequest/searchable-select";
 import { apiErrorMessage } from "@/lib/api/client";
 import {
   useActiveAuction,
   useAuction,
+  useCancelAuction,
   useCreateAuction,
   useUpdateAuction,
+  useLockPool,
   useOpenHall,
   useRescheduleAuction,
   useStartAuction,
@@ -405,6 +408,19 @@ function AuctionBoard({ id, onReset }: { id: string; onReset: () => void }) {
   if (a.status === "DRAFT") return <DraftView a={a} />;
   if (a.status === "LOBBY") return <LobbyView a={a} />;
   if (a.status === "COMPLETED") return <CompletedView a={a} onReset={onReset} />;
+  if (a.status === "CANCELLED") {
+    return (
+      <div style={card}>
+        <div style={{ fontFamily: FONT.display, fontSize: 22, letterSpacing: "-.02em" }}>{a.title}</div>
+        <div style={{ fontFamily: FONT.mono, fontSize: 10.5, letterSpacing: ".12em", color: SQ.mute, marginTop: 6 }}>
+          CANCELLED · POOL REGISTRATIONS CARRY OVER TO THE NEXT AUCTION
+        </div>
+        <button type="button" onClick={onReset} style={{ ...ghostBtn, marginTop: 16 }}>
+          Set up a new auction ▸
+        </button>
+      </div>
+    );
+  }
   return <LiveBoard a={a} />;
 }
 
@@ -635,8 +651,54 @@ function EditSettingsPanel({ a }: { a: AuctionView }) {
 
 /* ---------- DRAFT ---------- */
 
+/**
+ * Call off a DRAFT/LOBBY auction (with confirm). Without this a stray draft stays the site-wide
+ * "active" auction forever — banner, lobby and admin CTA included. Pool entries carry over.
+ */
+function CancelAuctionButton({ a, onErr }: { a: AuctionView; onErr: (m: string) => void }) {
+  const cancel = useCancelAuction();
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setConfirmOpen(true)}
+        disabled={cancel.isPending}
+        style={{
+          ...ghostBtn,
+          marginTop: 10,
+          color: SQ.ember,
+          border: "1px solid rgba(232,96,44,.45)",
+          opacity: cancel.isPending ? 0.6 : 1,
+        }}
+      >
+        {cancel.isPending ? "Cancelling…" : "Cancel auction"}
+      </button>
+      <ConfirmModal
+        open={confirmOpen}
+        tone="destructive"
+        title="Cancel auction?"
+        message={`Call off “${a.title}”? Pool registrations stay live and feed the next auction; participating franchises are notified. This can’t be undone.`}
+        confirmLabel="Cancel auction"
+        busy={cancel.isPending}
+        onConfirm={async () => {
+          try {
+            await cancel.mutateAsync(a.id);
+          } catch (e) {
+            onErr(apiErrorMessage(e, "Couldn't cancel the auction."));
+          } finally {
+            setConfirmOpen(false);
+          }
+        }}
+        onClose={() => setConfirmOpen(false)}
+      />
+    </>
+  );
+}
+
 function DraftView({ a }: { a: AuctionView }) {
   const openHall = useOpenHall();
+  const lockPool = useLockPool();
   const [err, setErr] = useState<string | null>(null);
 
   const onOpenHall = async () => {
@@ -648,6 +710,15 @@ function DraftView({ a }: { a: AuctionView }) {
     }
   };
 
+  const onLockPool = async () => {
+    setErr(null);
+    try {
+      await lockPool.mutateAsync(a.id);
+    } catch (e) {
+      setErr(apiErrorMessage(e, "Couldn't lock the pool."));
+    }
+  };
+
   const queued = a.lots.filter((l) => l.status === "QUEUED");
 
   return (
@@ -655,23 +726,44 @@ function DraftView({ a }: { a: AuctionView }) {
       <div style={{ ...card, display: "flex", flexWrap: "wrap", gap: 24, alignItems: "flex-start" }}>
         <div style={{ flex: "1 1 320px", minWidth: 0 }}>
           <div style={{ fontFamily: FONT.display, fontSize: 22, letterSpacing: "-.02em" }}>{a.title}</div>
-          <div style={{ fontFamily: FONT.mono, fontSize: 10.5, letterSpacing: ".12em", color: SQ.amber, marginTop: 6 }}>
-            DRAFT · NOT YET LIVE
+          <div style={{ fontFamily: FONT.mono, fontSize: 10.5, letterSpacing: ".12em", color: a.poolLocked ? SQ.green : SQ.amber, marginTop: 6 }}>
+            DRAFT · {a.poolLocked ? "POOL LOCKED" : "POOL OPEN · REGISTRATION LIVE"}
           </div>
           <ConfigStats a={a} queuedCount={queued.length} />
         </div>
         <div>
-          <button
-            type="button"
-            onClick={onOpenHall}
-            disabled={openHall.isPending}
-            style={{ ...primaryBtn, padding: "14px 22px", fontSize: 12, opacity: openHall.isPending ? 0.6 : 1 }}
-          >
-            {openHall.isPending ? "Opening…" : "Open hall ▸"}
-          </button>
-          <div style={{ marginTop: 10, fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".04em", color: SQ.mute, maxWidth: 220, lineHeight: 1.5 }}>
-            Opens the lobby so franchises can join before you start bidding.
-          </div>
+          {!a.poolLocked ? (
+            <>
+              <button
+                type="button"
+                onClick={onLockPool}
+                disabled={lockPool.isPending}
+                style={{ ...primaryBtn, padding: "14px 22px", fontSize: 12, opacity: lockPool.isPending ? 0.6 : 1 }}
+              >
+                {lockPool.isPending ? "Locking…" : "Lock pool ▸"}
+              </button>
+              <div style={{ marginTop: 10, fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".04em", color: SQ.mute, maxWidth: 240, lineHeight: 1.5 }}>
+                Freezes the player pool, closes auction registration and auto-closes the open registration
+                call (same as closing it from Announcements). Do this once everyone has registered — the
+                hall can&rsquo;t open until the pool is locked.
+              </div>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={onOpenHall}
+                disabled={openHall.isPending}
+                style={{ ...primaryBtn, padding: "14px 22px", fontSize: 12, opacity: openHall.isPending ? 0.6 : 1 }}
+              >
+                {openHall.isPending ? "Opening…" : "Open hall ▸"}
+              </button>
+              <div style={{ marginTop: 10, fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".04em", color: SQ.mute, maxWidth: 240, lineHeight: 1.5 }}>
+                Pool locked ✓ — opens the lobby and builds the auction board so franchises can join before bidding.
+              </div>
+            </>
+          )}
+          <CancelAuctionButton a={a} onErr={setErr} />
           {err ? (
             <div style={{ marginTop: 12, fontFamily: FONT.mono, fontSize: 11.5, color: SQ.ember, maxWidth: 220 }}>{err}</div>
           ) : null}
@@ -740,6 +832,7 @@ function LobbyView({ a }: { a: AuctionView }) {
           >
             {start.isPending ? "Starting…" : "Start auction ▸"}
           </button>
+          <CancelAuctionButton a={a} onErr={setErr} />
           {err ? (
             <div style={{ marginTop: 12, fontFamily: FONT.mono, fontSize: 11.5, color: SQ.ember, maxWidth: 220 }}>{err}</div>
           ) : null}
@@ -1017,6 +1110,11 @@ function LiveBoard({ a }: { a: AuctionView }) {
               <div style={{ fontFamily: FONT.display, fontSize: "clamp(28px,4vw,40px)", letterSpacing: "-.02em", marginTop: 6 }}>
                 {lot.gamerTag}
               </div>
+              {lot.realName ? (
+                <div style={{ fontFamily: FONT.mono, fontSize: 12, letterSpacing: ".08em", color: SQ.mute, marginTop: 4 }}>
+                  {lot.realName}
+                </div>
+              ) : null}
               <div style={{ marginTop: 12, display: "flex", gap: 28, flexWrap: "wrap" }}>
                 <div>
                   <div style={{ fontFamily: FONT.mono, fontSize: 9.5, letterSpacing: ".12em", color: SQ.label }}>CURRENT BID</div>

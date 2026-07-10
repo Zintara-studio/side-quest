@@ -6,7 +6,7 @@ import { SQ, FONT, announcementTagColors } from "../tokens";
 import { LeagueTitle } from "../league-title";
 import { StateNote } from "../state-note";
 import { MarkdownView } from "../markdown";
-import { useAnnouncements } from "@/lib/query/hooks";
+import { useAnnouncementsInfinite } from "@/lib/query/hooks";
 import { announcementTagFor, shortDate } from "@/lib/adapters/league";
 import type { AnnouncementView } from "@/lib/api/types";
 
@@ -165,8 +165,9 @@ function AnnouncementRow({ a }: { a: AnnouncementView }) {
 }
 
 export function AnnouncementsScreen() {
-  const { data, isLoading, isError } = useAnnouncements({ limit: 20 });
-  const items = data?.items ?? [];
+  const { data, isLoading, isError, hasNextPage, fetchNextPage, isFetchingNextPage } =
+    useAnnouncementsInfinite({ limit: 20 });
+  const items = (data?.pages ?? []).flatMap((p) => p.items);
 
   return (
     <div>
@@ -198,6 +199,30 @@ export function AnnouncementsScreen() {
           ))}
         </div>
       )}
+
+      {hasNextPage ? (
+        <div style={{ display: "flex", justifyContent: "center", marginTop: 20 }}>
+          <button
+            type="button"
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
+            style={{
+              fontFamily: FONT.mono,
+              fontSize: 11.5,
+              letterSpacing: ".12em",
+              textTransform: "uppercase",
+              color: SQ.faint,
+              background: "transparent",
+              border: `1px solid ${SQ.inputBorder}`,
+              borderRadius: 6,
+              padding: "10px 20px",
+              cursor: isFetchingNextPage ? "not-allowed" : "pointer",
+            }}
+          >
+            {isFetchingNextPage ? "Loading…" : "Load more"}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

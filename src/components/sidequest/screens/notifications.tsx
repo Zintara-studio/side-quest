@@ -163,14 +163,48 @@ export function NotificationsScreen() {
                 ) : null}
                 <div
                   style={{
-                    fontFamily: FONT.mono,
-                    fontSize: 9.5,
-                    letterSpacing: ".12em",
-                    color: typeColor(n.type),
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 10,
                     marginTop: 6,
                   }}
                 >
-                  {n.type}
+                  <span
+                    style={{
+                      fontFamily: FONT.mono,
+                      fontSize: 9.5,
+                      letterSpacing: ".12em",
+                      color: typeColor(n.type),
+                    }}
+                  >
+                    {n.type}
+                  </span>
+                  {!n.read ? (
+                    <button
+                      type="button"
+                      disabled={markRead.isPending}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        markRead.mutate(n.id);
+                      }}
+                      style={{
+                        fontFamily: FONT.mono,
+                        fontSize: 9.5,
+                        letterSpacing: ".08em",
+                        textTransform: "uppercase",
+                        color: SQ.mute,
+                        background: "transparent",
+                        border: `1px solid ${SQ.inputBorder}`,
+                        borderRadius: 5,
+                        padding: "5px 9px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Mark read
+                    </button>
+                  ) : null}
                 </div>
               </div>
             </Link>

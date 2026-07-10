@@ -11,10 +11,13 @@ import {
   useInviteTeammate,
   useRespondInvite,
   usePlayers,
+  useCancelRegistration,
+  useLeaveSquad,
 } from "@/lib/query/hooks";
 import { apiErrorMessage } from "@/lib/api/client";
 import { shortDate } from "@/lib/adapters/league";
-import type { RegistrationView } from "@/lib/api/types";
+import { ConfirmModal } from "@/components/sidequest/confirm-modal";
+import type { InviteView, RegistrationView } from "@/lib/api/types";
 
 const sectionTitle = {
   fontFamily: FONT.mono,
@@ -37,8 +40,9 @@ const chip = {
 function statusColor(status: string) {
   if (status === "ACCEPTED" || status === "APPROVED" || status === "ACTIVE") return SQ.green;
   if (status === "REJECTED") return SQ.ember;
-  // A pending invite voided at lock (EXPIRED), or a locked/closed registration — read as inert.
-  if (status === "EXPIRED" || status === "LOCKED") return SQ.mute;
+  // A pending invite voided at lock (EXPIRED), a withdrawn sign-up (WITHDRAWN — a neutral,
+  // non-punitive void), or a locked/closed registration — all read as inert, never punitive red.
+  if (status === "EXPIRED" || status === "LOCKED" || status === "WITHDRAWN") return SQ.mute;
   return SQ.amber;
 }
 
@@ -73,6 +77,11 @@ export function MyRegistrationsScreen() {
   const regs = regsQ.data ?? [];
   const invites = invitesQ.data ?? [];
   const pendingInvites = invites.filter((i) => i.status === "PENDING");
+  // Squads you accepted an invite to that are still assembling. Leaving one frees you to accept a
+  // different captain's invite — a player may only hold a spot on one forming squad at a time.
+  const joinedSquads = invites.filter(
+    (i) => i.status === "ACCEPTED" && i.registrationStatus === "FORMING",
+  );
 
   // Group registrations by the match/announcement they're for; non-match "general" sign-ups
   // (season bids, franchise proposals, etc.) get their own section. Backend order is newest-first.
@@ -181,6 +190,22 @@ export function MyRegistrationsScreen() {
         </section>
       ) : null}
 
+      {/* squads you've joined — accepted invites for squads still forming. Leaving one frees you
+          to accept a different captain's invite. */}
+      {joinedSquads.length > 0 ? (
+        <section style={{ marginTop: 40 }}>
+          <div style={sectionTitle}>Squads you&rsquo;ve joined</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(320px,1fr))", gap: 14 }}>
+            {joinedSquads.map((inv) => (
+              <JoinedSquadCard key={inv.id} invite={inv} />
+            ))}
+          </div>
+          <div style={{ fontFamily: FONT.mono, fontSize: 11, color: SQ.mute, marginTop: 10 }}>
+            Leave a squad to free yourself to accept another captain&rsquo;s invite.
+          </div>
+        </section>
+      ) : null}
+
       {/* your registrations */}
       <section style={{ marginTop: 40 }}>
         <div style={sectionTitle}>Your registrations</div>
@@ -198,7 +223,7 @@ export function MyRegistrationsScreen() {
           <div style={{ display: "flex", flexDirection: "column", gap: 30 }}>
             {matchGroups.map((g) => (
               <div key={g.matchId}>
-                <GroupHeader eyebrow="Match" title={g.gameName || "Match sign-up"} hint={`#${g.matchId.slice(0, 8)}`} />
+                <GroupHeader eyebrow="Match" title={g.gameName || "Match sign-up"} hint={`#${g.matchId.slice(0, 8)}`} matchId={g.matchId} />
                 <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                   {g.regs.map((r) => (
                     <RegistrationCard key={r.id} r={r} />
@@ -226,10 +251,16 @@ export function MyRegistrationsScreen() {
 function RegistrationCard({ r }: { r: RegistrationView }) {
   const invite = useInviteTeammate();
   const playersQ = usePlayers({ limit: 100 });
+  const cancel = useCancelRegistration();
   const [tag, setTag] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const [cancelErr, setCancelErr] = useState<string | null>(null);
   const isSquad = r.type === "SQUAD";
   const isForming = r.status === "FORMING";
+  // A live sign-up (still assembling or active) may be withdrawn by its owner — never a locked,
+  // finalized, already-withdrawn, or rejected one.
+  const canCancel = r.status === "FORMING" || r.status === "ACTIVE";
   // Invites are only allowed while the squad is still assembling (FORMING). It auto-locks a few
   // hours before the match (LOCKED), at which point the invite UI disappears.
   const canInvite = isSquad && isForming;
@@ -265,6 +296,16 @@ function RegistrationCard({ r }: { r: RegistrationView }) {
       setTag("");
     } catch (e) {
       setErr(apiErrorMessage(e, "Couldn't send the invite."));
+    }
+  };
+
+  const doCancel = async () => {
+    setCancelErr(null);
+    try {
+      await cancel.mutateAsync(r.id);
+      setConfirmCancel(false);
+    } catch (e) {
+      setCancelErr(apiErrorMessage(e, "Couldn't withdraw the registration."));
     }
   };
 
@@ -315,7 +356,7 @@ function RegistrationCard({ r }: { r: RegistrationView }) {
 
       {r.reason ? (
         <div style={{ fontSize: 12.5, color: SQ.faint, marginBottom: 12 }}>
-          {r.status === "REJECTED" ? "Reason: " : "Note: "}
+          {r.status === "REJECTED" || r.status === "WITHDRAWN" ? "Reason: " : "Note: "}
           {r.reason}
         </div>
       ) : null}
@@ -423,16 +464,139 @@ function RegistrationCard({ r }: { r: RegistrationView }) {
             </div>
           ) : null}
 
-          {isForming ? (
-            <div style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${SQ.hairline}` }}>
-              <div style={{ fontSize: 12.5, color: SQ.mute, lineHeight: 1.5 }}>
-                Your squad is registered. Invite teammates before it locks — pending invites are voided at
-                lock time.
-              </div>
-            </div>
-          ) : null}
         </>
       ) : null}
+
+      {canCancel ? (
+        <div
+          style={{
+            marginTop: 16,
+            paddingTop: 14,
+            borderTop: `1px solid ${SQ.hairline}`,
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+          }}
+        >
+          {isSquad && isForming ? (
+            <div style={{ fontSize: 12.5, color: SQ.mute, lineHeight: 1.5 }}>
+              Your squad is registered. Invite teammates before it locks — pending invites are voided at
+              lock time.
+            </div>
+          ) : null}
+          <div>
+            <button
+              type="button"
+              disabled={cancel.isPending}
+              onClick={() => {
+                setCancelErr(null);
+                setConfirmCancel(true);
+              }}
+              style={actionBtn("transparent", SQ.ember, true, cancel.isPending)}
+            >
+              Cancel registration
+            </button>
+          </div>
+          {cancelErr ? (
+            <div style={{ fontFamily: FONT.mono, fontSize: 11.5, color: SQ.ember }}>{cancelErr}</div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <ConfirmModal
+        open={confirmCancel}
+        tone="destructive"
+        title="Withdraw registration?"
+        message={
+          <>
+            This withdraws your {isSquad ? "squad" : "solo"} entry
+            {isSquad && r.squadName ? (
+              <>
+                {" "}
+                for <strong>{r.squadName}</strong>
+              </>
+            ) : null}
+            . You can then join another team or re-register.
+          </>
+        }
+        confirmLabel="Withdraw"
+        busy={cancel.isPending}
+        onConfirm={doCancel}
+        onClose={() => setConfirmCancel(false)}
+      />
+    </div>
+  );
+}
+
+function JoinedSquadCard({ invite }: { invite: InviteView }) {
+  const leave = useLeaveSquad();
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const doLeave = async () => {
+    setErr(null);
+    try {
+      await leave.mutateAsync(invite.id);
+      setConfirmLeave(false);
+    } catch (e) {
+      setErr(apiErrorMessage(e, "Couldn't leave the squad."));
+    }
+  };
+
+  return (
+    <div style={{ background: SQ.panel, border: `1px solid ${SQ.hairline}`, borderRadius: 9, padding: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 140 }}>
+          <div style={{ fontWeight: 700, fontSize: 15 }}>{invite.squadName || "Squad"}</div>
+          <div style={{ fontFamily: FONT.mono, fontSize: 11, color: SQ.mute, marginTop: 3 }}>
+            captain {invite.captainGamerTag ?? "—"} · joined {shortDate(invite.createdAt)}
+          </div>
+        </div>
+        <span style={{ fontFamily: FONT.mono, fontSize: 9.5, letterSpacing: ".1em", color: SQ.green }}>
+          ACCEPTED
+        </span>
+      </div>
+
+      {invite.games && invite.games.length > 0 ? (
+        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", margin: "12px 0" }}>
+          {invite.games.map((g) => (
+            <span key={g} style={chip}>{g}</span>
+          ))}
+        </div>
+      ) : null}
+
+      <div style={{ marginTop: 4 }}>
+        <button
+          type="button"
+          disabled={leave.isPending}
+          onClick={() => {
+            setErr(null);
+            setConfirmLeave(true);
+          }}
+          style={actionBtn("transparent", SQ.ember, true, leave.isPending)}
+        >
+          Leave squad
+        </button>
+      </div>
+      {err ? (
+        <div style={{ fontFamily: FONT.mono, fontSize: 11.5, color: SQ.ember, marginTop: 8 }}>{err}</div>
+      ) : null}
+
+      <ConfirmModal
+        open={confirmLeave}
+        tone="destructive"
+        title="Leave this squad?"
+        message={
+          <>
+            You&rsquo;ll be removed from <strong>{invite.squadName || "this squad"}</strong>. You can then
+            accept another captain&rsquo;s invite or register your own team.
+          </>
+        }
+        confirmLabel="Leave squad"
+        busy={leave.isPending}
+        onConfirm={doLeave}
+        onClose={() => setConfirmLeave(false)}
+      />
     </div>
   );
 }
@@ -453,7 +617,23 @@ function Header() {
   );
 }
 
-function GroupHeader({ eyebrow, title, hint }: { eyebrow: string; title: string; hint?: string }) {
+function GroupHeader({
+  eyebrow,
+  title,
+  hint,
+  matchId,
+}: {
+  eyebrow: string;
+  title: string;
+  hint?: string;
+  matchId?: string;
+}) {
+  const hintStyle = {
+    fontFamily: FONT.mono,
+    fontSize: 10.5,
+    letterSpacing: ".06em",
+    color: SQ.mute,
+  } as const;
   return (
     <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", margin: "0 0 14px" }}>
       <span
@@ -469,9 +649,13 @@ function GroupHeader({ eyebrow, title, hint }: { eyebrow: string; title: string;
       </span>
       <span style={{ fontSize: 15.5, fontWeight: 700, color: SQ.ink }}>{title}</span>
       {hint ? (
-        <span style={{ fontFamily: FONT.mono, fontSize: 10.5, letterSpacing: ".06em", color: SQ.mute }}>
-          {hint}
-        </span>
+        matchId ? (
+          <Link href={`/match/${matchId}`} style={{ ...hintStyle, textDecoration: "none" }}>
+            {hint}
+          </Link>
+        ) : (
+          <span style={hintStyle}>{hint}</span>
+        )
       ) : null}
     </div>
   );

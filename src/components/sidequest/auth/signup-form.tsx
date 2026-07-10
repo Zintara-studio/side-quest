@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { SQ } from "../tokens";
 import { useAuth, apiErrorMessage } from "@/lib/auth/context";
+import { safeNextPath } from "@/lib/nav";
 import { useCurrentSeason } from "@/lib/query/hooks";
 import {
   AuthCard,
@@ -38,11 +39,12 @@ export function SignupForm() {
     setPending(true);
     try {
       // Backend has no 2FA/email-verification step yet — registration returns a live session.
-      const role = await signup({ name, email, password });
-      // Honour a ?next= redirect (carried over from the login link), but only same-origin paths.
-      const next = new URLSearchParams(window.location.search).get("next");
-      const safeNext = next && next.startsWith("/") && !next.startsWith("//") ? next : null;
-      router.push(safeNext ?? (role === "ADMIN" ? "/admin" : "/"));
+      await signup({ name, email, password });
+      // No session yet — head to email verification, carrying any safe ?next= through for afterwards.
+      const params = new URLSearchParams({ email });
+      const safeNext = safeNextPath(new URLSearchParams(window.location.search).get("next"));
+      if (safeNext) params.set("next", safeNext);
+      router.push(`/verify-email?${params.toString()}`);
     } catch (err) {
       setError(apiErrorMessage(err, "Could not create account."));
     } finally {
@@ -113,7 +115,13 @@ export function SignupForm() {
           }}
         >
           <input type="checkbox" required style={{ accentColor: SQ.red, marginTop: 2 }} />
-          I agree to the Side Quest league rules &amp; fair-play policy.
+          <span>
+            I agree to the{" "}
+            <Link href="/rules" target="_blank" style={authLinkStyle}>
+              Side Quest league rules &amp; fair-play policy
+            </Link>
+            .
+          </span>
         </label>
         <AuthError>{error}</AuthError>
         <AuthSubmit disabled={pending}>

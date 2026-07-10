@@ -60,26 +60,25 @@ export function RegistrationsScreen() {
   // themed confirm dialog instead of the native window.confirm.
   const onDiscard = (id: string) => setPendingDiscard(id);
 
-  // Only the live match registrations belong here: a SQUAD forming, a solo PLAYER active, or either
-  // once auto-locked. FRANCHISE proposals (PENDING/APPROVED) live on the admin Franchises page, and
-  // discarded (REJECTED) registrations drop off entirely.
+  // Only live MATCH registrations belong here: a SQUAD forming, a solo PLAYER active, or either once
+  // auto-locked — always tied to a specific fixture. FRANCHISE proposals (PENDING/APPROVED) live on
+  // the admin Franchises page, AUCTION pool entries on the Auction page, general website sign-ups are
+  // no longer surfaced, and discarded (REJECTED) registrations drop off entirely.
   const items = (data?.items ?? []).filter(
-    (r) => r.type !== "FRANCHISE" && ["FORMING", "ACTIVE", "LOCKED"].includes(r.status),
+    (r) =>
+      (r.type === "PLAYER" || r.type === "SQUAD") &&
+      !!r.matchId &&
+      ["FORMING", "ACTIVE", "LOCKED"].includes(r.status),
   );
 
   const matchById = new Map((matchesQ.data?.items ?? []).map((m) => [m.id, m] as const));
 
-  // Group by targeted match; non-match sign-ups fall into the general bucket.
+  // Group by targeted match, soonest fixture first.
   const matchGroups = new Map<string, RegistrationView[]>();
-  const general: RegistrationView[] = [];
   for (const r of items) {
-    if (r.matchId) {
-      const arr = matchGroups.get(r.matchId);
-      if (arr) arr.push(r);
-      else matchGroups.set(r.matchId, [r]);
-    } else {
-      general.push(r);
-    }
+    const arr = matchGroups.get(r.matchId!);
+    if (arr) arr.push(r);
+    else matchGroups.set(r.matchId!, [r]);
   }
 
   const matchSections = Array.from(matchGroups.entries())
@@ -243,7 +242,7 @@ export function RegistrationsScreen() {
 
   return (
     <div>
-      <ScreenHeader eyebrow="Registered players" title="REGISTRATIONS" />
+      <ScreenHeader eyebrow="Match sign-ups" title="REGISTRATIONS" />
 
       <div
         style={{
@@ -260,7 +259,6 @@ export function RegistrationsScreen() {
         <div style={{ fontFamily: FONT.mono, fontSize: 12, letterSpacing: ".1em", color: SQ.mute }}>
           {items.length} REGISTERED · {TAB_LABEL[tab]}
           {matchSections.length > 0 ? ` · ${matchSections.length} MATCH${matchSections.length > 1 ? "ES" : ""}` : ""}
-          {general.length > 0 ? ` · ${general.length} GENERAL` : ""}
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           {(["ALL", "PLAYER", "SQUAD"] as const).map((t) => (
@@ -295,6 +293,10 @@ export function RegistrationsScreen() {
         <Link href="/admin/franchises" style={{ color: SQ.ember, textDecoration: "none" }}>
           Franchises
         </Link>{" "}
+        page; auction pool entries on the{" "}
+        <Link href="/admin/auction" style={{ color: SQ.ember, textDecoration: "none" }}>
+          Auction
+        </Link>{" "}
         page.
       </div>
 
@@ -306,11 +308,11 @@ export function RegistrationsScreen() {
             ? "Couldn't load registrations (admin sign-in required)."
             : `No live ${
                 tab === "PLAYER" ? "solo player " : tab === "SQUAD" ? "squad " : ""
-              }registrations.`}
+              }match registrations.`}
         </StateNote>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 30 }}>
-          {/* One section per targeted match / announcement, soonest first. */}
+          {/* One section per targeted match, soonest first. */}
           {matchSections.map(({ matchId, regs, match }) => {
             const fixture = match
               ? match.participantTags.length
@@ -365,48 +367,6 @@ export function RegistrationsScreen() {
               </section>
             );
           })}
-
-          {/* Non-match "website / general" sign-ups — clearly separated + highlighted. */}
-          {general.length > 0 ? (
-            <section
-              style={{
-                border: `1px solid ${SQ.hairline}`,
-                borderLeft: `3px solid ${SQ.amber}`,
-                background: "rgba(181,131,26,.06)",
-                borderRadius: 9,
-                padding: 18,
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "baseline",
-                  flexWrap: "wrap",
-                  gap: 12,
-                  marginBottom: 14,
-                }}
-              >
-                <span style={{ fontFamily: FONT.display, fontSize: 16, letterSpacing: ".01em" }}>
-                  Website · General
-                </span>
-                <span style={{ fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".08em", color: SQ.mute }}>
-                  Not tied to a match — open / general sign-ups
-                </span>
-                <span
-                  style={{
-                    marginLeft: "auto",
-                    fontFamily: FONT.mono,
-                    fontSize: 10,
-                    letterSpacing: ".1em",
-                    color: SQ.faint,
-                  }}
-                >
-                  {general.length} REGISTERED
-                </span>
-              </div>
-              <div style={gridStyle}>{general.map(renderCard)}</div>
-            </section>
-          ) : null}
         </div>
       )}
 

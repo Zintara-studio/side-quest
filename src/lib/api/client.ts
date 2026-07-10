@@ -17,9 +17,47 @@ if (process.env.NODE_ENV === "production" && !process.env.NEXT_PUBLIC_API_URL) {
     "NEXT_PUBLIC_API_URL must be set for a production build (e.g. https://api.your-domain.com/v1).",
   );
 }
+if (process.env.NEXT_PUBLIC_API_URL) {
+  let parsed: URL;
+  try {
+    parsed = new URL(process.env.NEXT_PUBLIC_API_URL);
+  } catch {
+    throw new Error(
+      `NEXT_PUBLIC_API_URL is not a valid URL: "${process.env.NEXT_PUBLIC_API_URL}" (e.g. https://api.your-domain.com/v1).`,
+    );
+  }
+  // Require https in production builds, except for localhost (local prod-mode smoke tests).
+  const isLocalhost = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
+  if (process.env.NODE_ENV === "production" && parsed.protocol !== "https:" && !isLocalhost) {
+    throw new Error(
+      `NEXT_PUBLIC_API_URL must use https in a production build (got "${parsed.protocol}//"); http is only allowed for localhost.`,
+    );
+  }
+}
 
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080/v1";
+
+/**
+ * Build a WebSocket URL under the API. Maps http→ws / https→wss and keeps the full API base INCLUDING
+ * the /v1 context path (the WS endpoints are registered under it, e.g. /v1/ws/live/auctions/{id}), then
+ * appends `path`. Pass the servlet-relative path (e.g. "/ws/live/auctions/{id}?token=...").
+ */
+export function wsUrl(path: string): string {
+  const base = API_BASE_URL.replace(/^http/i, "ws");
+  return `${base}${path.startsWith("/") ? "" : "/"}${path}`;
+}
+
+/**
+ * Resolve a stored media reference to a browser-loadable URL. Uploaded images are stored as
+ * {@code /media/{id}} relative to the API's context path, so they must be served from the API origin
+ * (not the frontend). Absolute http(s) urls and data URLs are returned unchanged.
+ */
+export function mediaSrc(url?: string | null): string | undefined {
+  if (!url) return undefined;
+  if (/^(https?:|data:)/i.test(url)) return url;
+  return `${API_BASE_URL}${url.startsWith("/") ? "" : "/"}${url}`;
+}
 
 export const api = axios.create({
   baseURL: API_BASE_URL,

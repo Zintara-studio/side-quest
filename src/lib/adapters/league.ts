@@ -59,13 +59,26 @@ export function shortDate(iso?: string): string {
   return `${pad2(d.getDate())} ${MONTHS[d.getMonth()]}`;
 }
 
-export function adaptGames(api: GameSummary[]): GameCard[] {
+/** ISO-8601 → "HH:MM" (24h, local time; deterministic — no locale string). Empty on invalid input. */
+export function shortTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+export function adaptGames(
+  api: GameSummary[],
+): (GameCard & { raw: string; pointsPerKill: number; placementPoints: string; standingsWeight: number })[] {
   return api.map((g) => ({
     name: g.name.toUpperCase(),
+    raw: g.name, // exact catalog name, for linking to the match history filtered by this game
     players: 0, // backend GameSummary has no per-game player count
     pop: g.popularity,
     next: g.enabled ? "LIVE" : NA, // no matchday date on GameSummary; surface whether the title is live
     format: g.format,
+    pointsPerKill: g.pointsPerKill,
+    placementPoints: g.placementPoints,
+    standingsWeight: g.standingsWeight,
   }));
 }
 
@@ -96,9 +109,7 @@ export function adaptUpcoming(api: MatchSummary[]): UpcomingItem[] {
   return api.map((m) => {
     const d = new Date(m.scheduledAt);
     const valid = !Number.isNaN(d.getTime());
-    const time = valid
-      ? `${pad2(d.getHours())}:${pad2(d.getMinutes())}`
-      : "";
+    const time = shortTime(m.scheduledAt);
     return {
       id: m.id,
       day: valid ? pad2(d.getDate()) : NA,
@@ -109,7 +120,7 @@ export function adaptUpcoming(api: MatchSummary[]): UpcomingItem[] {
   });
 }
 
-export function adaptPlayers(api: PlayerSummary[]): (PlayerRow & { id: string })[] {
+export function adaptPlayers(api: PlayerSummary[]): (PlayerRow & { id: string; avatar?: string })[] {
   return api.map((p, i) => ({
     id: p.id,
     rank: pad2(i + 1),
@@ -118,6 +129,7 @@ export function adaptPlayers(api: PlayerSummary[]): (PlayerRow & { id: string })
     gp: 0,
     pts: p.points,
     tags: p.region ?? NA,
+    avatar: p.avatarUrl,
   }));
 }
 

@@ -17,7 +17,12 @@ interface AuthContextValue {
   hydrated: boolean;
   /** Resolves to the signed-in user's role (e.g. "ADMIN") so callers can route accordingly. */
   login: (body: LoginRequest) => Promise<string>;
-  signup: (body: RegisterRequest) => Promise<string>;
+  /** Registers the account; no session is issued until the email is verified. */
+  signup: (body: RegisterRequest) => Promise<{ verificationRequired: boolean; email: string }>;
+  /** Confirms the email with its OTP, establishes the session and returns the role. */
+  verifyEmail: (email: string, code: string) => Promise<string>;
+  /** Signs in with a Google id_token (verified server-side) and returns the role. */
+  googleLogin: (idToken: string) => Promise<string>;
   logout: () => Promise<void>;
 }
 
@@ -69,7 +74,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signup = async (body: RegisterRequest) => {
-    const auth = await authApi.register(body);
+    // No session is issued at registration — the account must verify its email first.
+    const res = await authApi.register(body);
+    return { verificationRequired: res.verificationRequired, email: res.email };
+  };
+
+  const verifyEmail = async (email: string, code: string) => {
+    const auth = await authApi.verifyEmail({ email, code });
+    setSession(auth);
+    try {
+      setUser(await authApi.me());
+    } catch {
+      /* player id resolves on next load */
+    }
+    return auth.user.role;
+  };
+
+  const googleLogin = async (idToken: string) => {
+    const auth = await authApi.google(idToken);
     setSession(auth);
     try {
       setUser(await authApi.me());
@@ -97,6 +119,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     hydrated: mounted ? hydrated : false,
     login,
     signup,
+    verifyEmail,
+    googleLogin,
     logout,
   };
 

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { SQ, FONT } from "../tokens";
 import { LeagueTitle } from "../league-title";
 import { StateNote } from "../state-note";
+import { Avatar } from "../avatar";
 import { usePlayers, useCurrentSeason } from "@/lib/query/hooks";
 import { adaptPlayers } from "@/lib/adapters/league";
 
@@ -178,15 +179,7 @@ export function PlayersScreen() {
                   {p.rank}
                 </div>
                 <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 11 }}>
-                  <div
-                    style={{
-                      width: 28,
-                      height: 28,
-                      borderRadius: "50%",
-                      background: SQ.avatar,
-                      border: `1px solid ${SQ.avatarBorder}`,
-                    }}
-                  />
+                  <Avatar url={p.avatar} alt={p.name} size={28} />
                   <span style={{ fontWeight: 600, fontSize: 14.5 }}>{p.name}</span>
                 </div>
                 <div style={{ width: 160, fontFamily: FONT.mono, fontSize: 12, color: SQ.faint }}>

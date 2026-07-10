@@ -15,6 +15,7 @@ import {
   franchisesApi,
   gamesApi,
   matchesApi,
+  mediaApi,
   notificationsApi,
   playersApi,
   registrationsApi,
@@ -29,6 +30,7 @@ import {
 import type {
   ApplyRequest,
   CreateAnnouncementRequest,
+  UpdateAnnouncementRequest,
   CreateDisputeRequest,
   CreateFranchiseRequest,
   CreateMatchRequest,
@@ -43,7 +45,9 @@ import type {
   ResolveDisputeRequest,
   StartSeasonRequest,
   UpdateAuctionRequest,
+  UpdateBrandingRequest,
   UpdateGameRequest,
+  UpdateProfileRequest,
   UpdateSettingsRequest,
 } from "@/lib/api/types";
 
@@ -132,6 +136,42 @@ export const useUpdatePlayerStatus = () => {
   });
 };
 
+/** Owner/admin edits a player's profile (contact fields, privacy, per-game skill/handle). */
+export const useUpdateProfile = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: UpdateProfileRequest }) =>
+      playersApi.updateProfile(id, body),
+    onSuccess: (updated, v) => {
+      qc.setQueryData(qk.player(v.id), updated);
+      qc.invalidateQueries({ queryKey: ["players"] });
+      qc.invalidateQueries({ queryKey: qk.playerUsernames(v.id) });
+      // The edited player may appear on a franchise roster (contact fields / avatar).
+      qc.invalidateQueries({ queryKey: ["franchises"] });
+    },
+  });
+};
+
+/** Upload a small image (base64) → returns its serving url. No cache impact on its own. */
+export const useUploadMedia = () =>
+  useMutation({
+    mutationFn: ({ data, kind }: { data: string; kind: "avatar" | "logo" | "banner" }) =>
+      mediaApi.upload(data, kind),
+  });
+
+/** Franchise owner/admin updates the franchise logo/banner. */
+export const useUpdateFranchiseBranding = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: UpdateBrandingRequest }) =>
+      franchisesApi.updateBranding(id, body),
+    onSuccess: (updated, v) => {
+      qc.setQueryData(qk.franchise(v.id), updated);
+      qc.invalidateQueries({ queryKey: ["franchises"] });
+    },
+  });
+};
+
 // ---- franchises ------------------------------------------------------------
 
 export const useFranchises = (params?: FranchiseListParams) =>
@@ -162,6 +202,16 @@ export const useFranchiseMatches = (id: string | undefined) =>
     queryFn: () => franchisesApi.matches(id!),
     enabled: !!id,
   });
+
+/** Owner/manager/admin sets a roster player's franchise-private designation tags. */
+export const useSetRosterTags = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, playerId, tags }: { id: string; playerId: string; tags: string[] }) =>
+      franchisesApi.setRosterTags(id, playerId, tags),
+    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: qk.franchiseRoster(v.id) }),
+  });
+};
 
 const invalidateFranchises = (qc: ReturnType<typeof useQueryClient>) => {
   qc.invalidateQueries({ queryKey: ["franchises"] });
@@ -337,6 +387,98 @@ export const useCreateMatch = () => {
   });
 };
 
+// ---- admin match lifecycle (start / end / reschedule / delete) ----
+
+const afterMatchTransition = (qc: ReturnType<typeof useQueryClient>, id: string) => {
+  qc.invalidateQueries({ queryKey: ["matches"] });
+  qc.invalidateQueries({ queryKey: qk.match(id) });
+  qc.invalidateQueries({ queryKey: ["matches", "my-rooms"] });
+  qc.invalidateQueries({ queryKey: ["matches", id, "room"] });
+};
+
+export const useStartMatch = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, roomId, venue }: { id: string; roomId?: string; venue?: string }) =>
+      matchesApi.start(id, { roomId, venue }),
+    onSuccess: (_d, v) => afterMatchTransition(qc, v.id),
+  });
+};
+
+export const useEndMatch = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => matchesApi.end(id),
+    onSuccess: (_d, id) => afterMatchTransition(qc, id),
+  });
+};
+
+export const useRescheduleMatch = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, scheduledAt }: { id: string; scheduledAt: string }) =>
+      matchesApi.reschedule(id, scheduledAt),
+    onSuccess: (_d, v) => afterMatchTransition(qc, v.id),
+  });
+};
+
+export const useDeleteMatch = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => matchesApi.remove(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["matches"] }),
+  });
+};
+
+/** Void a fixture (status → CANCELLED). Keeps the record; a completed match's points drop out. */
+export const useVoidMatch = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => matchesApi.update(id, { status: "CANCELLED" }),
+    onSuccess: (_d, id) => {
+      afterMatchTransition(qc, id);
+      // Voiding a completed match recomputes the standings + leaderboards.
+      qc.invalidateQueries({ queryKey: ["standings"] });
+      qc.invalidateQueries({ queryKey: ["players"] });
+      qc.invalidateQueries({ queryKey: ["franchises"] });
+    },
+  });
+};
+
+// ---- match room (participant-only, polled while live) ----
+
+/** The current user's live match rooms, for the home card. Polls modestly so a going-live match appears. */
+export const useMyMatchRooms = (enabled = true) =>
+  useQuery({
+    queryKey: ["matches", "my-rooms"],
+    queryFn: () => matchesApi.myRooms(),
+    enabled,
+    refetchInterval: enabled ? 30_000 : false,
+    refetchOnWindowFocus: true,
+  });
+
+/**
+ * The participant-only match room. Polls fast (4s) while the room is live; stops once it isn't (or on a
+ * 403/404 for non-participants). `enabled` gates it to authenticated + live contexts.
+ */
+export const useMatchRoom = (id: string | undefined, enabled = true) =>
+  useQuery({
+    queryKey: ["matches", id ?? "", "room"],
+    queryFn: () => matchesApi.room(id!),
+    enabled: !!id && enabled,
+    retry: false, // a 403/404 (non-participant / gone) shouldn't be retried
+    refetchInterval: (q) => (q.state.data?.live ? 4_000 : false),
+    refetchOnWindowFocus: true,
+  });
+
+export const usePostMatchMessage = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: string }) => matchesApi.postMessage(id, body),
+    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ["matches", v.id, "room"] }),
+  });
+};
+
 export const useMatchLeaderboard = (id: string | undefined) =>
   useQuery({
     queryKey: qk.matchLeaderboard(id ?? ""),
@@ -396,6 +538,28 @@ export const useAnnouncements = (params?: AnnouncementListParams) =>
     staleTime: STALE_SEMI,
     placeholderData: keepPreviousData,
   });
+
+/** Cursor-paginated announcements (load-more), mirroring useMatchesInfinite. */
+export const useAnnouncementsInfinite = (params?: AnnouncementListParams) =>
+  useInfiniteQuery({
+    queryKey: [...qk.announcements(params), "infinite"],
+    queryFn: ({ pageParam }) =>
+      announcementsApi.list({ ...params, cursor: pageParam as string | undefined }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+    staleTime: STALE_SEMI,
+    placeholderData: keepPreviousData,
+  });
+
+/** Admin: edit an announcement's content (title/body/category). */
+export const useUpdateAnnouncement = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: UpdateAnnouncementRequest }) =>
+      announcementsApi.update(id, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["announcements"] }),
+  });
+};
 
 export const useAnnouncement = (id: string | undefined) =>
   useQuery({
@@ -494,6 +658,30 @@ export const useRejectRegistration = () => {
     mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
       registrationsApi.reject(id, reason),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["registrations"] }),
+  });
+};
+
+/** Player: withdraw your own registration (solo/squad/auction). Frees you to join another team. */
+export const useCancelRegistration = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => registrationsApi.cancel(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["registrations"] });
+      qc.invalidateQueries({ queryKey: ["notifications"] });
+    },
+  });
+};
+
+/** Player: leave a FORMING squad you accepted. */
+export const useLeaveSquad = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (inviteId: string) => registrationsApi.leaveSquad(inviteId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["registrations"] });
+      qc.invalidateQueries({ queryKey: ["notifications"] });
+    },
   });
 };
 
@@ -724,6 +912,17 @@ function useAuctionAction(fn: (id: string) => Promise<AuctionView>) {
   return useMutation({ mutationFn: (id: string) => fn(id), onSuccess: (v) => applyAuction(qc, v) });
 }
 
+/** Lock pool also auto-closes the open AUCTION registration call server-side — refresh both feeds. */
+export const useLockPool = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => auctionsApi.lockPool(id),
+    onSuccess: (v) => {
+      applyAuction(qc, v);
+      qc.invalidateQueries({ queryKey: ["announcements"] });
+    },
+  });
+};
 export const useOpenHall = () => useAuctionAction(auctionsApi.openHall);
 export const useJoinAuction = () => useAuctionAction(auctionsApi.join);
 export const useStartAuction = () => useAuctionAction(auctionsApi.start);
@@ -732,6 +931,7 @@ export const useResumeAuction = () => useAuctionAction(auctionsApi.resume);
 export const useFinalizeLot = () => useAuctionAction(auctionsApi.finalize);
 export const useUnsoldLot = () => useAuctionAction(auctionsApi.unsold);
 export const useCompleteAuction = () => useAuctionAction(auctionsApi.complete);
+export const useCancelAuction = () => useAuctionAction(auctionsApi.cancel);
 
 /** Admin reschedules the auction's open time (DRAFT/LOBBY). */
 export const useRescheduleAuction = () => {

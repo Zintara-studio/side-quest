@@ -5,6 +5,8 @@ import Link from "next/link";
 import { SQ, FONT } from "../tokens";
 import { StateNote } from "../state-note";
 import { Modal } from "../modal";
+import { Avatar } from "../avatar";
+import { ProfileEditor } from "./profile-editor";
 import {
   usePlayer,
   usePlayerMatches,
@@ -112,14 +114,19 @@ function segBtn(selected: boolean) {
 }
 
 export function PlayerScreen({ id, base = "" }: { id?: string; base?: string }) {
-  const pq = usePlayer(id);
-  const matchesQ = usePlayerMatches(id);
-  const usernamesQ = usePlayerUsernames(id);
+  // Own-profile detection: only the signed-in owner sees the discreet report/appeal tools. When no id is
+  // supplied (the /player route), a signed-in user sees their own profile.
+  const { playerId, isAdmin } = useAuth();
+  const effectiveId = id ?? playerId ?? undefined;
+
+  const pq = usePlayer(effectiveId);
+  const matchesQ = usePlayerMatches(effectiveId);
+  const usernamesQ = usePlayerUsernames(effectiveId);
   const p = pq.data;
 
-  // Own-profile detection: only the signed-in owner sees the discreet report/appeal tools.
-  const { playerId } = useAuth();
-  const isOwner = !!id && !!playerId && playerId === id;
+  const isOwner = !!effectiveId && !!playerId && playerId === effectiveId;
+  const canEdit = !!p && (isOwner || isAdmin);
+  const [editing, setEditing] = useState(false);
   const myDisputesQ = useMyDisputes(isOwner);
   const createDispute = useCreateDispute();
 
@@ -178,7 +185,7 @@ export function PlayerScreen({ id, base = "" }: { id?: string; base?: string }) 
         ◂ PLAYERS
       </Link>
 
-      {!id ? (
+      {!effectiveId ? (
         <div style={{ marginTop: 20 }}>
           <StateNote>Select a player from the directory.</StateNote>
         </div>
@@ -203,15 +210,7 @@ export function PlayerScreen({ id, base = "" }: { id?: string; base?: string }) 
               borderBottom: `1px solid ${SQ.hairline}`,
             }}
           >
-            <div
-              style={{
-                width: 96,
-                height: 96,
-                borderRadius: "50%",
-                background: SQ.avatarGrad,
-                border: `1px solid ${SQ.inputBorder}`,
-              }}
-            />
+            <Avatar url={p.avatarUrl} alt={p.gamerTag} size={96} />
             <div style={{ flex: 1, minWidth: 220 }}>
               <div style={{ fontFamily: FONT.mono, fontSize: 11, letterSpacing: ".16em", color: SQ.red }}>
                 {p.franchise ? `${p.franchise.tag} · ` : ""}
@@ -234,31 +233,72 @@ export function PlayerScreen({ id, base = "" }: { id?: string; base?: string }) 
                 {p.user?.name ?? p.gamerTag}
                 {p.region ? ` · ${p.region}` : ""}
               </div>
+              {p.realName || p.phone || p.contactEmail ? (
+                <div
+                  style={{
+                    marginTop: 10,
+                    display: "flex",
+                    gap: 16,
+                    flexWrap: "wrap",
+                    fontSize: 12.5,
+                    color: SQ.faint,
+                  }}
+                >
+                  {p.realName ? <span>{p.realName}</span> : null}
+                  {p.phone ? <span>☎ {p.phone}</span> : null}
+                  {p.contactEmail ? <span>✉ {p.contactEmail}</span> : null}
+                </div>
+              ) : null}
               {p.bio ? (
                 <div style={{ fontSize: 13.5, color: SQ.faint, marginTop: 10, lineHeight: 1.6, maxWidth: 560 }}>
                   {p.bio}
                 </div>
               ) : null}
             </div>
-            {p.franchise ? (
-              <Link
-                href={`${base}/franchise/${p.franchise.id}`}
-                style={{
-                  fontFamily: FONT.mono,
-                  fontSize: 11,
-                  letterSpacing: ".14em",
-                  textTransform: "uppercase",
-                  color: SQ.ink,
-                  border: `1px solid ${SQ.inputBorder}`,
-                  padding: "11px 16px",
-                  borderRadius: 5,
-                  textDecoration: "none",
-                }}
-              >
-                View franchise ▸
-              </Link>
-            ) : null}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-end" }}>
+              {canEdit ? (
+                <button
+                  type="button"
+                  onClick={() => setEditing(true)}
+                  style={{
+                    fontFamily: FONT.mono,
+                    fontSize: 11,
+                    letterSpacing: ".14em",
+                    textTransform: "uppercase",
+                    fontWeight: 700,
+                    color: SQ.league,
+                    background: SQ.red,
+                    border: "none",
+                    padding: "11px 16px",
+                    borderRadius: 5,
+                    cursor: "pointer",
+                  }}
+                >
+                  Edit profile
+                </button>
+              ) : null}
+              {p.franchise ? (
+                <Link
+                  href={`${base}/franchise/${p.franchise.id}`}
+                  style={{
+                    fontFamily: FONT.mono,
+                    fontSize: 11,
+                    letterSpacing: ".14em",
+                    textTransform: "uppercase",
+                    color: SQ.ink,
+                    border: `1px solid ${SQ.inputBorder}`,
+                    padding: "11px 16px",
+                    borderRadius: 5,
+                    textDecoration: "none",
+                  }}
+                >
+                  View franchise ▸
+                </Link>
+              ) : null}
+            </div>
           </div>
+
+          {editing && p ? <ProfileEditor player={p} onClose={() => setEditing(false)} /> : null}
 
           <div
             style={{

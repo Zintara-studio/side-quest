@@ -1,18 +1,20 @@
 "use client";
 
-import { useEffect, type ReactNode, type CSSProperties } from "react";
+import { useEffect, useState, type ReactNode, type CSSProperties } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/lib/theme";
 import { useAuth } from "@/lib/auth/context";
 import { useActiveAuction, useAdminOverview, useCurrentSeason, useRegistrations } from "@/lib/query/hooks";
+import { ConfirmModal } from "@/components/sidequest/confirm-modal";
+import { NotificationBell } from "@/components/sidequest/notification-bell";
 import { SQ, FONT } from "./tokens";
 
 interface NavItem {
   href: string;
   label: string;
-  badgeKey?: "registrations" | "franchiseProposals" | "openDisputes" | "resultsToEnter";
+  badgeKey?: "franchiseProposals" | "openDisputes" | "resultsToEnter";
   /** Renders a live-pulse "LIVE" pill instead of a numeric badge while the auction is running. */
   liveKey?: "auction";
 }
@@ -28,7 +30,9 @@ const navGroups: NavGroup[] = [
       { href: "/admin", label: "Overview" },
       { href: "/admin/matches", label: "Matches", badgeKey: "resultsToEnter" },
       { href: "/admin/auction", label: "Auction", liveKey: "auction" },
-      { href: "/admin/registrations", label: "Registrations", badgeKey: "registrations" },
+      // Match sign-ups (solo/squad per fixture). No queue badge: match registrations are live from
+      // creation — there is no pending-review state since the approval system was removed.
+      { href: "/admin/registrations", label: "Registrations" },
       { href: "/admin/disputes", label: "Disputes", badgeKey: "openDisputes" },
     ],
   },
@@ -89,11 +93,9 @@ export function AdminShell({ children, fontClass }: { children: ReactNode; fontC
   }, [hydrated, isAdmin, router, pathname]);
 
   const seasonQ = useCurrentSeason();
+  // Still needed for the Franchises nav badge: pending FRANCHISE proposals awaiting admin review.
   const pendingQ = useRegistrations({ status: "PENDING", limit: 100 }, isAdmin);
   const pendingItems = isAdmin ? pendingQ.data?.items ?? [] : [];
-  // Registrations badge = solo + squad only; FRANCHISE proposals are surfaced
-  // separately on the Franchises nav item.
-  const pendingCount = pendingItems.filter((r) => r.type !== "FRANCHISE").length;
   const franchiseProposalCount = pendingItems.filter((r) => r.type === "FRANCHISE").length;
 
   const ov = useAdminOverview(isAdmin);
@@ -102,6 +104,8 @@ export function AdminShell({ children, fontClass }: { children: ReactNode; fontC
 
   const activeAuctionQ = useActiveAuction(isAdmin);
   const auctionLive = isAdmin && activeAuctionQ.data?.status === "LIVE";
+
+  const [confirmOut, setConfirmOut] = useState(false);
 
   if (!hydrated) return <FullScreen>Checking access…</FullScreen>;
   if (!isAdmin) return <FullScreen>Redirecting to sign in…</FullScreen>;
@@ -193,15 +197,13 @@ export function AdminShell({ children, fontClass }: { children: ReactNode; fontC
               {grp.items.map((it) => {
                 const active = isActive(it.href);
                 const badgeCount =
-                  it.badgeKey === "registrations"
-                    ? pendingCount
-                    : it.badgeKey === "franchiseProposals"
-                      ? franchiseProposalCount
-                      : it.badgeKey === "openDisputes"
-                        ? openDisputesCount
-                        : it.badgeKey === "resultsToEnter"
-                          ? resultsToEnterCount
-                          : 0;
+                  it.badgeKey === "franchiseProposals"
+                    ? franchiseProposalCount
+                    : it.badgeKey === "openDisputes"
+                      ? openDisputesCount
+                      : it.badgeKey === "resultsToEnter"
+                        ? resultsToEnterCount
+                        : 0;
                 const badge = badgeCount > 0 ? badgeCount : null;
                 // Softer amber-toned signals (franchise proposals, matches awaiting result)
                 // vs the primary red queue badge (registrations, open disputes).
@@ -332,7 +334,7 @@ export function AdminShell({ children, fontClass }: { children: ReactNode; fontC
           </Link>
           <button
             type="button"
-            onClick={onLogout}
+            onClick={() => setConfirmOut(true)}
             style={{
               fontFamily: FONT.mono,
               fontSize: 10,
@@ -350,6 +352,18 @@ export function AdminShell({ children, fontClass }: { children: ReactNode; fontC
           </button>
         </div>
       </aside>
+
+      <ConfirmModal
+        open={confirmOut}
+        title="Sign out?"
+        message="You'll be returned to the sign-in screen and need to sign in again to access the admin console."
+        confirmLabel="Sign out"
+        onConfirm={() => {
+          setConfirmOut(false);
+          onLogout();
+        }}
+        onClose={() => setConfirmOut(false)}
+      />
 
       {/* ===== MAIN ===== */}
       <div style={{ flex: "1 1 560px", minWidth: 0, display: "flex", flexDirection: "column" }}>
@@ -372,6 +386,7 @@ export function AdminShell({ children, fontClass }: { children: ReactNode; fontC
         >
           <div style={{ ...monoTiny, color: SQ.mute }}>{seasonLabel}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <NotificationBell href="/admin/notifications" />
             <ThemeToggle />
             <Link
               href="/admin/profile"

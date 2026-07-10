@@ -6,8 +6,9 @@ import { SQ, FONT } from "./tokens";
 import { useAuth } from "@/lib/auth/context";
 import { useUnreadCount } from "@/lib/query/hooks";
 
-/** Nav bell with an unread badge — only shown to signed-in users. */
-export function NotificationBell() {
+/** Nav bell with an unread badge — only shown to signed-in users. `href` lets the admin shell point it
+ *  at its own notifications route (defaults to the public one). */
+export function NotificationBell({ href = "/notifications" }: { href?: string }) {
   const { isAuthenticated } = useAuth();
   const { data } = useUnreadCount(isAuthenticated);
 
@@ -16,7 +17,7 @@ export function NotificationBell() {
 
   return (
     <Link
-      href="/notifications"
+      href={href}
       aria-label="Notifications"
       title="Notifications"
       style={{

@@ -8,6 +8,7 @@ import { TableScroll } from "../table-scroll";
 import { StateNote } from "@/components/sidequest/state-note";
 import { SearchableSelect } from "@/components/sidequest/searchable-select";
 import {
+  useGames,
   useMatches,
   useMatch,
   useMatchRounds,
@@ -15,6 +16,7 @@ import {
   useMatchPlayers,
 } from "@/lib/query/hooks";
 import type {
+  GameSummary,
   GameType,
   MatchDetail,
   MatchPlayerView,
@@ -189,6 +191,23 @@ export function ResultScreen() {
   const ffaPlayers = matchPlayersQ.data ?? [];
   const ladder = parseLadder(placementCsv);
   const entrantCount = isFfa ? ffaPlayers.length : participants.length;
+
+  // The game's scoring defaults — the guideline that seeded this match's snapshot at creation.
+  const gamesQ = useGames();
+  const gameDefaults = gamesQ.data?.find((g) => g.id === matchQ.data?.game?.id);
+
+  // Resolve a staged row's entrant to a display name (franchise "Name TAG" or FFA gamer tag).
+  const entrantName = (row: RoundResultEntry): string => {
+    if (row.franchiseId) {
+      const p = participants.find((x) => x.franchiseId === row.franchiseId);
+      return p ? `${p.name} · ${p.tag}` : row.franchiseId;
+    }
+    if (row.playerId) {
+      const p = ffaPlayers.find((x) => x.playerId === row.playerId);
+      return p?.gamerTag ?? row.playerId;
+    }
+    return "—";
+  };
 
   // Genre drives presentation only (the placement flow vs the streamlined single-result card). The
   // publish payload for BR/PARTY is unchanged; single-result builds one round over the same request.
@@ -550,10 +569,19 @@ export function ResultScreen() {
               placementCsv={placementCsv}
               onKill={setPointsPerKill}
               onPlacement={setPlacementCsv}
+              gameDefaults={gameDefaults}
             />
 
             {rounds.length > 0 ? <SectionHeader>Staged rounds</SectionHeader> : null}
-            <StagedRounds rounds={rounds} onEdit={editFfaRound} onRemove={removeRound} entrantWord="entries" />
+            <StagedRounds
+              rounds={rounds}
+              onEdit={editFfaRound}
+              onRemove={removeRound}
+              entrantWord="entries"
+              entrantName={entrantName}
+              ladder={ladder}
+              pointsPerKill={pointsPerKill}
+            />
 
             <SectionHeader>Round entry</SectionHeader>
             <RoundMetaInputs
@@ -595,6 +623,7 @@ export function ResultScreen() {
             placementCsv={placementCsv}
             onKill={setPointsPerKill}
             onPlacement={setPlacementCsv}
+            gameDefaults={gameDefaults}
           >
             <div style={{ display: "flex", gap: 6, background: SQ.inset, border: `1px solid ${SQ.hairline}`, borderRadius: 7, padding: 5 }}>
               {(["player", "team"] as const).map((m) => (
@@ -623,7 +652,15 @@ export function ResultScreen() {
           </ScoringWeightsBar>
 
           {rounds.length > 0 ? <SectionHeader>Staged rounds</SectionHeader> : null}
-          <StagedRounds rounds={rounds} onEdit={editRound} onRemove={removeRound} entrantWord="teams" />
+          <StagedRounds
+            rounds={rounds}
+            onEdit={editRound}
+            onRemove={removeRound}
+            entrantWord="teams"
+            entrantName={entrantName}
+            ladder={ladder}
+            pointsPerKill={pointsPerKill}
+          />
 
           <SectionHeader>Round entry</SectionHeader>
           <RoundMetaInputs
@@ -782,26 +819,30 @@ function SectionHeader({ children }: { children: ReactNode }) {
 
 // Scoring weights panel (points/kill + placement CSV) shared by the franchise and FFA branches.
 // The franchise branch passes its player/team detail toggle as `children` (rendered after the fields).
+// The values are the match's scoring snapshot (seeded from the game's defaults at creation); edits are
+// a per-match override persisted when the result is published. `gameDefaults` powers the caption + reset.
 function ScoringWeightsBar({
   pointsPerKill,
   placementCsv,
   onKill,
   onPlacement,
+  gameDefaults,
   children,
 }: {
   pointsPerKill: number;
   placementCsv: string;
   onKill: (v: number) => void;
   onPlacement: (v: string) => void;
+  gameDefaults?: GameSummary;
   children?: ReactNode;
 }) {
+  const differsFromDefaults =
+    !!gameDefaults &&
+    (pointsPerKill !== gameDefaults.pointsPerKill ||
+      placementCsv.trim() !== gameDefaults.placementPoints);
   return (
     <div
       style={{
-        display: "flex",
-        gap: 18,
-        flexWrap: "wrap",
-        alignItems: "flex-end",
         background: SQ.panel,
         border: `1px solid ${SQ.hairline}`,
         borderRadius: 9,
@@ -809,25 +850,70 @@ function ScoringWeightsBar({
         marginBottom: 20,
       }}
     >
-      <label>
-        <div style={{ ...headCell, marginBottom: 6 }}>POINTS / KILL</div>
-        <input
-          type="number"
-          style={numInput}
-          value={pointsPerKill}
-          onChange={(e) => onKill(Number(e.target.value) || 0)}
-        />
-      </label>
-      <label style={{ flex: 1, minWidth: 220 }}>
-        <div style={{ ...headCell, marginBottom: 6 }}>PLACEMENT POINTS (BY RANK, HIGHEST FIRST)</div>
-        <input
-          style={{ ...textInput, width: "100%" }}
-          value={placementCsv}
-          onChange={(e) => onPlacement(e.target.value)}
-          placeholder="15,12,10,8,6,4,2,1"
-        />
-      </label>
-      {children}
+      <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "flex-end" }}>
+        <label>
+          <div style={{ ...headCell, marginBottom: 6 }}>POINTS / KILL</div>
+          <input
+            type="number"
+            style={numInput}
+            value={pointsPerKill}
+            onChange={(e) => onKill(Number(e.target.value) || 0)}
+          />
+        </label>
+        <label style={{ flex: 1, minWidth: 220 }}>
+          <div style={{ ...headCell, marginBottom: 6 }}>PLACEMENT POINTS (BY RANK, HIGHEST FIRST)</div>
+          <input
+            style={{ ...textInput, width: "100%" }}
+            value={placementCsv}
+            onChange={(e) => onPlacement(e.target.value)}
+            placeholder="15,12,10,8,6,4,2,1"
+          />
+        </label>
+        {children}
+      </div>
+      {gameDefaults ? (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            flexWrap: "wrap",
+            marginTop: 10,
+            fontFamily: FONT.mono,
+            fontSize: 10.5,
+            letterSpacing: ".04em",
+            color: SQ.mute,
+          }}
+        >
+          <span>
+            {gameDefaults.name} defaults: {gameDefaults.pointsPerKill} pt/kill ·{" "}
+            {gameDefaults.placementPoints ? `ladder ${gameDefaults.placementPoints}` : "kills only"}. Edits
+            here apply to THIS match only (saved on publish).
+          </span>
+          {differsFromDefaults ? (
+            <button
+              type="button"
+              onClick={() => {
+                onKill(gameDefaults.pointsPerKill);
+                onPlacement(gameDefaults.placementPoints);
+              }}
+              style={{
+                background: "transparent",
+                border: `1px solid ${SQ.inputBorder}`,
+                color: SQ.faint,
+                cursor: "pointer",
+                fontFamily: FONT.mono,
+                fontSize: 10,
+                letterSpacing: ".1em",
+                padding: "5px 10px",
+                borderRadius: 4,
+              }}
+            >
+              RESET TO GAME DEFAULTS
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -942,54 +1028,111 @@ function SingleResultCard({
 }
 
 // Shared staged-rounds list used by both the FRANCHISE ("teams") and FFA ("entries") branches;
-// `entrantWord` preserves each branch's wording for the per-round row count.
+// `entrantWord` preserves each branch's wording for the per-round row count. Each round expands
+// (VIEW) into a read-only line-up of its rows — checking what was just added is non-destructive,
+// unlike EDIT which pulls the round back into the draft.
 function StagedRounds({
   rounds,
   onEdit,
   onRemove,
   entrantWord,
+  entrantName,
+  ladder,
+  pointsPerKill,
 }: {
   rounds: RoundEntry[];
   onEdit: (r: RoundEntry) => void;
   onRemove: (roundNumber: number) => void;
   entrantWord: "teams" | "entries";
+  entrantName: (row: RoundResultEntry) => string;
+  ladder: number[];
+  pointsPerKill: number;
 }) {
+  const [open, setOpen] = useState<number | null>(null);
   if (rounds.length === 0) return null;
   return (
     <div style={{ marginBottom: 20 }}>
       <div style={{ fontFamily: FONT.mono, fontSize: 11, letterSpacing: ".14em", color: SQ.mute, marginBottom: 10 }}>
         {rounds.length} ROUND(S) STAGED
       </div>
-      {rounds.map((r) => (
-        <div
-          key={r.roundNumber}
-          style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: SQ.panel, border: `1px solid ${SQ.hairline}`, borderRadius: 7, marginBottom: 8 }}
-        >
-          <span style={{ fontFamily: FONT.display, fontSize: 15, color: SQ.ember }}>R{r.roundNumber}</span>
-          <span style={{ fontSize: 13 }}>
-            {r.mapName || "—"} {r.mode ? `· ${r.mode}` : ""}
-          </span>
-          <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 11, color: SQ.mute }}>
-            {r.rows.length} {entrantWord}
-            {r.rows.some((x) => x.players && x.players.length) ? " · per-player" : ""}
-          </span>
-          <button
-            type="button"
-            onClick={() => onEdit(r)}
-            style={{ background: "transparent", border: `1px solid ${SQ.inputBorder}`, color: SQ.faint, cursor: "pointer", fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".1em", padding: "5px 9px", borderRadius: 4 }}
+      {rounds.map((r) => {
+        const expanded = open === r.roundNumber;
+        return (
+          <div
+            key={r.roundNumber}
+            style={{ background: SQ.panel, border: `1px solid ${SQ.hairline}`, borderRadius: 7, marginBottom: 8 }}
           >
-            EDIT
-          </button>
-          <button
-            type="button"
-            onClick={() => onRemove(r.roundNumber)}
-            style={{ background: "transparent", border: "none", color: SQ.mute, cursor: "pointer", fontSize: 14 }}
-            aria-label="Remove round"
-          >
-            ×
-          </button>
-        </div>
-      ))}
+            <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px" }}>
+              <span style={{ fontFamily: FONT.display, fontSize: 15, color: SQ.ember }}>R{r.roundNumber}</span>
+              <span style={{ fontSize: 13 }}>
+                {r.mapName || "—"} {r.mode ? `· ${r.mode}` : ""}
+              </span>
+              <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 11, color: SQ.mute }}>
+                {r.rows.length} {entrantWord}
+                {r.rows.some((x) => x.players && x.players.length) ? " · per-player" : ""}
+              </span>
+              <button
+                type="button"
+                onClick={() => setOpen(expanded ? null : r.roundNumber)}
+                style={{ background: "transparent", border: `1px solid ${SQ.inputBorder}`, color: expanded ? SQ.ember : SQ.faint, cursor: "pointer", fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".1em", padding: "5px 9px", borderRadius: 4 }}
+              >
+                {expanded ? "HIDE ▴" : "VIEW ▾"}
+              </button>
+              <button
+                type="button"
+                onClick={() => onEdit(r)}
+                style={{ background: "transparent", border: `1px solid ${SQ.inputBorder}`, color: SQ.faint, cursor: "pointer", fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".1em", padding: "5px 9px", borderRadius: 4 }}
+              >
+                EDIT
+              </button>
+              <button
+                type="button"
+                onClick={() => onRemove(r.roundNumber)}
+                style={{ background: "transparent", border: "none", color: SQ.mute, cursor: "pointer", fontSize: 14 }}
+                aria-label="Remove round"
+              >
+                ×
+              </button>
+            </div>
+            {expanded ? (
+              <div style={{ borderTop: `1px solid ${SQ.hairlineSoft}`, padding: "10px 14px 12px" }}>
+                <div style={{ display: "flex", gap: 10, ...headCell, padding: "0 0 6px" }}>
+                  <span style={{ width: 42 }}>RANK</span>
+                  <span style={{ flex: 1 }}>{entrantWord === "teams" ? "TEAM" : "PLAYER"}</span>
+                  <span style={{ width: 52, textAlign: "right" }}>KILLS</span>
+                  <span style={{ width: 74, textAlign: "right" }}>PLACE PTS</span>
+                  <span style={{ width: 58, textAlign: "right" }}>TOTAL</span>
+                </div>
+                {[...r.rows]
+                  .sort((a, b) => a.rank - b.rank)
+                  .map((row, i) => {
+                    const placePts = placementForRank(ladder, row.rank);
+                    return (
+                      <div key={i} style={{ borderTop: `1px solid ${SQ.hairlineCell}`, padding: "6px 0" }}>
+                        <div style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 12.5 }}>
+                          <span style={{ width: 42, fontFamily: FONT.mono, color: SQ.ember }}>#{row.rank}</span>
+                          <span style={{ flex: 1, fontWeight: 600 }}>{entrantName(row)}</span>
+                          <span style={{ width: 52, textAlign: "right", fontFamily: FONT.mono }}>{row.kills}</span>
+                          <span style={{ width: 74, textAlign: "right", fontFamily: FONT.mono, color: SQ.faint }}>
+                            {placePts}
+                          </span>
+                          <span style={{ width: 58, textAlign: "right", fontFamily: FONT.mono, fontWeight: 700 }}>
+                            {row.kills * pointsPerKill + placePts}
+                          </span>
+                        </div>
+                        {row.players && row.players.length ? (
+                          <div style={{ fontFamily: FONT.mono, fontSize: 10.5, color: SQ.mute, margin: "3px 0 0 52px" }}>
+                            {row.players.map((p) => `${p.kills}k`).join(" · ")} (per-player)
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }

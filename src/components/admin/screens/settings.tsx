@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
+import Link from "next/link";
 import { SQ, FONT } from "../tokens";
 import { ScreenHeader } from "../screen-header";
-import { Toggle } from "../toggle";
 import { StateNote } from "@/components/sidequest/state-note";
 import { useSettings, useUpdateSettings } from "@/lib/query/hooks";
 
@@ -98,9 +98,6 @@ export function SettingsScreen() {
           <div style={cardStyle}>
             <div style={{ ...cardHeader, marginBottom: 16 }}>Season</div>
             <Row label="Current season">{s.seasonName || s.seasonId || "—"}</Row>
-            <Row label="Registration open" center>
-              <Toggle on={s.registrationOpen} />
-            </Row>
             <Row label="Registration lock (hours)" center>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <input
@@ -141,8 +138,30 @@ export function SettingsScreen() {
 
           <div style={cardStyle}>
             <div style={{ ...cardHeader, marginBottom: 16 }}>Scoring</div>
-            <Row label="Points per kill">{String(s.pointsPerKill)}</Row>
-            <Row label="Placement points">{s.placementPoints || "—"}</Row>
+            <div style={{ fontSize: 13.5, color: SQ.faint, lineHeight: 1.6 }}>
+              Scoring is now configured <strong style={{ color: SQ.ink }}>per game</strong> — each title
+              sets its own points-per-kill, placement ladder and how much it weighs toward the franchise
+              standings.
+            </div>
+            <Link
+              href="/admin/games"
+              style={{
+                display: "inline-block",
+                marginTop: 14,
+                fontFamily: FONT.mono,
+                fontSize: 10.5,
+                letterSpacing: ".1em",
+                textTransform: "uppercase",
+                fontWeight: 700,
+                color: SQ.ember,
+                border: `1px solid ${SQ.inputBorder}`,
+                padding: "9px 14px",
+                borderRadius: 5,
+                textDecoration: "none",
+              }}
+            >
+              Configure game scoring ▸
+            </Link>
             <Row label="Last updated">
               {s.updatedAt ? new Date(s.updatedAt).toLocaleDateString() : "—"}
             </Row>

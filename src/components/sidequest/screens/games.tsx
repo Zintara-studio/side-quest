@@ -16,6 +16,26 @@ const statLabel = {
   color: SQ.label,
 } as const;
 
+/** A small scoring-meta chip on a game card. */
+function ScoreChip({ label, accent }: { label: string; accent?: boolean }) {
+  return (
+    <span
+      style={{
+        fontFamily: FONT.mono,
+        fontSize: 10,
+        letterSpacing: ".04em",
+        color: accent ? SQ.ember : SQ.faint,
+        border: `1px solid ${accent ? "rgba(232,96,44,.45)" : SQ.inputBorder}`,
+        borderRadius: 5,
+        padding: "4px 8px",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
 export function GamesScreen() {
   const { data, isLoading, isError } = useGames(true);
   const games = data ? adaptGames(data) : [];
@@ -53,8 +73,8 @@ export function GamesScreen() {
         >
           {games.map((g) => (
             <Link
-              key={g.name}
-              href="/match"
+              key={g.raw}
+              href={`/match?game=${encodeURIComponent(g.raw)}`}
               style={{
                 cursor: "pointer",
                 background: SQ.panel,
@@ -90,6 +110,24 @@ export function GamesScreen() {
                 >
                   {g.name}
                 </span>
+                {/* Standings weight rides with the name — how much this title counts on the table. */}
+                <span
+                  title="Standings weight — how much this title counts toward franchise standings"
+                  style={{
+                    fontFamily: FONT.mono,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    letterSpacing: ".06em",
+                    color: g.standingsWeight !== 100 ? SQ.ember : SQ.faint,
+                    border: `1px solid ${g.standingsWeight !== 100 ? "rgba(232,96,44,.5)" : SQ.inputBorder}`,
+                    borderRadius: 9,
+                    padding: "3px 8px",
+                    marginLeft: 10,
+                    flex: "0 0 auto",
+                  }}
+                >
+                  ×{(g.standingsWeight / 100).toFixed(2)}
+                </span>
               </div>
               <div style={{ padding: 18 }}>
                 <div
@@ -122,6 +160,24 @@ export function GamesScreen() {
                     {g.format}
                   </div>
                 </div>
+
+                {/* scoring — public, so players know how each title is scored + how it weighs on the table */}
+                <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${SQ.hairlineFaint}` }}>
+                  <div style={statLabel}>SCORING</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+                    <ScoreChip label={`${g.pointsPerKill} pt/kill`} />
+                    {g.placementPoints ? (
+                      <ScoreChip label={`Placement ${g.placementPoints}`} />
+                    ) : (
+                      <ScoreChip label="Kills only" />
+                    )}
+                    <ScoreChip
+                      label={`${(g.standingsWeight / 100).toFixed(2)}× standings`}
+                      accent={g.standingsWeight !== 100}
+                    />
+                  </div>
+                </div>
+
                 <div
                   style={{
                     marginTop: 16,

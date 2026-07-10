@@ -15,8 +15,11 @@ import {
   useTopPlayers,
   useAnnouncements,
   useActiveAuction,
+  useMyMatchRooms,
 } from "@/lib/query/hooks";
+import { useAuth } from "@/lib/auth/context";
 import { adaptUpcoming, shortDate, announcementTagFor, type UpcomingItem } from "@/lib/adapters/league";
+import type { MatchSummary } from "@/lib/api/types";
 import type {
   AnnouncementView,
   AuctionView,
@@ -68,6 +71,9 @@ export function HomeScreen() {
   const seasonsQ = useSeasons();
   // Auction reads are public, so the banner shows for guests too during a live auction.
   const activeAuction = useActiveAuction().data ?? null;
+  // Live match rooms the signed-in user is part of (for the "enter the room" card).
+  const { isAuthenticated } = useAuth();
+  const myMatchRooms = useMyMatchRooms(isAuthenticated).data ?? [];
 
   const season = seasonQ.data ?? null;
   const seasons = seasonsQ.data ?? [];
@@ -134,6 +140,9 @@ export function HomeScreen() {
         franchiseCount={rows.length}
         hasAuction={!!activeAuction}
       />
+
+      {/* live match rooms the signed-in user is fielded in — the in-app entry to the match room */}
+      {myMatchRooms.length > 0 ? <LiveMatchBanner rooms={myMatchRooms} /> : null}
 
       {/* an in-progress / scheduled auction is headline news in either season state */}
       {activeAuction ? <AuctionBanner auction={activeAuction} /> : null}
@@ -241,6 +250,72 @@ function Hero({
 }
 
 // ---- auction banner --------------------------------------------------------
+
+/** "Your match is live" card — the in-app entry to the match room for a fielded/participating player. */
+function LiveMatchBanner({ rooms }: { rooms: MatchSummary[] }) {
+  const primary = rooms[0];
+  const title = primary.participantTags.length
+    ? primary.participantTags.join(" vs ")
+    : primary.game?.name ?? "Your match";
+  return (
+    <Link
+      href={`/match/${primary.id}`}
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "center",
+        gap: 14,
+        margin: "8px 0 4px",
+        padding: "16px 20px",
+        borderRadius: 10,
+        textDecoration: "none",
+        border: `1px solid ${SQ.red}`,
+        background: "linear-gradient(90deg,rgba(232,96,44,.16),transparent)",
+        color: SQ.ink,
+      }}
+    >
+      <span
+        style={{
+          fontFamily: FONT.mono,
+          fontSize: 9,
+          letterSpacing: ".14em",
+          color: SQ.red,
+          border: `1px solid ${SQ.red}`,
+          borderRadius: 999,
+          padding: "4px 10px",
+          whiteSpace: "nowrap",
+        }}
+      >
+        ● LIVE
+      </span>
+      <div style={{ flex: 1, minWidth: 200 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-.01em" }}>
+          Your match is live — {title}
+        </div>
+        <div style={{ fontFamily: FONT.mono, fontSize: 10.5, letterSpacing: ".08em", color: SQ.faint, marginTop: 5 }}>
+          {primary.game?.name ?? "Match"}
+          {rooms.length > 1 ? ` · +${rooms.length - 1} more live` : ""} · Enter the match room for the lobby code
+        </div>
+      </div>
+      <span
+        style={{
+          fontFamily: FONT.mono,
+          fontSize: 10.5,
+          letterSpacing: ".12em",
+          textTransform: "uppercase",
+          fontWeight: 700,
+          color: SQ.league,
+          background: SQ.red,
+          padding: "10px 16px",
+          borderRadius: 6,
+          whiteSpace: "nowrap",
+        }}
+      >
+        Enter the match room ▸
+      </span>
+    </Link>
+  );
+}
 
 function AuctionBanner({ auction }: { auction: AuctionView }) {
   const live = auction.status === "LIVE";

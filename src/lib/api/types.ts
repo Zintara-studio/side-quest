@@ -39,6 +39,28 @@ export interface AuthResponse {
   user: AuthUserView;
 }
 
+/** Register no longer returns a session — the account must verify its email first. */
+export interface RegisterResponse {
+  email: string;
+  verificationRequired: boolean;
+}
+
+export interface VerifyEmailRequest {
+  email: string;
+  code: string;
+}
+
+/** Email-only body for resend-verification and forgot-password. */
+export interface EmailRequest {
+  email: string;
+}
+
+export interface ResetPasswordRequest {
+  email: string;
+  code: string;
+  newPassword: string;
+}
+
 export interface MeUserView {
   id: string;
   name: string;
@@ -74,6 +96,12 @@ export interface GameSummary {
   enabled: boolean;
   popularity: number;
   gameType: GameType;
+  /** Per-game scoring config (publicly visible so players know how each title is scored). */
+  pointsPerKill: number;
+  /** Placement ladder, comma-separated highest-first; empty string = kills only. */
+  placementPoints: string;
+  /** Weight toward franchise standings, in basis points (100 = 1.00×). */
+  standingsWeight: number;
 }
 
 export interface GameMatchView {
@@ -92,6 +120,9 @@ export interface UpdateGameRequest {
   format?: string;
   popularity?: number;
   gameType?: GameType;
+  pointsPerKill?: number;
+  placementPoints?: string;
+  standingsWeight?: number;
 }
 
 // ---- players ---------------------------------------------------------------
@@ -113,6 +144,14 @@ export interface PlayerDetail {
   avatarUrl?: string;
   region?: string;
   bio?: string;
+  /** Contact fields are per-field private: null/absent for a viewer who may not see them. */
+  realName?: string;
+  phone?: string;
+  contactEmail?: string;
+  /** Visibility toggles (non-sensitive; drive the owner's edit UI). */
+  realNamePublic: boolean;
+  phonePublic: boolean;
+  contactEmailPublic: boolean;
   status: string;
   points: number;
   user: { name: string };
@@ -125,6 +164,38 @@ export interface PlayerDetail {
     kd?: number | null;
     accountLevel?: number | null;
   }[];
+}
+
+/** One per-game edit line for the profile form (mirrors the backend writer input). */
+export interface ProfileGameEntry {
+  gameId: string;
+  rating: number;
+  handle?: string;
+  handlePublic?: boolean;
+  rankTier?: string;
+  kd?: number;
+  accountLevel?: number;
+}
+
+/** Body for PATCH /players/{id}. All fields optional; only supplied fields are applied. */
+export interface UpdateProfileRequest {
+  // gamerTag is intentionally absent — the username is claimed at signup and immutable.
+  avatarUrl?: string;
+  region?: string;
+  bio?: string;
+  realName?: string;
+  phone?: string;
+  contactEmail?: string;
+  realNamePublic?: boolean;
+  phonePublic?: boolean;
+  contactEmailPublic?: boolean;
+  proficiencies?: ProfileGameEntry[];
+}
+
+/** Response from POST /media — the stored asset id and its serving url (e.g. /media/{id}). */
+export interface MediaUploadResponse {
+  id: string;
+  url: string;
 }
 
 export interface PlayerMatchView {
@@ -167,6 +238,7 @@ export interface FranchiseDetail {
   name: string;
   tag: string;
   logoUrl?: string;
+  bannerUrl?: string;
   points: number;
   rank: number;
   active: boolean;
@@ -175,6 +247,12 @@ export interface FranchiseDetail {
   manager: FranchisePerson | null;
   rosterSize: number;
   matchesPlayed: number;
+}
+
+/** Body for PATCH /franchises/{id}/branding — franchise owner or admin self-service logo/banner. */
+export interface UpdateBrandingRequest {
+  logoUrl?: string;
+  bannerUrl?: string;
 }
 
 export type FranchiseRole = "OWNER" | "MANAGER";
@@ -211,6 +289,12 @@ export interface RosterMember {
   avatarUrl?: string;
   status: string;
   role: "OWNER" | "MANAGER" | "PLAYER";
+  /** Contact fields + tags — populated only for this franchise's leadership/admin, else null. */
+  realName?: string;
+  phone?: string;
+  contactEmail?: string;
+  /** Franchise-private designation tags (e.g. "Valorant 1"); leadership/admin only. */
+  tags?: string[];
 }
 
 export interface FranchiseMatchView {
@@ -227,6 +311,7 @@ export interface CreateFranchiseRequest {
   tag: string;
   seasonId?: string;
   logoUrl?: string;
+  bannerUrl?: string;
 }
 
 /** Verified player eligible to fill a franchise owner/manager slot (unassigned or already on it). */
@@ -308,6 +393,46 @@ export interface CreateMatchRequest {
   format?: string;
   seasonId?: string;
   participantFranchiseIds?: string[];
+}
+
+/** Admin patch for a fixture; only supplied fields are applied. */
+export interface UpdateMatchRequest {
+  scheduledAt?: string;
+  status?: string;
+  arena?: string;
+  format?: string;
+  roomId?: string;
+}
+
+export interface StartMatchRequest {
+  roomId?: string;
+  venue?: string;
+}
+
+export interface RescheduleMatchRequest {
+  scheduledAt: string;
+}
+
+// ---- match room (participant-only, polled) ----
+
+export interface MatchMessageView {
+  id: string;
+  authorName?: string;
+  body: string;
+  createdAt: string;
+}
+
+export interface MatchRoomView {
+  matchId: string;
+  status: string;
+  live: boolean;
+  roomId?: string;
+  venue?: string;
+  messages: MatchMessageView[];
+}
+
+export interface PostMatchMessageRequest {
+  body: string;
 }
 
 export interface ResultView {
@@ -440,6 +565,13 @@ export interface CreateAnnouncementRequest {
   teamSize?: number;
 }
 
+/** Admin edit of an existing announcement — only content, not its registration wiring. */
+export interface UpdateAnnouncementRequest {
+  category?: string;
+  title?: string;
+  body?: string;
+}
+
 // ---- registrations ---------------------------------------------------------
 
 export type RegistrationType = "PLAYER" | "SQUAD" | "FRANCHISE" | "AUCTION";
@@ -473,6 +605,8 @@ export interface ProficiencyEntry {
 
 export interface ApplyRequest {
   type: RegistrationType;
+  /** The applicant's real name, persisted onto their profile (mandatory in the register UI). */
+  realName?: string;
   squadName?: string;
   /** FRANCHISE proposals: requested tag/abbreviation (e.g. "RXG"); derived from the name when blank. */
   franchiseTag?: string;
@@ -533,6 +667,8 @@ export interface InviteView {
   captainGamerTag?: string;
   games: string[];
   status: string;
+  /** The squad registration's status (e.g. FORMING) — gate the Leave button on this. */
+  registrationStatus?: string;
   message?: string;
   createdAt: string;
   /** The squad's confirmed/pending roster, so an invitee can see who's already on the team. */
@@ -571,9 +707,6 @@ export interface OverviewResponse {
 export interface SettingsView {
   seasonId: string;
   seasonName: string;
-  pointsPerKill: number;
-  placementPoints: string;
-  registrationOpen: boolean;
   /** Match registrations lock this many hours before the match starts. */
   registrationLockHours: number;
   updatedAt: string;
@@ -582,9 +715,6 @@ export interface SettingsView {
 export interface UpdateSettingsRequest {
   seasonId?: string;
   seasonName?: string;
-  pointsPerKill?: number;
-  placementPoints?: string;
-  registrationOpen?: boolean;
   registrationLockHours?: number;
 }
 
@@ -673,13 +803,15 @@ export interface UnreadCountResponse {
 
 // ---- auction ---------------------------------------------------------------
 
-export type AuctionStatus = "DRAFT" | "LOBBY" | "LIVE" | "PAUSED" | "COMPLETED";
+export type AuctionStatus = "DRAFT" | "LOBBY" | "LIVE" | "PAUSED" | "COMPLETED" | "CANCELLED";
 export type AuctionLotStatus = "QUEUED" | "ON_BLOCK" | "SOLD" | "UNSOLD";
 
 export interface AuctionLotView {
   id: string;
   playerId: string;
   gamerTag: string;
+  /** The player's real name from registration — present only for bidders/admin (null for spectators). */
+  realName?: string | null;
   status: AuctionLotStatus;
   currentBid: number;
   /** The exact minimum the next bid must meet (basePrice, or currentBid + smallest increment). */
@@ -737,6 +869,8 @@ export interface AuctionView {
   title: string;
   seasonId?: string;
   status: AuctionStatus;
+  /** Whether the registration pool has been frozen (auction registration is closed). */
+  poolLocked: boolean;
   basePrice: number;
   bidTimerSeconds: number;
   antiSnipeSeconds: number;

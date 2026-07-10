@@ -29,6 +29,7 @@ export function LineupEditor({
   const lineupsQ = useMatchLineups(open ? matchId : undefined);
   const setLineup = useSetLineup();
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
   const currentLineup = useMemo(
@@ -40,11 +41,20 @@ export function LineupEditor({
   useEffect(() => {
     if (!open) return;
     setSelected(new Set(currentLineup.map((p) => p.playerId)));
+    setSearch("");
     setErr(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, lineupsQ.data]);
 
   const roster = rosterQ.data ?? [];
+  const q = search.trim().toLowerCase();
+  const filtered = q
+    ? roster.filter(
+        (m) =>
+          m.gamerTag.toLowerCase().includes(q) ||
+          (m.realName ? m.realName.toLowerCase().includes(q) : false),
+      )
+    : roster;
   const toggle = (id: string) =>
     setSelected((cur) => {
       const next = new Set(cur);
@@ -75,49 +85,105 @@ export function LineupEditor({
       ) : roster.length === 0 ? (
         <StateNote tone="muted">This franchise has no roster players yet.</StateNote>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {roster.map((m) => {
-            const on = selected.has(m.playerId);
-            return (
-              <button
-                key={m.playerId}
-                type="button"
-                onClick={() => toggle(m.playerId)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  padding: "10px 12px",
-                  borderRadius: 6,
-                  border: `1px solid ${on ? SQ.red : SQ.inputBorder}`,
-                  background: on ? "rgba(232,96,44,.08)" : "transparent",
-                  cursor: "pointer",
-                  textAlign: "left",
-                }}
-              >
-                <span
-                  style={{
-                    width: 16,
-                    height: 16,
-                    borderRadius: 4,
-                    border: `1.5px solid ${on ? SQ.red : SQ.inputBorder}`,
-                    background: on ? SQ.red : "transparent",
-                    color: SQ.sidebar,
-                    fontSize: 11,
-                    lineHeight: "14px",
-                    textAlign: "center",
-                    flexShrink: 0,
-                  }}
-                >
-                  {on ? "✓" : ""}
-                </span>
-                <span style={{ flex: 1, fontSize: 14, fontWeight: on ? 700 : 500, color: SQ.ink }}>
-                  {m.gamerTag}
-                </span>
-              </button>
-            );
-          })}
-        </div>
+        <>
+          <input
+            className="sq-field"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by handle or real name…"
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              marginBottom: 10,
+              background: SQ.inset,
+              border: `1px solid ${SQ.field}`,
+              borderRadius: 5,
+              padding: "9px 12px",
+              fontSize: 13,
+              color: SQ.ink,
+              fontFamily: FONT.sans,
+            }}
+          />
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 340, overflowY: "auto" }}>
+            {filtered.length === 0 ? (
+              <StateNote tone="muted">No players match “{search}”.</StateNote>
+            ) : (
+              filtered.map((m) => {
+                const on = selected.has(m.playerId);
+                const realName = m.realName && m.realName.trim() ? m.realName : null;
+                return (
+                  <button
+                    key={m.playerId}
+                    type="button"
+                    onClick={() => toggle(m.playerId)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "10px 12px",
+                      borderRadius: 6,
+                      border: `1px solid ${on ? SQ.red : SQ.inputBorder}`,
+                      background: on ? "rgba(232,96,44,.08)" : "transparent",
+                      cursor: "pointer",
+                      textAlign: "left",
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 16,
+                        height: 16,
+                        borderRadius: 4,
+                        border: `1.5px solid ${on ? SQ.red : SQ.inputBorder}`,
+                        background: on ? SQ.red : "transparent",
+                        color: SQ.sidebar,
+                        fontSize: 11,
+                        lineHeight: "14px",
+                        textAlign: "center",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {on ? "✓" : ""}
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span
+                        style={{ display: "block", fontSize: 14, fontWeight: on ? 700 : 500, color: SQ.ink }}
+                      >
+                        {m.gamerTag}
+                      </span>
+                      {realName ? (
+                        <span
+                          style={{ display: "block", fontSize: 11.5, color: SQ.mute, marginTop: 1 }}
+                        >
+                          {realName}
+                        </span>
+                      ) : null}
+                      {m.tags && m.tags.length ? (
+                        <span style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+                          {m.tags.map((t) => (
+                            <span
+                              key={t}
+                              style={{
+                                fontFamily: FONT.mono,
+                                fontSize: 9,
+                                letterSpacing: ".04em",
+                                color: SQ.ember,
+                                border: `1px solid rgba(232,96,44,.4)`,
+                                borderRadius: 999,
+                                padding: "2px 7px",
+                              }}
+                            >
+                              {t}
+                            </span>
+                          ))}
+                        </span>
+                      ) : null}
+                    </span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </>
       )}
 
       {err ? (

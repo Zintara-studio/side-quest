@@ -9,6 +9,7 @@ import { LeagueTitle } from "../league-title";
 import { StateNote } from "../state-note";
 import { useAuth, apiErrorMessage } from "@/lib/auth/context";
 import {
+  useActiveAuction,
   useAnnouncement,
   useApplyRegistration,
   useCurrentSeason,
@@ -18,6 +19,7 @@ import {
   useMyRegistrations,
   usePlayer,
   usePlayers,
+  usePlayerUsernames,
 } from "@/lib/query/hooks";
 import type { GameSummary, RegistrationType } from "@/lib/api/types";
 import type { SessionUser } from "@/lib/auth/store";
@@ -117,10 +119,11 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
   const [done, setDone] = useState(false);
   const [redirecting, setRedirecting] = useState(false);
 
-  // Prefill name from the signed-in user.
+  // Prefill the real name from the player's profile, falling back to the signed-in user's name.
   useEffect(() => {
-    if (user?.name) setName((n) => n || user.name);
-  }, [user]);
+    const seed = meQ.data?.realName || user?.name;
+    if (seed) setName((n) => n || seed);
+  }, [meQ.data, user]);
 
   const allGames = (gamesQ.data ?? []).map((g) => g.name);
 
@@ -144,6 +147,10 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
       setError("Franchise bids are only accepted between seasons — a season is currently running.");
       return;
     }
+    if (!name.trim()) {
+      setError("Enter your real name.");
+      return;
+    }
     // When the game is derived from the announcement/match we skip the picker; otherwise require a pick.
     // (FRANCHISE bids carry no games, so showGamePicker is false and this check is skipped.)
     if (showGamePicker && selectedGames.length === 0) {
@@ -163,6 +170,7 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
     try {
       const reg = await apply.mutateAsync({
         type: mode,
+        realName: name.trim(),
         squadName: mode !== "PLAYER" ? squadName || undefined : undefined,
         franchiseTag:
           mode === "FRANCHISE" ? franchiseTag.trim().toUpperCase() || undefined : undefined,
@@ -428,13 +436,14 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
         <div style={grid}>
           {/* left: identity + games */}
           <div style={card}>
-            <div style={{ ...fieldLabel, marginBottom: 8 }}>PLAYER NAME</div>
+            <div style={{ ...fieldLabel, marginBottom: 8 }}>REAL NAME</div>
             <input
               className="sq-field"
               style={inputStyle}
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Your name"
+              placeholder="Your real name"
+              required
             />
 
             {mode !== "PLAYER" ? (
@@ -844,11 +853,16 @@ function AuctionRegisterForm({
   const apply = useApplyRegistration();
   const myRegsQ = useMyRegistrations(!!user);
   const meQ = usePlayer(playerId);
+  // Owner view: returns private handles too, so autofill can restore them.
+  const myHandlesQ = usePlayerUsernames(playerId);
+  const activeAuction = useActiveAuction().data ?? null;
 
   const games: GameSummary[] = gamesQ.data ?? [];
 
   // Auction entry needs a verified account (backend enforces it too) — warn upfront, don't fail on submit.
   const notVerified = !!meQ.data && meQ.data.status !== "VERIFIED";
+  // Once the admin locks the pool, auction registration is closed (backend enforces this too).
+  const poolClosed = !!activeAuction?.poolLocked;
 
   // Proactively detect an existing live, UNCONSUMED auction entry so we can't create a wasteful
   // duplicate. A consumed entry (already drawn into a completed auction) doesn't block re-entry into
@@ -872,17 +886,56 @@ function AuctionRegisterForm({
   const [error, setError] = useState<string | null>(null);
   const [alreadyRegistered, setAlreadyRegistered] = useState(false);
   const [done, setDone] = useState(false);
+  const [profileSeeded, setProfileSeeded] = useState(false);
 
   // Either the proactive check (existing entry) or a 409 from a race both mean "already in the pool".
   const isRegistered = alreadyRegistered || alreadyInAuction;
 
-  // Prefill identity from the signed-in user.
+  // Prefill the real name from the player's profile, falling back to the signed-in user's name.
   useEffect(() => {
-    if (user?.name) setName((n) => n || user.name);
-  }, [user]);
+    const seed = meQ.data?.realName || user?.name;
+    if (seed) setName((n) => n || seed);
+  }, [meQ.data, user]);
   useEffect(() => {
     if (user?.email) setEmail((e) => e || user.email);
   }, [user]);
+
+  // Autofill the whole expertise grid from the player's saved profile (proficiencies + handles) and
+  // their contact fields, so a returning player doesn't re-enter everything. Runs once, and existing
+  // in-form edits always win over the seeded values.
+  useEffect(() => {
+    if (profileSeeded || !meQ.data || myHandlesQ.isLoading) return;
+    const profs = meQ.data.proficiencies ?? [];
+    const handles = myHandlesQ.data ?? [];
+
+    const seedPlays: Record<string, boolean> = {};
+    const seedRatings: Record<string, number> = {};
+    const seedRanks: Record<string, string> = {};
+    const seedKds: Record<string, string> = {};
+    const seedLevels: Record<string, string> = {};
+    const seedHandles: Record<string, string> = {};
+    for (const pr of profs) {
+      seedPlays[pr.gameId] = true;
+      seedRatings[pr.gameId] = pr.rating;
+      if (pr.rankTier) seedRanks[pr.gameId] = pr.rankTier;
+      if (pr.kd != null) seedKds[pr.gameId] = String(pr.kd);
+      if (pr.accountLevel != null) seedLevels[pr.gameId] = String(pr.accountLevel);
+    }
+    for (const h of handles) {
+      seedPlays[h.gameId] = true;
+      seedHandles[h.gameId] = h.handle;
+    }
+    // Existing edits win: spread the seed first, then the current state on top.
+    setPlays((cur) => ({ ...seedPlays, ...cur }));
+    setRatings((cur) => ({ ...seedRatings, ...cur }));
+    setRanks((cur) => ({ ...seedRanks, ...cur }));
+    setKds((cur) => ({ ...seedKds, ...cur }));
+    setLevels((cur) => ({ ...seedLevels, ...cur }));
+    setHandles((cur) => ({ ...seedHandles, ...cur }));
+    if (meQ.data.phone) setWhatsapp((w) => w || meQ.data!.phone!);
+    if (meQ.data.contactEmail) setEmail((e) => e || meQ.data!.contactEmail!);
+    setProfileSeeded(true);
+  }, [profileSeeded, meQ.data, myHandlesQ.isLoading, myHandlesQ.data]);
 
   const toggleGame = (id: string) =>
     setPlays((cur) => {
@@ -895,7 +948,20 @@ function AuctionRegisterForm({
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (isRegistered || notVerified) return;
+    if (isRegistered || notVerified || poolClosed) return;
+
+    if (!name.trim()) {
+      setError("Enter your real name.");
+      return;
+    }
+    if (!whatsapp.trim()) {
+      setError("Enter your WhatsApp / contact number.");
+      return;
+    }
+    if (!email.trim()) {
+      setError("Enter your contact email.");
+      return;
+    }
 
     const chosen = games.filter((g) => plays[g.id]);
     // Require at least one game toggled on with a rating above 0 — no squad, no derived game.
@@ -925,6 +991,7 @@ function AuctionRegisterForm({
     try {
       await apply.mutateAsync({
         type: "AUCTION",
+        realName: name.trim(),
         games: chosen.map((g) => g.name),
         contact: contact || undefined,
         note: note.trim() || undefined,
@@ -1046,13 +1113,14 @@ function AuctionRegisterForm({
         <div style={grid}>
           {/* left: identity + contact + note */}
           <div style={card}>
-            <div style={{ ...fieldLabel, marginBottom: 8 }}>PLAYER NAME</div>
+            <div style={{ ...fieldLabel, marginBottom: 8 }}>REAL NAME</div>
             <input
               className="sq-field"
               style={inputStyle}
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Your name"
+              placeholder="Your real name"
+              required
             />
 
             <div style={{ ...fieldLabel, margin: "18px 0 8px" }}>CONTACT</div>
@@ -1063,6 +1131,7 @@ function AuctionRegisterForm({
                 value={whatsapp}
                 onChange={(e) => setWhatsapp(e.target.value)}
                 placeholder="WhatsApp no."
+                required
               />
               <input
                 className="sq-field"
@@ -1071,6 +1140,7 @@ function AuctionRegisterForm({
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="Email"
+                required
               />
             </div>
 
@@ -1082,6 +1152,24 @@ function AuctionRegisterForm({
               onChange={(e) => setNote(e.target.value)}
               placeholder="Anything the auction admins should know — availability, past teams, achievements…"
             />
+
+            {poolClosed ? (
+              <div
+                style={{
+                  margin: "18px 0 0",
+                  padding: "12px 14px",
+                  borderRadius: 5,
+                  background: SQ.inset,
+                  border: `1px solid ${SQ.amber}`,
+                  color: SQ.ink,
+                  fontSize: 12.5,
+                  lineHeight: 1.55,
+                }}
+              >
+                <span style={{ color: SQ.amber, fontWeight: 700 }}>Auction registration is closed.</span>{" "}
+                The pool has been locked for the upcoming auction — sign-ups are no longer accepted.
+              </div>
+            ) : null}
 
             {notVerified ? (
               <div
@@ -1144,14 +1232,16 @@ function AuctionRegisterForm({
             ) : null}
 
             {(() => {
-              const disabled = apply.isPending || isRegistered || notVerified;
+              const disabled = apply.isPending || isRegistered || notVerified || poolClosed;
               const label = isRegistered
                 ? "Already in the pool"
-                : notVerified
-                  ? "Verification required"
-                  : apply.isPending
-                    ? "Submitting…"
-                    : "Enter the auction ▸";
+                : poolClosed
+                  ? "Registration closed"
+                  : notVerified
+                    ? "Verification required"
+                    : apply.isPending
+                      ? "Submitting…"
+                      : "Enter the auction ▸";
               return (
                 <button
                   type="submit"

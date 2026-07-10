@@ -1,7 +1,10 @@
 "use client";
 
-import { useState, type ReactNode, type InputHTMLAttributes } from "react";
+import { useEffect, useRef, useState, type ReactNode, type InputHTMLAttributes } from "react";
+import { useRouter } from "next/navigation";
 import { SQ, FONT } from "../tokens";
+import { useAuth } from "@/lib/auth/context";
+import { safeNextPath } from "@/lib/nav";
 
 const fieldLabel = {
   fontFamily: FONT.mono,
@@ -198,19 +201,84 @@ const socialBtn = {
   cursor: "pointer",
 } as const;
 
+/** Minimal typing for the Google Identity Services global we load on demand. */
+type GoogleId = {
+  accounts: {
+    id: {
+      initialize: (cfg: {
+        client_id: string;
+        callback: (r: { credential?: string }) => void;
+      }) => void;
+      renderButton: (el: HTMLElement, opts: Record<string, unknown>) => void;
+    };
+  };
+};
+const gis = () => (window as unknown as { google?: GoogleId }).google;
+
+/**
+ * Google Sign-In via Google Identity Services. The GIS SDK returns an id_token which we hand to the
+ * backend (`/auth/google`) to verify + exchange for a real session — the frontend never signs or trusts
+ * a token itself. The button only renders when NEXT_PUBLIC_GOOGLE_CLIENT_ID is configured, so dev without
+ * Google credentials just hides it.
+ */
 export function SocialRow() {
+  const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+  const { googleLogin } = useAuth();
+  const router = useRouter();
+  const btnRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!clientId) return;
+    const SRC = "https://accounts.google.com/gsi/client";
+    let cancelled = false;
+
+    const init = () => {
+      const g = gis();
+      if (cancelled || !g?.accounts?.id || !btnRef.current) return;
+      g.accounts.id.initialize({
+        client_id: clientId,
+        callback: async (resp) => {
+          if (!resp.credential) return;
+          try {
+            const role = await googleLogin(resp.credential);
+            const safe = safeNextPath(new URLSearchParams(window.location.search).get("next"));
+            router.push(safe ?? (role === "ADMIN" ? "/admin" : "/"));
+          } catch {
+            /* invalid/rejected token — stay on the page */
+          }
+        },
+      });
+      g.accounts.id.renderButton(btnRef.current, {
+        type: "standard",
+        theme: "outline",
+        size: "large",
+        text: "continue_with",
+        width: 300,
+      });
+    };
+
+    const existing = document.querySelector<HTMLScriptElement>(`script[src="${SRC}"]`);
+    if (existing && gis()?.accounts?.id) {
+      init();
+    } else if (existing) {
+      existing.addEventListener("load", init);
+    } else {
+      const script = document.createElement("script");
+      script.src = SRC;
+      script.async = true;
+      script.defer = true;
+      script.onload = init;
+      document.head.appendChild(script);
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId, googleLogin, router]);
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <button 
-        type="button" 
-        style={socialBtn}
-        onClick={() => {
-          window.location.href = "/api/auth/google";
-        }}
-      >
-        Continue with Google
-      </button>
-      <button type="button" style={socialBtn}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, alignItems: "center" }}>
+      {clientId ? <div ref={btnRef} style={{ minHeight: 44 }} /> : null}
+      <button type="button" style={socialBtn} disabled title="Coming soon">
         Continue with Discord
       </button>
     </div>

@@ -185,8 +185,8 @@ export function HistoryScreen() {
           </button>
         </div>
         <div style={{ fontSize: 11.5, color: SQ.mute, marginTop: 8 }}>
-          Starting a new season finishes the current one (freezing its standings) and resets franchise
-          points to zero.
+          The current season must be finished (and its standings frozen) before a new one can start.
+          Starting a season resets franchise points to zero.
         </div>
         {msg ? <div style={{ fontFamily: FONT.mono, fontSize: 12, color: SQ.green, marginTop: 8 }}>{msg}</div> : null}
         {err ? <div style={{ fontFamily: FONT.mono, fontSize: 12, color: SQ.ember, marginTop: 8 }}>{err}</div> : null}
@@ -308,8 +308,8 @@ export function HistoryScreen() {
         tone="destructive"
         message={
           current
-            ? `Finish ${current.name}? Its standings will be frozen into history and a new season can then be started.`
-            : "Finish the current season?"
+            ? `Finish ${current.name}? Its standings will be frozen into history and a new season can then be started. Every rostered player (except owners/managers) is released for the next auction.`
+            : "Finish the current season? Every rostered player (except owners/managers) is released for the next auction."
         }
         confirmLabel="Finish season"
         busy={finishSeason.isPending}

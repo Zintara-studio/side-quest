@@ -1,21 +1,62 @@
 "use client";
 
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth/context";
-import { useActiveAuction, useCurrentSeason } from "@/lib/query/hooks";
+import { useCurrentSeason, useNotifications } from "@/lib/query/hooks";
 import { ThemeToggle } from "@/lib/theme";
 import { NotificationBell } from "./notification-bell";
+import { ConfirmModal } from "./confirm-modal";
 import { SQ, FONT } from "./tokens";
+
+/** Which nav tab an unread notification's type should badge. */
+function navKeyForType(type: string): string | null {
+  switch (type) {
+    case "ANNOUNCEMENT":
+      return "announcements";
+    case "AUCTION":
+      // No auction nav tab — auction alerts live in the notification bell only.
+      return null;
+    case "MATCH":
+    case "RESULT":
+      return "match";
+    case "REGISTRATION":
+      return "my";
+    default:
+      return null;
+  }
+}
+
+/** Small unread-count badge shown beside a nav label. */
+function NavBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span
+      style={{
+        marginLeft: 6,
+        fontFamily: FONT.mono,
+        fontSize: 9,
+        fontWeight: 700,
+        color: SQ.league,
+        background: SQ.red,
+        borderRadius: 999,
+        padding: "1px 6px",
+        verticalAlign: "middle",
+      }}
+    >
+      {count > 9 ? "9+" : count}
+    </span>
+  );
+}
 
 const navLinks = [
   { key: "home", label: "Home", href: "/" },
   { key: "games", label: "Games", href: "/games" },
   { key: "franchises", label: "Franchises", href: "/franchises" },
   { key: "players", label: "Players", href: "/players" },
-  { key: "match", label: "History", href: "/match" },
+  { key: "match", label: "Matches", href: "/match" },
   { key: "announcements", label: "Announcements", href: "/announcements" },
 ];
 
@@ -49,15 +90,26 @@ export function LeagueShell({
   const season = useCurrentSeason().data ?? null;
   const seasonCode = season?.code ?? "—";
 
-  // Surface a public "Auction" tab only while an auction is live to watch — fans and non-participant
-  // franchises can follow the bidding read-only from there.
-  const activeAuction = useActiveAuction().data ?? null;
-  const links = activeAuction
-    ? [...navLinks, { key: "auction", label: "Auction", href: "/auction" }]
-    : navLinks;
+  // The auction has NO nav tab — it's surfaced as a contextual link on the home page (all players) and
+  // the franchise page (owners/managers) only while one is live. Notifications route to the bell.
+  const links = navLinks;
   const seasonTagline = season
     ? `${season.name.toUpperCase()} · BUILT FOR THE FRANCHISES`
     : "OFF-SEASON · BUILT FOR THE FRANCHISES";
+
+  // Per-tab unread badges (e.g. "Announcements 2") — derived from the notification feed by type.
+  const notifs = useNotifications(isAuthenticated).data ?? [];
+  const unreadByKey = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const n of notifs) {
+      if (n.read) continue;
+      const key = navKeyForType(n.type);
+      if (key) counts[key] = (counts[key] ?? 0) + 1;
+    }
+    return counts;
+  }, [notifs]);
+
+  const [confirmOut, setConfirmOut] = useState(false);
 
   // Admins belong in the control room — bounce them out of the public site.
   useEffect(() => {
@@ -162,6 +214,7 @@ export function LeagueShell({
                 }}
               >
                 {link.label}
+                <NavBadge count={unreadByKey[link.key] ?? 0} />
               </Link>
             );
           })}
@@ -181,6 +234,7 @@ export function LeagueShell({
               }}
             >
               My Team
+              <NavBadge count={unreadByKey["my"] ?? 0} />
             </Link>
           ) : null}
           {isAuthenticated && user && user.role !== "ADMIN" ? (
@@ -252,7 +306,7 @@ export function LeagueShell({
               </Link>
               <button
                 type="button"
-                onClick={onLogout}
+                onClick={() => setConfirmOut(true)}
                 title="Sign out"
                 style={{
                   fontFamily: FONT.mono,
@@ -360,6 +414,18 @@ export function LeagueShell({
           <div>{seasonTagline}</div>
         </div>
       </footer>
+
+      <ConfirmModal
+        open={confirmOut}
+        title="Sign out?"
+        message="You'll need to sign in again to manage your team, register, or see your notifications."
+        confirmLabel="Sign out"
+        onConfirm={() => {
+          setConfirmOut(false);
+          onLogout();
+        }}
+        onClose={() => setConfirmOut(false)}
+      />
     </div>
   );
 }

@@ -1,19 +1,27 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
-import { SQ, FONT, rankAccent } from "../tokens";
+import { useSearchParams } from "next/navigation";
+import { SQ, FONT, rankAccent, matchStatusLabel, matchStatusColors } from "../tokens";
 import { LeagueTitle } from "../league-title";
 import { StateNote } from "../state-note";
 import {
+  useCreateDispute,
+  useEndMatch,
   useMatch,
   useMatchLeaderboard,
+  useMatchRoom,
   useMatchRounds,
   useMatchesInfinite,
   useGames,
+  usePostMatchMessage,
   useSeasons,
 } from "@/lib/query/hooks";
-import { shortDate } from "@/lib/adapters/league";
+import { ConfirmModal } from "../confirm-modal";
+import { useAuth } from "@/lib/auth/context";
+import { apiErrorMessage } from "@/lib/api/client";
+import { shortDate, shortTime } from "@/lib/adapters/league";
 
 const ALL = "__all__";
 
@@ -48,9 +56,11 @@ function MatchHistory({ base }: { base: string }) {
   const code = selected || current?.code || seasons[0]?.code || "";
   const isAll = selected === ALL;
 
-  // Search / game filter / sort controls over the archive.
+  // Search / game filter / sort controls over the archive. The game filter seeds from a ?game= param so
+  // "View matches" on a games card lands here pre-filtered to that title.
+  const params = useSearchParams();
   const [search, setSearch] = useState("");
-  const [gameFilter, setGameFilter] = useState("");
+  const [gameFilter, setGameFilter] = useState(params.get("game") ?? "");
   const [sortMode, setSortMode] = useState<"newest" | "oldest" | "status" | "game">("newest");
   const gamesQ = useGames(true);
 
@@ -97,7 +107,7 @@ function MatchHistory({ base }: { base: string }) {
 
   return (
     <div>
-      <LeagueTitle eyebrow="Match archive" title="HISTORY" />
+      <LeagueTitle eyebrow="Match archive" title="MATCHES" />
 
       <div
         style={{
@@ -316,8 +326,220 @@ function MatchHistory({ base }: { base: string }) {
 }
 
 export function MatchScreen({ id, base = "" }: { id?: string; base?: string }) {
-  if (!id) return <MatchHistory base={base} />;
+  // MatchHistory reads useSearchParams (the ?game= autoselect), which must sit under a Suspense boundary
+  // or the static prerender of /match fails.
+  if (!id) {
+    return (
+      <Suspense fallback={null}>
+        <MatchHistory base={base} />
+      </Suspense>
+    );
+  }
   return <MatchDetail id={id} base={base} />;
+}
+
+/**
+ * The live match room: the (participant-only) lobby code + venue + polled message feed, with an admin
+ * compose box. Renders nothing for spectators or non-participants (the room query 403s and we hide it).
+ */
+function MatchRoomPanel({ matchId }: { matchId: string }) {
+  const { isAuthenticated, isAdmin } = useAuth();
+  const roomQ = useMatchRoom(matchId, isAuthenticated);
+  const post = usePostMatchMessage();
+  const endMatch = useEndMatch();
+  const [text, setText] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [confirmEnd, setConfirmEnd] = useState(false);
+  const room = roomQ.data;
+
+  if (!isAuthenticated || roomQ.isError || !room) return null;
+
+  const send = async () => {
+    const body = text.trim();
+    if (!body) return;
+    setErr(null);
+    try {
+      await post.mutateAsync({ id: matchId, body });
+      setText("");
+    } catch (e) {
+      setErr(apiErrorMessage(e, "Couldn't post the message."));
+    }
+  };
+
+  return (
+    <div
+      style={{
+        marginTop: 24,
+        border: `1px solid ${room.live ? "rgba(232,96,44,.45)" : SQ.hairline}`,
+        borderRadius: 10,
+        background: room.live ? "linear-gradient(180deg,rgba(232,96,44,.06),transparent)" : SQ.panel,
+        padding: "18px 20px",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span
+          style={{
+            fontFamily: FONT.mono,
+            fontSize: 12,
+            letterSpacing: ".2em",
+            textTransform: "uppercase",
+            color: SQ.ink,
+          }}
+        >
+          Match Room
+        </span>
+        <span
+          style={{
+            fontFamily: FONT.mono,
+            fontSize: 9.5,
+            letterSpacing: ".12em",
+            color: room.live ? SQ.ember : SQ.mute,
+            border: `1px solid ${room.live ? "rgba(232,96,44,.45)" : SQ.inputBorder}`,
+            borderRadius: 999,
+            padding: "3px 9px",
+          }}
+        >
+          {room.live ? "● LIVE" : "CLOSED"}
+        </span>
+        {isAdmin && room.live ? (
+          // Admins can wrap up right from inside the room instead of going back to the matches list.
+          <button
+            type="button"
+            onClick={() => setConfirmEnd(true)}
+            disabled={endMatch.isPending}
+            style={{
+              marginLeft: "auto",
+              fontFamily: FONT.mono,
+              fontSize: 10,
+              letterSpacing: ".12em",
+              textTransform: "uppercase",
+              fontWeight: 700,
+              color: SQ.ember,
+              background: "transparent",
+              border: "1px solid rgba(232,96,44,.45)",
+              borderRadius: 5,
+              padding: "6px 12px",
+              cursor: endMatch.isPending ? "default" : "pointer",
+              opacity: endMatch.isPending ? 0.6 : 1,
+            }}
+          >
+            End match
+          </button>
+        ) : null}
+      </div>
+
+      {room.roomId || room.venue ? (
+        <div style={{ display: "flex", gap: 18, flexWrap: "wrap", marginTop: 12 }}>
+          {room.roomId ? (
+            <div>
+              <div style={{ fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".12em", color: SQ.label }}>
+                ROOM CODE
+              </div>
+              <div style={{ fontFamily: FONT.mono, fontSize: 15, fontWeight: 700, color: SQ.ember, marginTop: 3 }}>
+                {room.roomId}
+              </div>
+            </div>
+          ) : null}
+          {room.venue ? (
+            <div>
+              <div style={{ fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".12em", color: SQ.label }}>
+                VENUE
+              </div>
+              <div style={{ fontSize: 14, marginTop: 4 }}>{room.venue}</div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+        {room.messages.length === 0 ? (
+          <div style={{ fontSize: 12.5, color: SQ.mute }}>No messages yet.</div>
+        ) : (
+          room.messages.map((msg) => (
+            <div
+              key={msg.id}
+              style={{ borderTop: `1px solid ${SQ.hairlineCell}`, paddingTop: 8 }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                <span style={{ fontFamily: FONT.mono, fontSize: 10.5, letterSpacing: ".06em", color: SQ.ember }}>
+                  {msg.authorName ?? "Admin"}
+                </span>
+                <span style={{ fontFamily: FONT.mono, fontSize: 10, color: SQ.mute }}>{shortTime(msg.createdAt)}</span>
+              </div>
+              <div style={{ fontSize: 13.5, color: SQ.ink, marginTop: 3, lineHeight: 1.5 }}>{msg.body}</div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {isAdmin && room.live ? (
+        <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
+          <input
+            className="sq-field"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") send();
+            }}
+            placeholder="Message the participants…"
+            style={{
+              flex: 1,
+              background: SQ.inset,
+              border: `1px solid ${SQ.field}`,
+              borderRadius: 5,
+              padding: "9px 12px",
+              fontSize: 13.5,
+              color: SQ.ink,
+              fontFamily: FONT.sans,
+            }}
+          />
+          <button
+            type="button"
+            onClick={send}
+            disabled={post.isPending || !text.trim()}
+            style={{
+              fontFamily: FONT.mono,
+              fontSize: 11,
+              letterSpacing: ".1em",
+              textTransform: "uppercase",
+              fontWeight: 700,
+              color: SQ.league,
+              background: SQ.red,
+              border: "none",
+              borderRadius: 5,
+              padding: "9px 16px",
+              cursor: post.isPending || !text.trim() ? "not-allowed" : "pointer",
+              opacity: post.isPending || !text.trim() ? 0.6 : 1,
+            }}
+          >
+            Send
+          </button>
+        </div>
+      ) : null}
+      {err ? (
+        <div style={{ fontFamily: FONT.mono, fontSize: 11.5, color: SQ.ember, marginTop: 8 }}>{err}</div>
+      ) : null}
+
+      <ConfirmModal
+        open={confirmEnd}
+        title="End match?"
+        message="This moves the match to results-pending and closes its room. Participants are notified."
+        confirmLabel="End match"
+        busy={endMatch.isPending}
+        onConfirm={async () => {
+          try {
+            setErr(null);
+            await endMatch.mutateAsync(matchId);
+          } catch (e) {
+            setErr(apiErrorMessage(e, "Couldn't end the match."));
+          } finally {
+            setConfirmEnd(false);
+          }
+        }}
+        onClose={() => setConfirmEnd(false)}
+      />
+    </div>
+  );
 }
 
 function MatchDetail({ id, base }: { id: string; base: string }) {
@@ -327,13 +549,34 @@ function MatchDetail({ id, base }: { id: string; base: string }) {
   const m = mq.data;
   const rounds = roundsQ.data ?? [];
 
+  const { isAuthenticated } = useAuth();
+  const createDispute = useCreateDispute();
+  const [disputeOpen, setDisputeOpen] = useState(false);
+  const [disputeReason, setDisputeReason] = useState("");
+  const [disputeErr, setDisputeErr] = useState<string | null>(null);
+  const [disputeDone, setDisputeDone] = useState(false);
+
+  const submitDispute = async () => {
+    if (!disputeReason.trim()) {
+      setDisputeErr("Describe what was wrong with the result.");
+      return;
+    }
+    setDisputeErr(null);
+    try {
+      await createDispute.mutateAsync({ matchId: id, reason: disputeReason.trim(), category: "RESULT" });
+      setDisputeDone(true);
+    } catch (e) {
+      setDisputeErr(apiErrorMessage(e, "Couldn't submit the dispute."));
+    }
+  };
+
   return (
     <div>
       <Link
-        href={base ? `${base}/matches` : "/"}
+        href={base ? `${base}/matches` : "/match"}
         style={{ fontFamily: FONT.mono, fontSize: 11, letterSpacing: ".14em", color: SQ.mute, textDecoration: "none" }}
       >
-        ◂ {base ? "MATCHES" : "MATCHDAY"}
+        ◂ MATCHES
       </Link>
 
       {mq.isLoading ? (
@@ -387,20 +630,61 @@ function MatchDetail({ id, base }: { id: string; base: string }) {
                 {[m.arena, shortDate(m.scheduledAt), m.format].filter(Boolean).join(" · ")}
               </div>
             </div>
-            <div
-              style={{
-                fontFamily: FONT.mono,
-                fontSize: 11,
-                letterSpacing: ".16em",
-                color: m.status === "LIVE" ? SQ.ember : SQ.mute,
-                border: `1px solid ${m.status === "LIVE" ? "rgba(232,96,44,.45)" : SQ.inputBorder}`,
-                padding: "8px 14px",
-                borderRadius: 4,
-              }}
-            >
-              {m.status}
-            </div>
+            {(() => {
+              const label = matchStatusLabel(m.status);
+              const [stColor, stBorder] = matchStatusColors(
+                label as Parameters<typeof matchStatusColors>[0],
+              );
+              return (
+                <div
+                  style={{
+                    fontFamily: FONT.mono,
+                    fontSize: 11,
+                    letterSpacing: ".16em",
+                    textTransform: "uppercase",
+                    color: stColor,
+                    border: `1px solid ${stBorder}`,
+                    padding: "8px 14px",
+                    borderRadius: 4,
+                  }}
+                >
+                  {label}
+                </div>
+              );
+            })()}
           </div>
+
+          {/* Fans can flag an unfair/incorrect result on a completed fixture. */}
+          {m.status === "COMPLETED" && isAuthenticated ? (
+            <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setDisputeReason("");
+                  setDisputeErr(null);
+                  setDisputeDone(false);
+                  setDisputeOpen(true);
+                }}
+                style={{
+                  fontFamily: FONT.mono,
+                  fontSize: 10.5,
+                  letterSpacing: ".12em",
+                  textTransform: "uppercase",
+                  color: SQ.faint,
+                  background: "transparent",
+                  border: `1px solid ${SQ.inputBorder}`,
+                  padding: "8px 14px",
+                  borderRadius: 5,
+                  cursor: "pointer",
+                }}
+              >
+                Dispute result
+              </button>
+            </div>
+          ) : null}
+
+          {/* live match room (participant-only; hidden for spectators/non-participants) */}
+          {m.status === "LIVE" ? <MatchRoomPanel matchId={id} /> : null}
 
           {/* participants */}
           {m.participants.length > 0 ? (
@@ -652,6 +936,45 @@ function MatchDetail({ id, base }: { id: string; base: string }) {
           ) : null}
         </>
       )}
+
+      <ConfirmModal
+        open={disputeOpen}
+        title={disputeDone ? "Dispute submitted" : "Dispute result"}
+        tone="default"
+        confirmLabel={disputeDone ? "Done" : "Submit dispute"}
+        busy={createDispute.isPending}
+        onConfirm={disputeDone ? () => setDisputeOpen(false) : submitDispute}
+        onClose={() => setDisputeOpen(false)}
+        message={
+          disputeDone ? (
+            "Thanks — the league has been notified and will review this result. You'll get a notification when it's resolved."
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <span>Tell the league what was wrong with this result. An admin will review it.</span>
+              <textarea
+                value={disputeReason}
+                onChange={(e) => setDisputeReason(e.target.value)}
+                placeholder="e.g. our kills were recorded under the wrong team…"
+                style={{
+                  width: "100%",
+                  minHeight: 90,
+                  background: SQ.inset,
+                  border: `1px solid ${SQ.field}`,
+                  borderRadius: 5,
+                  padding: "10px 12px",
+                  fontSize: 13.5,
+                  color: SQ.ink,
+                  fontFamily: FONT.sans,
+                  resize: "vertical",
+                }}
+              />
+              {disputeErr ? (
+                <span style={{ fontFamily: FONT.mono, fontSize: 11.5, color: SQ.ember }}>{disputeErr}</span>
+              ) : null}
+            </div>
+          )
+        }
+      />
     </div>
   );
 }

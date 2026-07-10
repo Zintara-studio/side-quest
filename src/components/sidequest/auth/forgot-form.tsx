@@ -1,9 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { SQ, FONT } from "../tokens";
-import { AuthCard, AuthField, AuthSubmit } from "./auth-ui";
+import { AuthCard, AuthField, AuthSubmit, AuthError } from "./auth-ui";
+import { apiErrorMessage } from "@/lib/auth/context";
+import { authApi } from "@/lib/api/endpoints";
 
 function BackToSignIn() {
   return (
@@ -25,26 +28,104 @@ function BackToSignIn() {
 }
 
 export function ForgotForm() {
+  const router = useRouter();
+  const [step, setStep] = useState<"email" | "reset">("email");
   const [email, setEmail] = useState("");
-  const [sent, setSent] = useState(false);
+  const [code, setCode] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
 
-  const onSubmit = (e: React.FormEvent) => {
+  const requestCode = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSent(true);
+    setError(null);
+    setPending(true);
+    try {
+      await authApi.forgotPassword({ email });
+    } catch {
+      // Never reveal whether the email is registered — always advance.
+    }
+    setPending(false);
+    setStep("reset");
   };
 
-  if (sent) {
+  const submitReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (password !== confirm) {
+      setError("Passwords do not match.");
+      return;
+    }
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+    setPending(true);
+    try {
+      await authApi.resetPassword({ email, code, newPassword: password });
+      router.push("/login?reset=1");
+    } catch (err) {
+      setError(apiErrorMessage(err, "That code is invalid or has expired."));
+      setPending(false);
+    }
+  };
+
+  if (step === "reset") {
     return (
       <AuthCard
         eyebrow="Account recovery"
-        title="CHECK YOUR INBOX"
-        subtitle={`If an account exists for ${email || "that address"}, a reset link is on its way. It expires in 30 minutes.`}
+        title="SET A NEW PASSWORD"
+        subtitle={`If an account exists for ${email || "that address"}, we emailed a 6-digit code. Enter it with your new password.`}
       >
+        <form onSubmit={submitReset}>
+          <AuthField
+            label="6-DIGIT CODE"
+            name="code"
+            inputMode="numeric"
+            placeholder="123456"
+            required
+            value={code}
+            onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+          />
+          <AuthField
+            label="NEW PASSWORD"
+            type="password"
+            reveal
+            name="password"
+            placeholder="At least 8 characters"
+            autoComplete="new-password"
+            minLength={8}
+            required
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          <AuthField
+            label="CONFIRM PASSWORD"
+            type="password"
+            reveal
+            name="confirmPassword"
+            placeholder="Re-enter your password"
+            autoComplete="new-password"
+            minLength={8}
+            required
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+          />
+          <AuthError>{error}</AuthError>
+          <AuthSubmit disabled={pending}>
+            {pending ? "Resetting…" : "Reset password ▸"}
+          </AuthSubmit>
+        </form>
         <button
           type="button"
-          onClick={() => setSent(false)}
+          onClick={() => {
+            setStep("email");
+            setError(null);
+          }}
           style={{
             width: "100%",
+            marginTop: 12,
             fontFamily: FONT.mono,
             fontSize: 11.5,
             letterSpacing: ".08em",
@@ -67,9 +148,9 @@ export function ForgotForm() {
     <AuthCard
       eyebrow="Account recovery"
       title="RESET PASSWORD"
-      subtitle="Enter your email and we'll send a link to reset your password."
+      subtitle="Enter your email and we'll send a 6-digit code to reset your password."
     >
-      <form onSubmit={onSubmit}>
+      <form onSubmit={requestCode}>
         <AuthField
           label="EMAIL"
           type="email"
@@ -80,7 +161,8 @@ export function ForgotForm() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
         />
-        <AuthSubmit>Send reset link ▸</AuthSubmit>
+        <AuthError>{error}</AuthError>
+        <AuthSubmit disabled={pending}>{pending ? "Sending…" : "Send reset code ▸"}</AuthSubmit>
       </form>
       <BackToSignIn />
     </AuthCard>

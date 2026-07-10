@@ -5,6 +5,7 @@ import Link from "next/link";
 import { SQ, FONT } from "../tokens";
 import { StateNote } from "../state-note";
 import { Modal } from "../modal";
+import { Avatar } from "../avatar";
 import { SearchableSelect } from "../searchable-select";
 import { LineupEditor } from "../lineup-editor";
 import { useAuth, apiErrorMessage } from "@/lib/auth/context";
@@ -17,14 +18,21 @@ import {
   useEligibleOwners,
   useFranchiseRoster,
   useFranchiseMatches,
+  useMatchLineups,
   useCurrentSeason,
   useActiveAuction,
+  useUpdateFranchiseBranding,
+  useUploadMedia,
+  useSetRosterTags,
 } from "@/lib/query/hooks";
+import { mediaSrc } from "@/lib/api/client";
+import { compressImage, IMAGE_PRESETS } from "@/lib/image";
 import { shortDate } from "@/lib/adapters/league";
 import type {
   FranchiseInviteView,
   FranchiseMineView,
   FranchiseRole,
+  RosterMember,
 } from "@/lib/api/types";
 
 const sectionTitle = {
@@ -96,11 +104,61 @@ export function MyFranchiseScreen() {
           // empty state to a signed-in owner while auth rehydrates.
           <StateNote>Loading your franchise…</StateNote>
         ) : !mine ? (
-          <StateNote>You don&rsquo;t own or manage a franchise yet.</StateNote>
+          <StateNote>
+            You don&rsquo;t own or manage a franchise yet. Franchises are formed between seasons — watch
+            the{" "}
+            <Link href="/announcements" style={{ color: SQ.ember, textDecoration: "none" }}>
+              announcements
+            </Link>{" "}
+            for an open franchise call, or enter the player{" "}
+            <Link href="/auction" style={{ color: SQ.ember, textDecoration: "none" }}>
+              auction
+            </Link>{" "}
+            to get drafted onto one. Owners can also invite you as a manager.
+          </StateNote>
         ) : (
           <FranchisePanel mine={mine} />
         )}
       </section>
+    </div>
+  );
+}
+
+// ---- read-only fielded lineup (so roster players see who they'll play with) -----
+
+function FieldedLineup({ matchId, franchiseId }: { matchId: string; franchiseId: string }) {
+  const lineupsQ = useMatchLineups(matchId);
+  const mine = (lineupsQ.data ?? []).find((l) => l.franchiseId === franchiseId);
+  const players = mine?.lineup ?? [];
+  if (lineupsQ.isLoading || players.length === 0) {
+    // Nothing set yet (or still loading) — a quiet hint keeps the list uncluttered.
+    return (
+      <div style={{ fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".08em", color: SQ.mute, marginTop: 8 }}>
+        {lineupsQ.isLoading ? "" : "Lineup not set yet"}
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+      <span style={{ fontFamily: FONT.mono, fontSize: 9.5, letterSpacing: ".12em", color: SQ.label, alignSelf: "center" }}>
+        FIELDED
+      </span>
+      {players.map((p) => (
+        <span
+          key={p.playerId}
+          style={{
+            fontFamily: FONT.mono,
+            fontSize: 10.5,
+            color: SQ.faint,
+            background: SQ.inset,
+            border: `1px solid ${SQ.hairline}`,
+            borderRadius: 999,
+            padding: "3px 9px",
+          }}
+        >
+          {p.gamerTag}
+        </span>
+      ))}
     </div>
   );
 }
@@ -214,6 +272,9 @@ function FranchisePanel({ mine }: { mine: FranchiseMineView }) {
 
   // Which upcoming match has its lineup editor open (matchId, or null).
   const [lineupMatchId, setLineupMatchId] = useState<string | null>(null);
+  const [brandingOpen, setBrandingOpen] = useState(false);
+  const [tagPlayer, setTagPlayer] = useState<RosterMember | null>(null);
+  const bannerSrc = mediaSrc(f.bannerUrl);
 
   const { upcoming, previous } = useMemo(() => {
     const all = matchesQ.data ?? [];
@@ -297,7 +358,22 @@ function FranchisePanel({ mine }: { mine: FranchiseMineView }) {
         </Link>
       ) : null}
 
-      {/* header: name, tag, points, rank + role pill */}
+      {/* franchise banner (hero image) */}
+      {bannerSrc ? (
+        <div
+          style={{
+            height: 140,
+            borderRadius: 10,
+            marginBottom: 18,
+            backgroundImage: `url(${bannerSrc})`,
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+            border: `1px solid ${SQ.hairline}`,
+          }}
+        />
+      ) : null}
+
+      {/* header: logo, name, tag, points, rank + role pill */}
       <div
         style={{
           display: "flex",
@@ -309,44 +385,67 @@ function FranchisePanel({ mine }: { mine: FranchiseMineView }) {
           borderBottom: `1px solid ${SQ.hairline}`,
         }}
       >
-        <div>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              fontFamily: FONT.mono,
-              fontSize: 12,
-              letterSpacing: ".22em",
-              textTransform: "uppercase",
-              color: SQ.red,
-            }}
-          >
-            <span>Rank {String(f.rank).padStart(2, "0")} · {f.points} points</span>
-            <span
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 16 }}>
+          <Avatar url={f.logoUrl} alt={f.name} size={64} radius={10} />
+          <div>
+            <div
               style={{
-                fontSize: 9.5,
-                letterSpacing: ".12em",
-                color: SQ.ink,
-                border: `1px solid ${SQ.inputBorder}`,
-                borderRadius: 999,
-                padding: "4px 10px",
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                flexWrap: "wrap",
+                fontFamily: FONT.mono,
+                fontSize: 12,
+                letterSpacing: ".22em",
+                textTransform: "uppercase",
+                color: SQ.red,
               }}
             >
-              YOUR ROLE · {myRole}
-            </span>
-          </div>
-          <div
-            style={{
-              fontFamily: FONT.display,
-              fontSize: "clamp(34px,5vw,58px)",
-              lineHeight: 0.92,
-              letterSpacing: "-.03em",
-              marginTop: 10,
-            }}
-          >
-            {f.name}
-            {f.tag ? <span style={{ color: SQ.mute }}> — {f.tag}</span> : null}
+              <span>Rank {String(f.rank).padStart(2, "0")} · {f.points} points</span>
+              <span
+                style={{
+                  fontSize: 9.5,
+                  letterSpacing: ".12em",
+                  color: SQ.ink,
+                  border: `1px solid ${SQ.inputBorder}`,
+                  borderRadius: 999,
+                  padding: "4px 10px",
+                }}
+              >
+                YOUR ROLE · {myRole}
+              </span>
+              {isOwner ? (
+                <button
+                  type="button"
+                  onClick={() => setBrandingOpen(true)}
+                  style={{
+                    fontFamily: FONT.mono,
+                    fontSize: 9.5,
+                    letterSpacing: ".12em",
+                    color: SQ.ember,
+                    border: `1px solid ${SQ.inputBorder}`,
+                    borderRadius: 999,
+                    padding: "4px 10px",
+                    background: "transparent",
+                    cursor: "pointer",
+                  }}
+                >
+                  EDIT BRANDING
+                </button>
+              ) : null}
+            </div>
+            <div
+              style={{
+                fontFamily: FONT.display,
+                fontSize: "clamp(34px,5vw,58px)",
+                lineHeight: 0.92,
+                letterSpacing: "-.03em",
+                marginTop: 10,
+              }}
+            >
+              {f.name}
+              {f.tag ? <span style={{ color: SQ.mute }}> — {f.tag}</span> : null}
+            </div>
           </div>
         </div>
         <div
@@ -361,6 +460,14 @@ function FranchisePanel({ mine }: { mine: FranchiseMineView }) {
           {String(f.rank).padStart(2, "0")}
         </div>
       </div>
+
+      <BrandingModal
+        open={brandingOpen}
+        franchiseId={f.id}
+        currentLogo={f.logoUrl}
+        currentBanner={f.bannerUrl}
+        onClose={() => setBrandingOpen(false)}
+      />
 
       <div
         style={{
@@ -382,57 +489,117 @@ function FranchisePanel({ mine }: { mine: FranchiseMineView }) {
               const badges: { label: string; color: string }[] = [];
               if (f.owner?.playerId === p.playerId) badges.push({ label: "OWNER", color: SQ.red });
               if (f.manager?.playerId === p.playerId) badges.push({ label: "MANAGER", color: SQ.amber });
+              const tags = p.tags ?? [];
               return (
-                <Link
-                  key={p.playerId}
-                  href={`/player/${p.playerId}`}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    padding: "13px 0",
-                    borderTop: `1px solid ${SQ.hairlineCell}`,
-                    textDecoration: "none",
-                    color: SQ.ink,
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <div
-                      style={{
-                        width: 32,
-                        height: 32,
-                        borderRadius: "50%",
-                        background: SQ.avatar,
-                        border: `1px solid ${SQ.avatarBorder}`,
-                      }}
-                    />
-                    <div>
-                      <div style={{ fontSize: 14.5, fontWeight: 600, display: "flex", alignItems: "center", gap: 7 }}>
-                        {p.gamerTag}
-                        {badges.map((b) => (
-                          <span
-                            key={b.label}
-                            style={{ fontFamily: FONT.mono, fontSize: 9, letterSpacing: ".08em", color: b.color }}
+                <div key={p.playerId} style={{ borderTop: `1px solid ${SQ.hairlineCell}` }}>
+                  <Link
+                    href={`/player/${p.playerId}`}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "13px 0 8px",
+                      textDecoration: "none",
+                      color: SQ.ink,
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <Avatar url={p.avatarUrl} alt={p.gamerTag} size={32} />
+                      <div>
+                        <div style={{ fontSize: 14.5, fontWeight: 600, display: "flex", alignItems: "center", gap: 7 }}>
+                          {p.gamerTag}
+                          {badges.map((b) => (
+                            <span
+                              key={b.label}
+                              style={{ fontFamily: FONT.mono, fontSize: 9, letterSpacing: ".08em", color: b.color }}
+                            >
+                              {b.label}
+                            </span>
+                          ))}
+                        </div>
+                        <div
+                          style={{
+                            fontFamily: FONT.mono,
+                            fontSize: 10,
+                            letterSpacing: ".1em",
+                            color: SQ.mute,
+                            marginTop: 2,
+                          }}
+                        >
+                          {p.status}
+                          {p.realName ? ` · ${p.realName}` : ""}
+                        </div>
+                        {/* Contact fields the backend surfaces to franchise leadership only. */}
+                        {p.phone || p.contactEmail ? (
+                          <div
+                            style={{
+                              fontFamily: FONT.mono,
+                              fontSize: 10,
+                              letterSpacing: ".04em",
+                              color: SQ.faint,
+                              marginTop: 3,
+                              display: "flex",
+                              gap: 10,
+                              flexWrap: "wrap",
+                            }}
                           >
-                            {b.label}
-                          </span>
-                        ))}
-                      </div>
-                      <div
-                        style={{
-                          fontFamily: FONT.mono,
-                          fontSize: 10,
-                          letterSpacing: ".1em",
-                          color: SQ.mute,
-                          marginTop: 2,
-                        }}
-                      >
-                        {p.status}
+                            {p.phone ? <span>☎ {p.phone}</span> : null}
+                            {p.contactEmail ? <span>✉ {p.contactEmail}</span> : null}
+                          </div>
+                        ) : null}
                       </div>
                     </div>
-                  </div>
-                  <div style={{ fontFamily: FONT.mono, fontSize: 11, color: SQ.dim }}>▸</div>
-                </Link>
+                    <div style={{ fontFamily: FONT.mono, fontSize: 11, color: SQ.dim }}>▸</div>
+                  </Link>
+                  {/* Franchise-private designation tags (leadership only) + manage control. */}
+                  {canManage || tags.length ? (
+                    <div
+                      style={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: 6,
+                        alignItems: "center",
+                        padding: "0 0 12px 44px",
+                      }}
+                    >
+                      {tags.map((t) => (
+                        <span
+                          key={t}
+                          style={{
+                            fontFamily: FONT.mono,
+                            fontSize: 9.5,
+                            letterSpacing: ".04em",
+                            color: SQ.ember,
+                            border: `1px solid rgba(232,96,44,.4)`,
+                            borderRadius: 999,
+                            padding: "3px 9px",
+                          }}
+                        >
+                          {t}
+                        </span>
+                      ))}
+                      {canManage ? (
+                        <button
+                          type="button"
+                          onClick={() => setTagPlayer(p)}
+                          style={{
+                            fontFamily: FONT.mono,
+                            fontSize: 9.5,
+                            letterSpacing: ".08em",
+                            color: SQ.mute,
+                            background: "transparent",
+                            border: `1px dashed ${SQ.inputBorder}`,
+                            borderRadius: 999,
+                            padding: "3px 9px",
+                            cursor: "pointer",
+                          }}
+                        >
+                          {tags.length ? "Edit tags" : "+ Tags"}
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
               );
             })
           )}
@@ -453,43 +620,45 @@ function FranchisePanel({ mine }: { mine: FranchiseMineView }) {
                   <div style={{ overflowX: "auto" }}>
                     <div style={{ minWidth: 320 }}>
                       {upcoming.map((m) => (
-                        <div
-                          key={m.matchId}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                            gap: 12,
-                            padding: "12px 0",
-                            borderTop: `1px solid ${SQ.hairlineCell}`,
-                          }}
-                        >
-                          <Link
-                            href={`/match/${m.matchId}`}
-                            style={{ textDecoration: "none", color: SQ.ink, flex: 1, minWidth: 0 }}
+                        <div key={m.matchId} style={{ borderTop: `1px solid ${SQ.hairlineCell}`, padding: "12px 0" }}>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              gap: 12,
+                            }}
                           >
-                            <div style={{ fontSize: 14, fontWeight: 600 }}>{m.gameName}</div>
-                            <div
-                              style={{
-                                fontFamily: FONT.mono,
-                                fontSize: 10,
-                                letterSpacing: ".1em",
-                                color: SQ.mute,
-                                marginTop: 2,
-                              }}
+                            <Link
+                              href={`/match/${m.matchId}`}
+                              style={{ textDecoration: "none", color: SQ.ink, flex: 1, minWidth: 0 }}
                             >
-                              {shortDate(m.scheduledAt)} · {m.status}
-                            </div>
-                          </Link>
-                          {canManage ? (
-                            <button
-                              type="button"
-                              onClick={() => setLineupMatchId(m.matchId)}
-                              style={actionBtn("transparent", SQ.ember, true, false)}
-                            >
-                              Set lineup
-                            </button>
-                          ) : null}
+                              <div style={{ fontSize: 14, fontWeight: 600 }}>{m.gameName}</div>
+                              <div
+                                style={{
+                                  fontFamily: FONT.mono,
+                                  fontSize: 10,
+                                  letterSpacing: ".1em",
+                                  color: SQ.mute,
+                                  marginTop: 2,
+                                }}
+                              >
+                                {shortDate(m.scheduledAt)} · {m.status}
+                              </div>
+                            </Link>
+                            {canManage ? (
+                              <button
+                                type="button"
+                                onClick={() => setLineupMatchId(m.matchId)}
+                                style={actionBtn("transparent", SQ.ember, true, false)}
+                              >
+                                Set lineup
+                              </button>
+                            ) : null}
+                          </div>
+                          {/* Read-only view of the fielded lineup — so every roster player knows who
+                              they'll be playing with, not just the owner/manager. */}
+                          <FieldedLineup matchId={m.matchId} franchiseId={f.id} />
                         </div>
                       ))}
                     </div>
@@ -559,7 +728,126 @@ function FranchisePanel({ mine }: { mine: FranchiseMineView }) {
         franchiseTag={f.tag}
         onClose={() => setLineupMatchId(null)}
       />
+
+      {tagPlayer ? (
+        <RosterTagsModal franchiseId={f.id} player={tagPlayer} onClose={() => setTagPlayer(null)} />
+      ) : null}
     </div>
+  );
+}
+
+// ---- franchise-private player designation tags (owner/manager) ----------------
+
+function RosterTagsModal({
+  franchiseId,
+  player,
+  onClose,
+}: {
+  franchiseId: string;
+  player: RosterMember;
+  onClose: () => void;
+}) {
+  const save = useSetRosterTags();
+  const [tags, setTags] = useState<string[]>(player.tags ?? []);
+  const [draft, setDraft] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+
+  const addDraft = () => {
+    const v = draft.trim();
+    if (!v) return;
+    if (!tags.some((t) => t.toLowerCase() === v.toLowerCase())) {
+      setTags((cur) => [...cur, v.length > 40 ? v.slice(0, 40) : v]);
+    }
+    setDraft("");
+  };
+
+  const submit = async () => {
+    setErr(null);
+    try {
+      await save.mutateAsync({ id: franchiseId, playerId: player.playerId, tags });
+      onClose();
+    } catch (e) {
+      setErr(apiErrorMessage(e, "Couldn't save the tags."));
+    }
+  };
+
+  return (
+    <Modal open title={`Tags · ${player.gamerTag}`} onClose={onClose}>
+      <div style={{ fontSize: 12.5, color: SQ.mute, lineHeight: 1.5, marginBottom: 14 }}>
+        Private designations (e.g. &ldquo;Valorant 1&rdquo;, &ldquo;BGMI 2&rdquo;) only your franchise sees —
+        a quick way to mark who plays what when setting lineups.
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+        {tags.length === 0 ? (
+          <span style={{ fontSize: 12.5, color: SQ.mute }}>No tags yet.</span>
+        ) : (
+          tags.map((t) => (
+            <span
+              key={t}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 7,
+                fontFamily: FONT.mono,
+                fontSize: 11,
+                color: SQ.ember,
+                border: `1px solid rgba(232,96,44,.45)`,
+                borderRadius: 999,
+                padding: "5px 10px",
+              }}
+            >
+              {t}
+              <button
+                type="button"
+                onClick={() => setTags((cur) => cur.filter((x) => x !== t))}
+                aria-label={`Remove ${t}`}
+                style={{ background: "transparent", border: "none", color: SQ.mute, cursor: "pointer", fontSize: 13, lineHeight: 1 }}
+              >
+                ×
+              </button>
+            </span>
+          ))
+        )}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input
+          className="sq-field"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              addDraft();
+            }
+          }}
+          placeholder="e.g. Valorant 1"
+          style={{
+            flex: 1,
+            background: SQ.inset,
+            border: `1px solid ${SQ.field}`,
+            borderRadius: 5,
+            padding: "9px 12px",
+            fontSize: 13.5,
+            color: SQ.ink,
+            fontFamily: FONT.sans,
+          }}
+        />
+        <button type="button" onClick={addDraft} style={actionBtn("transparent", SQ.faint, true, false)}>
+          Add
+        </button>
+      </div>
+      {err ? (
+        <div style={{ fontFamily: FONT.mono, fontSize: 11.5, color: SQ.ember, marginTop: 10 }}>{err}</div>
+      ) : null}
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 18 }}>
+        <button type="button" onClick={onClose} disabled={save.isPending} style={actionBtn("transparent", SQ.faint, true, save.isPending)}>
+          Cancel
+        </button>
+        <button type="button" onClick={submit} disabled={save.isPending} style={actionBtn(SQ.red, SQ.sidebar, false, save.isPending)}>
+          {save.isPending ? "Saving…" : "Save tags"}
+        </button>
+      </div>
+    </Modal>
   );
 }
 
@@ -839,6 +1127,176 @@ function Header() {
     </div>
   );
 }
+
+// ---- franchise branding (logo + banner) modal (owner/admin) ----------------
+
+function BrandingModal({
+  open,
+  franchiseId,
+  currentLogo,
+  currentBanner,
+  onClose,
+}: {
+  open: boolean;
+  franchiseId: string;
+  currentLogo?: string;
+  currentBanner?: string;
+  onClose: () => void;
+}) {
+  const upload = useUploadMedia();
+  const save = useUpdateFranchiseBranding();
+  const [logoUrl, setLogoUrl] = useState<string | undefined>(currentLogo);
+  const [bannerUrl, setBannerUrl] = useState<string | undefined>(currentBanner);
+  const [err, setErr] = useState<string | null>(null);
+  const [imgBusy, setImgBusy] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setLogoUrl(currentLogo);
+      setBannerUrl(currentBanner);
+      setErr(null);
+    }
+  }, [open, currentLogo, currentBanner]);
+
+  const pick = async (file: File, kind: "logo" | "banner") => {
+    setErr(null);
+    setImgBusy(true);
+    try {
+      // Compress client-side to fit the per-kind cap instead of rejecting large files.
+      const dataUrl = await compressImage(file, IMAGE_PRESETS[kind]);
+      const res = await upload.mutateAsync({ data: dataUrl, kind });
+      if (kind === "logo") setLogoUrl(res.url);
+      else setBannerUrl(res.url);
+    } catch (e) {
+      setErr(apiErrorMessage(e, "Couldn't process that image."));
+    } finally {
+      setImgBusy(false);
+    }
+  };
+
+  const submit = async () => {
+    setErr(null);
+    try {
+      await save.mutateAsync({ id: franchiseId, body: { logoUrl: logoUrl ?? "", bannerUrl: bannerUrl ?? "" } });
+      onClose();
+    } catch (e) {
+      setErr(apiErrorMessage(e, "Couldn't save the branding."));
+    }
+  };
+
+  const bannerPreview = mediaSrc(bannerUrl);
+
+  return (
+    <Modal open={open} title="Franchise branding" onClose={save.isPending ? () => {} : onClose}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 18, maxWidth: 520 }}>
+        {/* logo */}
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <Avatar url={logoUrl} size={64} radius={10} />
+          <div style={{ flex: 1 }}>
+            <div style={subLabel}>LOGO · auto-compressed</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <label style={uploadBtn}>
+                {imgBusy || upload.isPending ? "Processing…" : logoUrl ? "Change logo" : "Upload logo"}
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  style={{ display: "none" }}
+                  disabled={imgBusy || upload.isPending}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) pick(f, "logo");
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+              {logoUrl ? (
+                <button type="button" onClick={() => setLogoUrl(undefined)} style={ghostBtn}>
+                  Remove
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </div>
+
+        {/* banner */}
+        <div>
+          <div style={subLabel}>BANNER · auto-compressed</div>
+          <div
+            style={{
+              height: 96,
+              borderRadius: 8,
+              border: `1px solid ${SQ.hairline}`,
+              background: bannerPreview ? undefined : SQ.avatarGrad,
+              backgroundImage: bannerPreview ? `url(${bannerPreview})` : undefined,
+              backgroundSize: "cover",
+              backgroundPosition: "center",
+              marginBottom: 8,
+            }}
+          />
+          <div style={{ display: "flex", gap: 8 }}>
+            <label style={uploadBtn}>
+              {imgBusy || upload.isPending ? "Processing…" : bannerUrl ? "Change banner" : "Upload banner"}
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                style={{ display: "none" }}
+                disabled={imgBusy || upload.isPending}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) pick(f, "banner");
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            {bannerUrl ? (
+              <button type="button" onClick={() => setBannerUrl(undefined)} style={ghostBtn}>
+                Remove
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        {err ? (
+          <div style={{ fontFamily: FONT.mono, fontSize: 11.5, color: SQ.ember }}>{err}</div>
+        ) : null}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <button type="button" onClick={onClose} disabled={save.isPending} style={actionBtn("transparent", SQ.faint, true, save.isPending)}>
+            Cancel
+          </button>
+          <button type="button" onClick={submit} disabled={save.isPending} style={actionBtn(SQ.red, SQ.sidebar, false, save.isPending)}>
+            {save.isPending ? "Saving…" : "Save branding"}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+const uploadBtn = {
+  fontFamily: FONT.mono,
+  fontSize: 11,
+  letterSpacing: ".08em",
+  padding: "8px 12px",
+  borderRadius: 5,
+  cursor: "pointer",
+  color: SQ.ink,
+  border: `1px solid ${SQ.inputBorder}`,
+  background: "transparent",
+  display: "inline-block",
+} as const;
+
+const ghostBtn = {
+  fontFamily: FONT.mono,
+  fontSize: 11,
+  letterSpacing: ".08em",
+  padding: "8px 12px",
+  borderRadius: 5,
+  cursor: "pointer",
+  color: SQ.mute,
+  border: `1px solid ${SQ.inputBorder}`,
+  background: "transparent",
+} as const;
 
 function actionBtn(bg: string, color: string, outline: boolean, disabled: boolean) {
   return {

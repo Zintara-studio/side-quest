@@ -226,6 +226,26 @@ export function SocialRow() {
     const SRC = "https://accounts.google.com/gsi/client";
     let cancelled = false;
 
+    // (Re)draw the button for the CURRENT site theme. GIS renders inside a locked shadow DOM we
+    // can't token-theme, so the closest we can do is pick its dark/light variant so it doesn't sit
+    // as a bright white block on the espresso theme. We read data-theme live (set pre-paint by the
+    // root-layout script, so it's correct on first render) and clear the container first — GIS
+    // *appends*, so re-rendering on a theme flip would otherwise stack a second button.
+    const drawButton = () => {
+      const g = gis();
+      if (cancelled || !g?.accounts?.id || !btnRef.current) return;
+      const dark = document.documentElement.dataset.theme === "dark";
+      btnRef.current.innerHTML = "";
+      g.accounts.id.renderButton(btnRef.current, {
+        type: "standard",
+        theme: dark ? "filled_black" : "outline",
+        shape: "pill",
+        size: "large",
+        text: "continue_with",
+        width: 300,
+      });
+    };
+
     const init = () => {
       const g = gis();
       if (cancelled || !g?.accounts?.id || !btnRef.current) return;
@@ -242,19 +262,16 @@ export function SocialRow() {
           }
         },
       });
-      g.accounts.id.renderButton(btnRef.current, {
-        type: "standard",
-        // GIS renders inside a locked shadow-DOM iframe, so we can't apply the warm-paper/espresso
-        // tokens — the closest we can do is pick its dark/light variant from the site theme so it
-        // doesn't sit as a bright white block on the dark theme. (A token-exact button would require
-        // switching to the OAuth2 code-client flow, which changes the backend contract — out of scope.)
-        theme: document.documentElement.dataset.theme === "dark" ? "filled_black" : "outline",
-        shape: "pill",
-        size: "large",
-        text: "continue_with",
-        width: 300,
-      });
+      drawButton();
     };
+
+    // useTheme() is isolated per-hook (local state, no shared store), so a toggle in the nav can't
+    // notify us through React. Watch the shared source of truth instead — the data-theme attribute
+    // on <html> — and redraw the button in the matching variant whenever it flips.
+    const observer = new MutationObserver((records) => {
+      if (records.some((r) => r.attributeName === "data-theme")) drawButton();
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
     const existing = document.querySelector<HTMLScriptElement>(`script[src="${SRC}"]`);
     if (existing && gis()?.accounts?.id) {
@@ -271,6 +288,7 @@ export function SocialRow() {
     }
     return () => {
       cancelled = true;
+      observer.disconnect();
     };
   }, [clientId, googleLogin, router]);
 

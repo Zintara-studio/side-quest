@@ -1,5 +1,6 @@
 package com.sidequest.arena.security;
 
+import com.sidequest.arena.model.AdminLevel;
 import com.sidequest.arena.model.Role;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
@@ -46,7 +47,10 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                     UUID userId = UUID.fromString(claims.getSubject());
                     String email = claims.get("email", String.class);
                     Role role = Role.valueOf(claims.get("role", String.class));
-                    UserPrincipal principal = new UserPrincipal(userId, email, role);
+                    // Tokens minted before the admin-tier change carry no "adm" claim → treat as NONE.
+                    String adm = claims.get("adm", String.class);
+                    AdminLevel adminLevel = adm == null ? AdminLevel.NONE : AdminLevel.valueOf(adm);
+                    UserPrincipal principal = new UserPrincipal(userId, email, role, adminLevel);
                     var auth = new UsernamePasswordAuthenticationToken(
                             principal, null, principal.getAuthorities());
                     auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));

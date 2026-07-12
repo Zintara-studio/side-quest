@@ -1,5 +1,6 @@
 package com.sidequest.arena.security;
 
+import com.sidequest.arena.model.AdminLevel;
 import com.sidequest.arena.model.Role;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
@@ -47,13 +48,16 @@ public class JwtService {
         this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 
-    public String generateAccessToken(UUID userId, String email, Role role) {
+    public String generateAccessToken(UUID userId, String email, Role role, AdminLevel adminLevel) {
         Instant now = Instant.now();
         return Jwts.builder()
                 .issuer(props.getIssuer())
                 .subject(userId.toString())
                 .claim("email", email)
                 .claim("role", role.name())
+                // Admin tier is carried separately from role (see AdminLevel) so an appointed admin keeps
+                // their player role claim. Defaults to NONE when unset.
+                .claim("adm", (adminLevel == null ? AdminLevel.NONE : adminLevel).name())
                 .claim("typ", "access")
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plusSeconds(props.getAccessTokenTtlSeconds())))

@@ -9,6 +9,8 @@ import java.util.List;
  * @param id                       lot id
  * @param playerId                 the player up for auction
  * @param gamerTag                 the player's public handle
+ * @param avatarUrl                the player's profile picture ({@code /media/{id}} URL; nullable —
+ *                                 public, shown to spectators and bidders alike)
  * @param realName                 the player's real name from registration (nullable; hidden from
  *                                 spectators — only bidders/admin scouting the pool see it)
  * @param status                   {@code QUEUED} / {@code ON_BLOCK} / {@code SOLD} / {@code UNSOLD}
@@ -30,6 +32,7 @@ public record AuctionLotView(
         String id,
         String playerId,
         String gamerTag,
+        String avatarUrl,
         String realName,
         String status,
         long currentBid,

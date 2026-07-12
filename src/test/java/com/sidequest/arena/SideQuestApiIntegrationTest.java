@@ -1099,4 +1099,162 @@ class SideQuestApiIntegrationTest {
         assertThat(detail.get("logoUrl").asText()).isEqualTo(branding.get("logoUrl").asText());
         assertThat(detail.get("bannerUrl").asText()).isEqualTo(branding.get("bannerUrl").asText());
     }
+
+    // ---------- Batch 10: admin tier, pinned announcements, auction unsold semantics ----------
+
+    /** Register a brand-new player, verify the emailed OTP, and return a logged-in access token. */
+    private String registerVerifyLogin(String email, String name) {
+        ObjectNode body = mapper.createObjectNode();
+        body.put("name", name);
+        body.put("email", email);
+        body.put("password", "password123");
+        assertThat(post("/auth/register", body, null).getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+        String code = emails.codeFor(email);
+        assertThat(code).matches("\\d{6}");
+        ObjectNode verify = mapper.createObjectNode();
+        verify.put("email", email);
+        verify.put("code", code);
+        assertThat(post("/auth/verify-email", verify, null).getStatusCode()).isEqualTo(HttpStatus.OK);
+        return login(email, "password123");
+    }
+
+    /**
+     * The main admin (super-admin) governs appointment and the sensitive, main-admin-only actions.
+     * Appointed admins run day-to-day operations but are forbidden the undo-less levers (season
+     * finish, the auction workflow, changing a game's standings weight) and cannot appoint/revoke.
+     */
+    @Test
+    @Order(12)
+    void mainAdminGovernsAppointmentAndSensitiveActions() {
+        String superAdmin = login("admin@sidequest.gg", "password");
+        JsonNode superMe = get("/auth/me", superAdmin);
+        assertThat(superMe.get("user").get("adminLevel").asText()).isEqualTo("SUPER_ADMIN");
+
+        // A fresh, verified player is a plain player — no control room.
+        String pEmail = "appointee_" + UUID.randomUUID().toString().substring(0, 8) + "@sidequest.gg";
+        String plainToken = registerVerifyLogin(pEmail, "Appointee");
+        JsonNode pMe = get("/auth/me", plainToken);
+        assertThat(pMe.get("user").get("adminLevel").asText()).isEqualTo("NONE");
+        String pPlayerId = pMe.get("player").get("id").asText();
+        assertThat(getResp("/admin/overview", plainToken).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+
+        // The main admin appoints the player as an admin.
+        ResponseEntity<String> appoint = post("/admin/players/" + pPlayerId + "/admin", null, superAdmin);
+        assertThat(appoint.getStatusCode().is2xxSuccessful()).isTrue();
+        assertThat(parse(appoint).get("adminLevel").asText()).isEqualTo("ADMIN");
+
+        // The appointee re-logs in to pick up the new tier, and keeps their PLAYER role (dual identity).
+        String adminToken = login(pEmail, "password123");
+        JsonNode adminMe = get("/auth/me", adminToken);
+        assertThat(adminMe.get("user").get("adminLevel").asText()).isEqualTo("ADMIN");
+        assertThat(adminMe.get("user").get("role").asText()).isEqualTo("PLAYER");
+        assertThat(adminMe.get("player")).isNotNull(); // still a player → dual dashboard
+
+        // Appointed admin CAN do day-to-day admin.
+        assertThat(getResp("/admin/overview", adminToken).getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        // ...but is FORBIDDEN the main-admin-only actions.
+        assertThat(post("/seasons/finish", null, adminToken).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        String auctionId = get("/auctions/active", null).get("id").asText();
+        assertThat(post("/auctions/" + auctionId + "/start", null, adminToken).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN);
+        // Weight change is field-level main-admin-only (other game edits stay open to any admin).
+        String gameId = get("/games", null).get(0).get("id").asText();
+        ObjectNode weight = mapper.createObjectNode();
+        weight.put("standingsWeight", 137);
+        assertThat(patch("/games/" + gameId, weight, adminToken).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        // ...and cannot appoint/revoke other admins.
+        assertThat(post("/admin/players/" + pPlayerId + "/admin", null, adminToken).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN);
+
+        // Revoke the appointee → plain player again, control room closed (after re-login).
+        assertThat(delete("/admin/players/" + pPlayerId + "/admin", superAdmin).getStatusCode())
+                .isEqualTo(HttpStatus.NO_CONTENT);
+        String demotedToken = login(pEmail, "password123");
+        assertThat(get("/auth/me", demotedToken).get("user").get("adminLevel").asText()).isEqualTo("NONE");
+        assertThat(getResp("/admin/overview", demotedToken).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    /** A pinned announcement surfaces under the {@code ?pinned=true} home filter; unpinning drops it. */
+    @Test
+    @Order(13)
+    void pinnedAnnouncementSurfacesUnderPinnedFilter() {
+        String admin = login("admin@sidequest.gg", "password");
+        ObjectNode body = mapper.createObjectNode();
+        body.put("category", "GENERAL");
+        body.put("title", "Pinned notice " + UUID.randomUUID().toString().substring(0, 8));
+        body.put("body", "Important league-pinned message.");
+        body.put("pinned", true);
+        ResponseEntity<String> created = post("/announcements", body, admin);
+        assertThat(created.getStatusCode().is2xxSuccessful()).isTrue();
+        JsonNode view = parse(created);
+        assertThat(view.get("pinned").asBoolean()).isTrue();
+        String id = view.get("id").asText();
+
+        assertThat(pinnedIds().contains(id)).isTrue();
+
+        // Unpin via PATCH → drops off the pinned filter.
+        ObjectNode unpin = mapper.createObjectNode();
+        unpin.put("pinned", false);
+        assertThat(patch("/announcements/" + id, unpin, admin).getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(pinnedIds().contains(id)).isFalse();
+    }
+
+    private java.util.Set<String> pinnedIds() {
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        for (JsonNode n : get("/announcements?pinned=true", null).get("items")) {
+            assertThat(n.get("pinned").asBoolean()).isTrue(); // the filter must only return pinned posts
+            ids.add(n.get("id").asText());
+        }
+        return ids;
+    }
+
+    /**
+     * Regression guard for the reported bug: marking an on-block lot UNSOLD must NOT read as a sale.
+     * The just-resolved lot is flagged (status UNSOLD, no winner/leading bidder) so the client shows an
+     * "unsold" card rather than re-displaying a previous sale, and the player is not acquired.
+     */
+    @Test
+    @Order(48)
+    void auctionUnsoldFlagsLastResolvedAndLeavesPlayerUnacquired() {
+        String admin = login("admin@sidequest.gg", "password");
+        JsonNode active = get("/auctions/active", null);
+        String auctionId = active.get("id").asText();
+
+        // The pool was locked by an earlier test; open the hall (DRAFT→LOBBY) then start (→LIVE).
+        if ("DRAFT".equals(active.get("status").asText())) {
+            assertThat(post("/auctions/" + auctionId + "/open-hall", null, admin).getStatusCode().is2xxSuccessful())
+                    .isTrue();
+        }
+        ResponseEntity<String> started = post("/auctions/" + auctionId + "/start", null, admin);
+        assertThat(started.getStatusCode().is2xxSuccessful()).isTrue();
+        JsonNode live = parse(started);
+        assertThat(live.get("status").asText()).isEqualTo("LIVE");
+        JsonNode onBlock = live.get("currentLot");
+        assertThat(onBlock).isNotNull();
+        String lotId = onBlock.get("id").asText();
+        String playerId = onBlock.get("playerId").asText();
+
+        // Force UNSOLD (admin path — no bids/timing needed).
+        ResponseEntity<String> unsold = post("/auctions/" + auctionId + "/unsold", null, admin);
+        assertThat(unsold.getStatusCode().is2xxSuccessful()).isTrue();
+        JsonNode after = parse(unsold);
+
+        // The lot that triggered the intermission is the one we just unsold — and it reads UNSOLD.
+        JsonNode resolved = after.get("lastResolvedLot");
+        assertThat(resolved).isNotNull();
+        assertThat(resolved.get("id").asText()).isEqualTo(lotId);
+        assertThat(resolved.get("status").asText()).isEqualTo("UNSOLD");
+        // No winner, and no stale leading bidder (the reported bug re-showed a franchise as the buyer).
+        assertThat(resolved.hasNonNull("soldToTag")).isFalse();
+        assertThat(resolved.hasNonNull("currentBidderTag")).isFalse();
+
+        // The player was NOT acquired by any franchise.
+        JsonNode player = get("/players/" + playerId, null);
+        assertThat(player.hasNonNull("franchise")).isFalse();
+
+        // Leave a terminal auction so later reads aren't affected.
+        assertThat(post("/auctions/" + auctionId + "/complete", null, admin).getStatusCode().is2xxSuccessful())
+                .isTrue();
+    }
 }

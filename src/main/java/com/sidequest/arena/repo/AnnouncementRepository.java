@@ -27,4 +27,7 @@ public interface AnnouncementRepository extends JpaRepository<Announcement, UUID
 
     /** Open registration calls of a given mode — used to close franchise calls when a season starts. */
     List<Announcement> findByRegistrationOpenTrueAndRegistrationType(RegistrationType registrationType);
+
+    /** Pinned notices, newest first — surfaces on the public home page even after they age out of the feed. */
+    List<Announcement> findByPinnedTrueOrderByPublishedAtDesc();
 }

@@ -37,6 +37,17 @@ public class User extends BaseEntity {
     @Column(nullable = false, length = 32)
     private Role role = Role.PLAYER;
 
+    /**
+     * Administrative tier, orthogonal to {@link #role} (see {@link AdminLevel}). {@code NONE} for a
+     * normal player; an appointed admin keeps their {@code role} (player/franchise identity) and gains
+     * {@code ADMIN}; the single main admin holds {@code SUPER_ADMIN}. {@code default 'NONE'} in the
+     * column definition so a Postgres {@code ddl-auto: update} ADD COLUMN backfills existing rows and
+     * satisfies NOT NULL.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "admin_level", nullable = false, length = 32, columnDefinition = "varchar(32) default 'NONE'")
+    private AdminLevel adminLevel = AdminLevel.NONE;
+
     @Column(name = "password_hash", nullable = false)
     private String passwordHash;
 

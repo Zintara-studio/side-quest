@@ -64,10 +64,17 @@ public class AnnouncementService {
      * then cursor-paginated.
      */
     @Transactional(readOnly = true)
-    public PageResponse<AnnouncementView> list(AnnouncementCategory category, Integer limit, String cursor) {
-        List<Announcement> announcements = category != null
-                ? announcementRepository.findByCategoryOrderByPublishedAtDesc(category)
-                : announcementRepository.findAllByOrderByPublishedAtDesc();
+    public PageResponse<AnnouncementView> list(AnnouncementCategory category, Boolean pinned, Integer limit, String cursor) {
+        List<Announcement> announcements;
+        if (Boolean.TRUE.equals(pinned)) {
+            // Home surfaces pinned notices independently of the newest-N feed window, so they persist
+            // even after aging out. Category + pinned aren't combined today (no caller needs it).
+            announcements = announcementRepository.findByPinnedTrueOrderByPublishedAtDesc();
+        } else if (category != null) {
+            announcements = announcementRepository.findByCategoryOrderByPublishedAtDesc(category);
+        } else {
+            announcements = announcementRepository.findAllByOrderByPublishedAtDesc();
+        }
 
         List<AnnouncementView> views = announcements.stream()
                 .map(AnnouncementService::toView)
@@ -117,6 +124,7 @@ public class AnnouncementService {
         announcement.setMatch(linkedMatch);
         announcement.setPublishedAt(req.publishedAt() != null ? req.publishedAt() : Instant.now());
         announcement.setRegistrationOpen(req.registrationOpen());
+        announcement.setPinned(req.pinned());
         announcement.setRegistrationType(
                 req.registrationType() != null ? req.registrationType() : RegistrationType.PLAYER);
         announcement.setTeamSize(req.teamSize());
@@ -149,6 +157,9 @@ public class AnnouncementService {
         }
         if (req.body() != null) {
             announcement.setBody(req.body());
+        }
+        if (req.pinned() != null) {
+            announcement.setPinned(req.pinned());
         }
 
         Announcement saved = announcementRepository.save(announcement);
@@ -271,6 +282,7 @@ public class AnnouncementService {
                 author,
                 a.getPublishedAt(),
                 a.isRegistrationOpen(),
+                a.isPinned(),
                 gameId,
                 gameName,
                 a.getRegistrationType() != null ? a.getRegistrationType().name() : null,

@@ -53,14 +53,14 @@ public class AuctionController {
 
     /** Create a DRAFT auction with participants and a lot pool (admin only). */
     @PostMapping
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public ResponseEntity<AuctionView> create(@Valid @RequestBody CreateAuctionRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(auctionService.create(request));
     }
 
     /** Edit auction config while DRAFT/LOBBY — base price, timers, raises, budget, participants (admin). */
     @PatchMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public AuctionView update(@PathVariable String id,
                              @Valid @RequestBody com.sidequest.arena.auctions.dto.UpdateAuctionRequest request) {
         return auctionService.updateConfig(id, request);
@@ -68,14 +68,14 @@ public class AuctionController {
 
     /** Freeze the registration pool (close auction sign-ups) — required before opening the hall (admin). */
     @PostMapping("/{id}/lock-pool")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public AuctionView lockPool(@PathVariable String id) {
         return auctionService.lockPool(id);
     }
 
     /** DRAFT -> LOBBY: open the hall for participating franchises to join (admin only). */
     @PostMapping("/{id}/open-hall")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public AuctionView openHall(@PathVariable String id) {
         return auctionService.openHall(id);
     }
@@ -94,84 +94,84 @@ public class AuctionController {
 
     /** Set/change the scheduled go-live time and notify participants (admin only). */
     @PostMapping("/{id}/reschedule")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public AuctionView reschedule(@PathVariable String id, @Valid @RequestBody RescheduleRequest request) {
         return auctionService.reschedule(id, request.scheduledAt());
     }
 
     /** LOBBY -> LIVE and nominate the first lot (admin only). */
     @PostMapping("/{id}/start")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public AuctionView start(@PathVariable String id) {
         return auctionService.start(id);
     }
 
     /** LIVE -> PAUSED (admin only). */
     @PostMapping("/{id}/pause")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public AuctionView pause(@PathVariable String id) {
         return auctionService.pause(id);
     }
 
     /** PAUSED -> LIVE (admin only). */
     @PostMapping("/{id}/resume")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public AuctionView resume(@PathVariable String id) {
         return auctionService.resume(id);
     }
 
     /** Finalize the on-block lot now, then advance (admin only). */
     @PostMapping("/{id}/finalize")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public AuctionView finalizeCurrent(@PathVariable String id) {
         return auctionService.finalizeCurrent(id);
     }
 
     /** Force the on-block lot UNSOLD, then advance (admin only). */
     @PostMapping("/{id}/unsold")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public AuctionView markUnsold(@PathVariable String id) {
         return auctionService.markUnsold(id);
     }
 
     /** LIVE/PAUSED -> COMPLETED; remaining lots become UNSOLD (admin only). */
     @PostMapping("/{id}/complete")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public AuctionView complete(@PathVariable String id) {
         return auctionService.complete(id);
     }
 
     /** DRAFT/LOBBY -> CANCELLED: call off an auction that never went live (admin only). */
     @PostMapping("/{id}/cancel")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public AuctionView cancel(@PathVariable String id) {
         return auctionService.cancel(id);
     }
 
     /** Put a specific queued lot on the block (admin only). */
     @PostMapping("/{id}/nominate")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public AuctionView nominate(@PathVariable String id, @Valid @RequestBody NominateRequest request) {
         return auctionService.nominate(id, request);
     }
 
     /** Force-sell a lot to a participant at a set price (admin only). */
     @PostMapping("/{id}/assign")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public AuctionView assign(@PathVariable String id, @Valid @RequestBody AssignRequest request) {
         return auctionService.assign(id, request);
     }
 
     /** Return a SOLD/UNSOLD lot to the queue (admin only). */
     @PostMapping("/{id}/reauction")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public AuctionView reAuction(@PathVariable String id, @Valid @RequestBody ReAuctionRequest request) {
         return auctionService.reAuction(id, request);
     }
 
     /** Top up a participant's purse (admin only). */
     @PostMapping("/{id}/funds")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public AuctionView addFunds(@PathVariable String id, @Valid @RequestBody AddFundsRequest request) {
         return auctionService.addFunds(id, request);
     }

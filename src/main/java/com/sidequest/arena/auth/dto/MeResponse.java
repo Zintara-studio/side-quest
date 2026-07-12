@@ -15,7 +15,8 @@ public record MeResponse(
             String name,
             String email,
             String phone,
-            String role
+            String role,
+            String adminLevel
     ) {
     }
 

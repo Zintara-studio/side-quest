@@ -6,6 +6,7 @@ import com.sidequest.arena.admin.dto.ResolveDisputeRequest;
 import com.sidequest.arena.admin.dto.TeamMember;
 import com.sidequest.arena.audit.AuditService;
 import com.sidequest.arena.common.ApiException;
+import com.sidequest.arena.model.AdminLevel;
 import com.sidequest.arena.model.AuditLog;
 import com.sidequest.arena.model.Dispute;
 import com.sidequest.arena.model.DisputeCategory;
@@ -13,6 +14,7 @@ import com.sidequest.arena.model.DisputeStatus;
 import com.sidequest.arena.model.Match;
 import com.sidequest.arena.model.MatchStatus;
 import com.sidequest.arena.model.NotificationType;
+import com.sidequest.arena.model.Player;
 import com.sidequest.arena.model.RegistrationStatus;
 import com.sidequest.arena.model.Role;
 import com.sidequest.arena.model.User;
@@ -22,6 +24,7 @@ import com.sidequest.arena.repo.FranchiseRepository;
 import com.sidequest.arena.repo.GameRepository;
 import com.sidequest.arena.repo.MatchRepository;
 import com.sidequest.arena.repo.PlayerRepository;
+import com.sidequest.arena.repo.RefreshTokenRepository;
 import com.sidequest.arena.repo.RegistrationRepository;
 import com.sidequest.arena.repo.UserRepository;
 import com.sidequest.arena.security.SecurityUtils;
@@ -50,6 +53,7 @@ public class AdminService {
     private final RegistrationRepository registrationRepository;
     private final DisputeRepository disputeRepository;
     private final NotificationService notificationService;
+    private final RefreshTokenRepository refreshTokenRepository;
     private final AuditService auditService;
 
     public AdminService(PlayerRepository playerRepository,
@@ -60,6 +64,7 @@ public class AdminService {
                         RegistrationRepository registrationRepository,
                         DisputeRepository disputeRepository,
                         NotificationService notificationService,
+                        RefreshTokenRepository refreshTokenRepository,
                         AuditService auditService) {
         this.playerRepository = playerRepository;
         this.franchiseRepository = franchiseRepository;
@@ -69,6 +74,7 @@ public class AdminService {
         this.registrationRepository = registrationRepository;
         this.disputeRepository = disputeRepository;
         this.notificationService = notificationService;
+        this.refreshTokenRepository = refreshTokenRepository;
         this.auditService = auditService;
     }
 
@@ -142,17 +148,70 @@ public class AdminService {
         return toDisputeView(saved);
     }
 
-    /** Staff roster: admins and franchise managers. */
+    /** Staff roster: every admin (any tier) plus franchise managers. */
     @Transactional(readOnly = true)
     public List<TeamMember> team() {
         List<TeamMember> members = new ArrayList<>();
-        userRepository.findByRole(Role.ADMIN).stream()
-                .map(AdminService::toTeamMember)
+        // Admins are identified by adminLevel (orthogonal to role), so a player promoted to admin shows
+        // here while keeping their PLAYER/FRANCHISE role.
+        userRepository.findByAdminLevelNotOrderByNameAsc(AdminLevel.NONE).stream()
+                .map(this::toTeamMember)
                 .forEach(members::add);
         userRepository.findByRole(Role.FRANCHISE_MANAGER).stream()
-                .map(AdminService::toTeamMember)
+                // A franchise manager who is also an admin is already listed above — don't duplicate.
+                .filter(u -> u.getAdminLevel() == AdminLevel.NONE)
+                .map(this::toTeamMember)
                 .forEach(members::add);
         return members;
+    }
+
+    /**
+     * Main admin only: appoint a player as an admin (adminLevel ADMIN). Appointed admins ARE players, so
+     * the target is a player; their account is promoted while keeping its player identity. Not applicable
+     * to an account already an admin. Audited + the person is notified.
+     */
+    @Transactional
+    public TeamMember appointAdmin(String playerId) {
+        Player player = playerRepository.findById(parseId(playerId))
+                .orElseThrow(() -> ApiException.notFound("Player", playerId));
+        User user = player.getUser();
+        if (user.getAdminLevel() != AdminLevel.NONE) {
+            throw ApiException.conflict("That player is already an admin");
+        }
+        user.setAdminLevel(AdminLevel.ADMIN);
+        userRepository.save(user);
+        notificationService.create(user, NotificationType.GENERAL,
+                "You're now an admin",
+                "The main admin has appointed you as a league admin. A Control room is now available "
+                        + "from your account menu.", "/admin");
+        auditService.record("admin.appoint", "User", user.getId().toString(), user.getEmail());
+        return toTeamMember(user);
+    }
+
+    /**
+     * Main admin only: revoke an appointed admin (back to adminLevel NONE). The main admin (SUPER_ADMIN)
+     * cannot be revoked — there is exactly one. Revoking immediately invalidates the person's existing
+     * sessions (their refresh tokens are killed). Audited + the person is notified.
+     */
+    @Transactional
+    public void revokeAdmin(String playerId) {
+        Player player = playerRepository.findById(parseId(playerId))
+                .orElseThrow(() -> ApiException.notFound("Player", playerId));
+        User user = player.getUser();
+        if (user.getAdminLevel() == AdminLevel.SUPER_ADMIN) {
+            throw ApiException.conflict("The main admin cannot be revoked");
+        }
+        if (user.getAdminLevel() == AdminLevel.NONE) {
+            throw ApiException.conflict("That player is not an admin");
+        }
+        user.setAdminLevel(AdminLevel.NONE);
+        userRepository.save(user);
+        // Cut their admin access immediately rather than waiting for the ~1h access-token to expire.
+        refreshTokenRepository.revokeAllForUser(user.getId());
+        notificationService.create(user, NotificationType.GENERAL,
+                "Admin access removed",
+                "Your league admin access has been removed.", "/");
+        auditService.record("admin.revoke", "User", user.getId().toString(), user.getEmail());
     }
 
     // ---- helpers ----
@@ -188,12 +247,17 @@ public class AdminService {
                 raisedByGamerTag);
     }
 
-    private static TeamMember toTeamMember(User user) {
+    private TeamMember toTeamMember(User user) {
+        String playerId = playerRepository.findByUserId(user.getId())
+                .map(p -> p.getId().toString())
+                .orElse(null);
         return new TeamMember(
                 user.getId().toString(),
                 user.getName(),
                 user.getEmail(),
-                user.getRole().name());
+                user.getRole().name(),
+                user.getAdminLevel().name(),
+                playerId);
     }
 
     /** Parse a String id to UUID; treat unparseable ids as not found. */

@@ -275,7 +275,8 @@ public class AuthService {
                 user.getName(),
                 user.getEmail(),
                 user.getPhone(),
-                user.getRole().name());
+                user.getRole().name(),
+                user.getAdminLevel().name());
 
         MeResponse.PlayerView playerView = playerRepository.findByUserId(userId)
                 .map(player -> new MeResponse.PlayerView(
@@ -326,7 +327,8 @@ public class AuthService {
      * returning the raw refresh secret to the caller.
      */
     private AuthResponse issueTokens(User user) {
-        String accessToken = jwtService.generateAccessToken(user.getId(), user.getEmail(), user.getRole());
+        String accessToken = jwtService.generateAccessToken(
+                user.getId(), user.getEmail(), user.getRole(), user.getAdminLevel());
         String rawRefreshToken = newRawRefreshToken();
 
         RefreshToken refreshToken = new RefreshToken();
@@ -340,7 +342,8 @@ public class AuthService {
                 user.getId().toString(),
                 user.getName(),
                 user.getEmail(),
-                user.getRole().name());
+                user.getRole().name(),
+                user.getAdminLevel().name());
 
         return new AuthResponse(
                 accessToken,

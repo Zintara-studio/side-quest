@@ -22,6 +22,7 @@ public record AnnouncementView(
         String author,
         Instant publishedAt,
         boolean registrationOpen,
+        boolean pinned,
         String gameId,
         String gameName,
         String registrationType,

@@ -23,6 +23,8 @@ import java.util.List;
  * @param serverTime     authoritative server clock at snapshot time
  * @param intermissionUntil when set and in the future, the auction is between lots (nullable)
  * @param currentLot     the lot currently on the block, or {@code null}
+ * @param lastResolvedLot the lot that just resolved (SOLD/UNSOLD) and triggered the current
+ *                       intermission, or {@code null} — drives the intermission card
  * @param franchises     participating franchises with purses and hauls
  * @param lots           every lot in queue order
  * @param recentBids     most recent bids across the auction (newest first)
@@ -43,6 +45,7 @@ public record AuctionView(
         Instant serverTime,
         Instant intermissionUntil,
         AuctionLotView currentLot,
+        AuctionLotView lastResolvedLot,
         List<AuctionFranchiseView> franchises,
         List<AuctionLotView> lots,
         List<AuctionBidView> recentBids

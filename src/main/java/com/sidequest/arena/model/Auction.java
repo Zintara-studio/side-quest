@@ -84,4 +84,14 @@ public class Auction extends BaseEntity {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by")
     private User createdBy;
+
+    /**
+     * The lot that triggered the current between-lots intermission — the one that was just resolved
+     * (SOLD or UNSOLD). Set alongside {@link #intermissionUntil} on every resolution so the client's
+     * intermission card shows the exact lot that just resolved, rather than inferring "the latest" by
+     * lot order (which mis-points under out-of-order admin nomination / re-auction). Nullable.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "last_resolved_lot_id")
+    private AuctionLot lastResolvedLot;
 }

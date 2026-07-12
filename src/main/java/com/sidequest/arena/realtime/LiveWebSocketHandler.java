@@ -71,7 +71,10 @@ public class LiveWebSocketHandler extends TextWebSocketHandler {
                 session.close(CloseStatus.BAD_DATA);
                 return;
             }
-            boolean isAdmin = claims != null && "ADMIN".equals(claims.get("role", String.class));
+            // Admin power is carried on the "adm" claim (AdminLevel), not "role" — an appointed admin's
+            // role stays PLAYER. Either tier may watch the live auction.
+            String adm = claims == null ? null : claims.get("adm", String.class);
+            boolean isAdmin = "ADMIN".equals(adm) || "SUPER_ADMIN".equals(adm);
             if (userId == null || !auctionService.canWatchLive(auctionId, userId, isAdmin)) {
                 session.close(CloseStatus.POLICY_VIOLATION);
                 return;

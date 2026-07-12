@@ -38,9 +38,10 @@ public class AnnouncementController {
     @GetMapping
     public PageResponse<AnnouncementView> list(
             @RequestParam(required = false) AnnouncementCategory category,
+            @RequestParam(required = false) Boolean pinned,
             @RequestParam(required = false) Integer limit,
             @RequestParam(required = false) String cursor) {
-        return announcementService.list(category, limit, cursor);
+        return announcementService.list(category, pinned, limit, cursor);
     }
 
     /** A single announcement. 404 if it does not exist. */

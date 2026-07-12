@@ -686,7 +686,13 @@ public class AuctionService {
             }
             lot.setStatus(AuctionLotStatus.UNSOLD);
             lot.setBidDeadline(null);
+            // Clear the leading-bid state so the DTO never projects a "current bidder" on an unsold lot
+            // (an admin force-unsold with live bids would otherwise leave a stale currentBidderTag).
+            lot.setCurrentBid(0);
+            lot.setCurrentBidder(null);
             auctionLotRepository.save(lot);
+            // Record which lot triggered this intermission so the client shows the right (unsold) card.
+            auction.setLastResolvedLot(lot);
             advanceQueue(auction);
             return publishAndView(auction);
         } finally {
@@ -904,6 +910,8 @@ public class AuctionService {
             lot.setBidDeadline(null);
             auctionLotRepository.save(lot);
         }
+        // Record which lot just resolved (sold or unsold) so the client's intermission card is exact.
+        auction.setLastResolvedLot(lot);
         advanceQueue(auction);
     }
 
@@ -1388,6 +1396,9 @@ public class AuctionService {
                 Instant.now(),
                 auction.getIntermissionUntil(),
                 current == null ? null : lotView(current, auction, includePrivate, scoutMap),
+                auction.getLastResolvedLot() == null
+                        ? null
+                        : lotView(auction.getLastResolvedLot(), auction, includePrivate, scoutMap),
                 franchiseViews,
                 lotViews,
                 recentBids);
@@ -1423,6 +1434,9 @@ public class AuctionService {
                 lot.getId().toString(),
                 player == null ? null : player.getId().toString(),
                 player == null ? null : player.getGamerTag(),
+                // Avatar is public (shown in the players directory) — surfaced to spectators and bidders
+                // alike, independent of the includePrivate scouting gate below.
+                player == null ? null : player.getAvatarUrl(),
                 realName,
                 lot.getStatus().name(),
                 lot.getCurrentBid(),

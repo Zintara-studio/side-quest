@@ -50,6 +50,14 @@ public class Announcement extends BaseEntity {
     @Column(name = "registration_open", nullable = false)
     private boolean registrationOpen = false;
 
+    /**
+     * When true this announcement is pinned to the public home page (an "important / league-pinned"
+     * notice), independent of its age in the feed. {@code default false} in the column definition so
+     * a Postgres {@code ddl-auto: update} ADD COLUMN backfills existing rows and satisfies NOT NULL.
+     */
+    @Column(name = "pinned", nullable = false, columnDefinition = "boolean default false")
+    private boolean pinned = false;
+
     /** Optional game this registration call is for (null = season/general registration). */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "game_id")

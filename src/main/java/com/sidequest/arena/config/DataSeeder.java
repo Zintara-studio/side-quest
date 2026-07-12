@@ -17,6 +17,7 @@ import com.sidequest.arena.model.Game;
 import com.sidequest.arena.model.GameType;
 import com.sidequest.arena.model.InviteStatus;
 import com.sidequest.arena.model.LeagueSettings;
+import com.sidequest.arena.model.AdminLevel;
 import com.sidequest.arena.model.Match;
 import com.sidequest.arena.model.MatchLineup;
 import com.sidequest.arena.model.MatchParticipant;
@@ -170,8 +171,9 @@ public class DataSeeder {
             games.save(game("Brawlhalla", "Platform Fighter", GameType.FIGHTING, 45));
 
             // ---- admin + manager ----
-            User adminUser = users.save(user("League Admin", "admin@sidequest.gg", "+919800000001",
-                    Role.ADMIN, pw));
+            User adminUser = user("League Admin", "admin@sidequest.gg", "+919800000001", Role.ADMIN, pw);
+            adminUser.setAdminLevel(AdminLevel.SUPER_ADMIN); // the dev login is the single main admin
+            adminUser = users.save(adminUser);
             users.save(user("Franchise Manager", "manager@sidequest.gg", "+919800000002",
                     Role.FRANCHISE_MANAGER, pw));
 

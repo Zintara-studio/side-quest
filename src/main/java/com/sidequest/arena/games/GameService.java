@@ -2,6 +2,7 @@ package com.sidequest.arena.games;
 
 import com.sidequest.arena.audit.AuditService;
 import com.sidequest.arena.common.ApiException;
+import com.sidequest.arena.security.SecurityUtils;
 import com.sidequest.arena.games.dto.GameDetail;
 import com.sidequest.arena.games.dto.GameMatchView;
 import com.sidequest.arena.games.dto.GameSummary;
@@ -108,6 +109,11 @@ public class GameService {
         if (request.standingsWeight() != null) {
             int newWeight = Math.max(0, request.standingsWeight());
             weightChanged = newWeight != game.getStandingsWeight();
+            // Standings weight re-weights the whole live table — a sensitive, main-admin-only lever.
+            // Regular admins may still edit every other game field; only a weight *change* is gated.
+            if (weightChanged && !SecurityUtils.isSuperAdmin()) {
+                throw ApiException.forbidden("Only the main admin can change a game's standings weight");
+            }
             game.setStandingsWeight(newWeight);
             changes.add("standingsWeight=" + newWeight);
         }

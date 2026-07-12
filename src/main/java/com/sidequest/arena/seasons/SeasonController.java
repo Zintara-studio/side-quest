@@ -52,16 +52,16 @@ public class SeasonController {
         return seasonService.standings(code);
     }
 
-    /** Admin: start a new season (finishing the current one first). */
+    /** Main admin only: start a new season (finishing the current one first) — irreversible in-app. */
     @PostMapping("/start")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public SeasonView start(@Valid @RequestBody StartSeasonRequest request) {
         return seasonService.start(request);
     }
 
-    /** Admin: finish the active season. */
+    /** Main admin only: finish the active season (freezes its standings — no in-app undo). */
     @PostMapping("/finish")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public SeasonView finish() {
         return seasonService.finish();
     }

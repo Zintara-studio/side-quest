@@ -24,6 +24,7 @@ public record CreateAnnouncementRequest(
         String matchId,
         Instant publishedAt,
         boolean registrationOpen,
+        boolean pinned,
         String gameId,
         RegistrationType registrationType,
         Integer teamSize

@@ -2,7 +2,7 @@ package com.sidequest.arena.security;
 
 import com.sidequest.arena.common.ApiException;
 import com.sidequest.arena.common.ErrorCode;
-import com.sidequest.arena.model.Role;
+import com.sidequest.arena.model.AdminLevel;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 
@@ -35,7 +35,13 @@ public final class SecurityUtils {
         return requirePrincipal().getUserId();
     }
 
+    /** True for any admin tier (appointed admin or the main admin). */
     public static boolean isAdmin() {
-        return currentPrincipal().map(p -> p.getRole() == Role.ADMIN).orElse(false);
+        return currentPrincipal().map(p -> p.getAdminLevel() != AdminLevel.NONE).orElse(false);
+    }
+
+    /** True only for the main admin (super-admin), who alone may perform the sensitive/undo-less actions. */
+    public static boolean isSuperAdmin() {
+        return currentPrincipal().map(p -> p.getAdminLevel() == AdminLevel.SUPER_ADMIN).orElse(false);
     }
 }

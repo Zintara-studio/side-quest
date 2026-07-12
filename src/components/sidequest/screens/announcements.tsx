@@ -9,6 +9,7 @@ import { MarkdownView } from "../markdown";
 import { useAnnouncementsInfinite } from "@/lib/query/hooks";
 import { announcementTagFor, shortDate } from "@/lib/adapters/league";
 import type { AnnouncementView } from "@/lib/api/types";
+import { matchHref, registerHref } from "@/lib/routes";
 
 // Roughly how much body text counts as "long enough to collapse".
 const PREVIEW_LIMIT = 200;
@@ -143,7 +144,7 @@ function AnnouncementRow({ a }: { a: AnnouncementView }) {
         </div>
         {a.registrationOpen ? (
           <Link
-            href={`/register?announcement=${a.id}`}
+            href={registerHref(a.shortCode)}
             style={{
               fontFamily: FONT.mono,
               fontSize: 11,
@@ -162,7 +163,7 @@ function AnnouncementRow({ a }: { a: AnnouncementView }) {
           </Link>
         ) : a.category === "RESULT" && a.matchId ? (
           <Link
-            href={`/match/${a.matchId}`}
+            href={matchHref(a.matchSlug ?? a.matchId ?? "")}
             style={{
               fontFamily: FONT.mono,
               fontSize: 11,

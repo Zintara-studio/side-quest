@@ -12,12 +12,14 @@ import {
   useRespondInvite,
   usePlayers,
   useCancelRegistration,
+  useHideRegistration,
   useLeaveSquad,
 } from "@/lib/query/hooks";
 import { apiErrorMessage } from "@/lib/api/client";
 import { shortDate } from "@/lib/adapters/league";
 import { ConfirmModal } from "@/components/sidequest/confirm-modal";
 import type { InviteView, RegistrationView } from "@/lib/api/types";
+import { matchHref } from "@/lib/routes";
 
 const sectionTitle = {
   fontFamily: FONT.mono,
@@ -85,7 +87,7 @@ export function MyRegistrationsScreen() {
 
   // Group registrations by the match/announcement they're for; non-match "general" sign-ups
   // (season bids, franchise proposals, etc.) get their own section. Backend order is newest-first.
-  const matchGroups: { matchId: string; gameName?: string; regs: RegistrationView[] }[] = [];
+  const matchGroups: { matchId: string; matchSlug?: string; gameName?: string; regs: RegistrationView[] }[] = [];
   const generalRegs: RegistrationView[] = [];
   const groupIndex = new Map<string, number>();
   for (const r of regs) {
@@ -94,7 +96,7 @@ export function MyRegistrationsScreen() {
       if (idx === undefined) {
         idx = matchGroups.length;
         groupIndex.set(r.matchId, idx);
-        matchGroups.push({ matchId: r.matchId, gameName: r.gameName, regs: [] });
+        matchGroups.push({ matchId: r.matchId, matchSlug: r.matchSlug, gameName: r.gameName, regs: [] });
       }
       if (!matchGroups[idx].gameName && r.gameName) matchGroups[idx].gameName = r.gameName;
       matchGroups[idx].regs.push(r);
@@ -223,7 +225,7 @@ export function MyRegistrationsScreen() {
           <div style={{ display: "flex", flexDirection: "column", gap: 30 }}>
             {matchGroups.map((g) => (
               <div key={g.matchId}>
-                <GroupHeader eyebrow="Match" title={g.gameName || "Match sign-up"} hint={`#${g.matchId.slice(0, 8)}`} matchId={g.matchId} />
+                <GroupHeader eyebrow="Match" title={g.gameName || "Match sign-up"} hint={`#${g.matchId.slice(0, 8)}`} matchId={g.matchId} matchSlug={g.matchSlug} />
                 <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                   {g.regs.map((r) => (
                     <RegistrationCard key={r.id} r={r} />
@@ -252,6 +254,7 @@ function RegistrationCard({ r }: { r: RegistrationView }) {
   const invite = useInviteTeammate();
   const playersQ = usePlayers({ limit: 100 });
   const cancel = useCancelRegistration();
+  const hide = useHideRegistration();
   const [tag, setTag] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
@@ -503,6 +506,31 @@ function RegistrationCard({ r }: { r: RegistrationView }) {
         </div>
       ) : null}
 
+      {/* Settled (terminal) registrations can be removed from your own history (soft hide). */}
+      {!canCancel
+      && ["WITHDRAWN", "REJECTED", "EXPIRED", "LOCKED", "APPROVED"].includes(r.status) ? (
+        <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
+          <button
+            type="button"
+            disabled={hide.isPending}
+            onClick={() => hide.mutate(r.id)}
+            title="Remove this from your history"
+            style={{
+              fontFamily: FONT.mono,
+              fontSize: 10.5,
+              letterSpacing: ".1em",
+              textTransform: "uppercase",
+              color: SQ.mute,
+              background: "transparent",
+              border: "none",
+              cursor: "pointer",
+            }}
+          >
+            {hide.isPending ? "Removing…" : "✕ Remove"}
+          </button>
+        </div>
+      ) : null}
+
       <ConfirmModal
         open={confirmCancel}
         tone="destructive"
@@ -622,11 +650,13 @@ function GroupHeader({
   title,
   hint,
   matchId,
+  matchSlug,
 }: {
   eyebrow: string;
   title: string;
   hint?: string;
   matchId?: string;
+  matchSlug?: string;
 }) {
   const hintStyle = {
     fontFamily: FONT.mono,
@@ -650,7 +680,7 @@ function GroupHeader({
       <span style={{ fontSize: 15.5, fontWeight: 700, color: SQ.ink }}>{title}</span>
       {hint ? (
         matchId ? (
-          <Link href={`/match/${matchId}`} style={{ ...hintStyle, textDecoration: "none" }}>
+          <Link href={matchHref(matchSlug ?? matchId)} style={{ ...hintStyle, textDecoration: "none" }}>
             {hint}
           </Link>
         ) : (

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { franchiseHref } from "@/lib/routes";
 import { SQ, FONT, rankAccent } from "../tokens";
 import { LeagueTitle } from "../league-title";
 import { StateNote } from "../state-note";
@@ -138,7 +139,7 @@ export function FranchisesScreen() {
                 return (
                   <Link
                     key={t.id}
-                    href={`/franchise/${t.id}`}
+                    href={t.sub ? franchiseHref(t.sub) : `/franchise/${t.id}`}
                     style={{
                       display: "flex",
                       alignItems: "center",
@@ -208,7 +209,7 @@ export function FranchisesScreen() {
                 color: SQ.ink,
               } as const;
               return r.franchiseId ? (
-                <Link key={`${r.rank}-${r.tag}`} href={`/franchise/${r.franchiseId}`} style={{ ...style, cursor: "pointer" }}>
+                <Link key={`${r.rank}-${r.tag}`} href={r.tag ? franchiseHref(r.tag) : `/franchise/${r.franchiseId}`} style={{ ...style, cursor: "pointer" }}>
                   {row}
                 </Link>
               ) : (

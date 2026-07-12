@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/lib/theme";
 import { useAuth } from "@/lib/auth/context";
+import { playerHref } from "@/lib/routes";
 import { useActiveAuction, useAdminOverview, useCurrentSeason, useRegistrations } from "@/lib/query/hooks";
 import { ConfirmModal } from "@/components/sidequest/confirm-modal";
 import { NotificationBell } from "@/components/sidequest/notification-bell";
@@ -87,7 +88,7 @@ function FullScreen({ children }: { children: ReactNode }) {
 export function AdminShell({ children, fontClass }: { children: ReactNode; fontClass: string }) {
   const pathname = usePathname() ?? "/admin";
   const router = useRouter();
-  const { user, playerId, isAdmin, isSuperAdmin, hydrated, logout } = useAuth();
+  const { user, playerId, gamerTag, isAdmin, isSuperAdmin, hydrated, logout } = useAuth();
 
   // Protect every /admin route: non-admins are bounced to sign-in.
   useEffect(() => {
@@ -155,7 +156,10 @@ export function AdminShell({ children, fontClass }: { children: ReactNode; fontC
         <Link
           href="/admin"
           style={{
-            padding: "20px 22px",
+            // Fixed header height, shared with the topbar (below), so their bottom borders line up.
+            height: 60,
+            boxSizing: "border-box",
+            padding: "0 22px",
             borderBottom: `1px solid ${SQ.hairline}`,
             display: "flex",
             alignItems: "center",
@@ -165,7 +169,7 @@ export function AdminShell({ children, fontClass }: { children: ReactNode; fontC
           }}
         >
           <div style={{ width: 13, height: 13, background: SQ.red, transform: "rotate(45deg)" }} />
-          <span style={{ fontFamily: FONT.display, fontSize: 17, letterSpacing: ".005em" }}>
+          <span style={{ fontFamily: FONT.display, fontSize: 17, letterSpacing: ".005em", whiteSpace: "nowrap" }}>
             SIDE QUEST
           </span>
           <span
@@ -384,7 +388,11 @@ export function AdminShell({ children, fontClass }: { children: ReactNode; fontC
             justifyContent: "space-between",
             gap: 14,
             flexWrap: "wrap",
-            padding: "13px clamp(16px,3vw,28px)",
+            // Fixed height matching the sidebar logo header so the two bottom borders align; horizontal
+            // clamp matches the <main> content (…,32px) so the season label lines up with the page start.
+            minHeight: 60,
+            boxSizing: "border-box",
+            padding: "0 clamp(16px,3vw,32px)",
             background: SQ.navBgAdmin,
             backdropFilter: "blur(12px)",
             borderBottom: `1px solid ${SQ.hairline}`,
@@ -393,7 +401,7 @@ export function AdminShell({ children, fontClass }: { children: ReactNode; fontC
           <div style={{ ...monoTiny, color: SQ.mute }}>{seasonLabel}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <Link
-              href={playerId ? `/player/${playerId}` : "/"}
+              href={playerId ? playerHref(gamerTag ?? playerId) : "/"}
               title="Switch to the public player site"
               style={{
                 fontFamily: FONT.mono,

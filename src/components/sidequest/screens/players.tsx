@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { playerHref } from "@/lib/routes";
 import { SQ, FONT } from "../tokens";
 import { LeagueTitle } from "../league-title";
 import { StateNote } from "../state-note";
@@ -157,7 +158,7 @@ export function PlayersScreen() {
             {visible.map((p, i) => (
               <Link
                 key={p.id}
-                href={`/player/${p.id}`}
+                href={playerHref(p.name)}
                 style={{
                   display: "flex",
                   alignItems: "center",

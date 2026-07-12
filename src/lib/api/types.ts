@@ -130,6 +130,21 @@ export interface UpdateGameRequest {
   standingsWeight?: number;
 }
 
+/** Admin add-game — scoring defaults from the genre and is tuned later via UpdateGameRequest. */
+export interface CreateGameRequest {
+  name: string;
+  format: string;
+  gameType: GameType;
+  popularity?: number;
+  iconUrl?: string;
+}
+
+/** Result of POST /admin/seed (static-config seed). */
+export interface SeedResult {
+  gamesCreated: number;
+  gamesTotal: number;
+}
+
 // ---- players ---------------------------------------------------------------
 
 export interface PlayerSummary {
@@ -205,6 +220,7 @@ export interface MediaUploadResponse {
 
 export interface PlayerMatchView {
   matchId: string;
+  matchSlug: string;
   gameName: string;
   scheduledAt: string;
   status: string;
@@ -304,6 +320,7 @@ export interface RosterMember {
 
 export interface FranchiseMatchView {
   matchId: string;
+  matchSlug: string;
   gameName: string;
   scheduledAt: string;
   status: string;
@@ -343,6 +360,7 @@ export type MatchType = "FRANCHISE" | "FFA";
 
 export interface MatchSummary {
   id: string;
+  slug: string;
   game: GameMini;
   scheduledAt: string;
   status: string;
@@ -375,6 +393,7 @@ export interface SetLineupRequest {
 
 export interface MatchDetail {
   id: string;
+  slug: string;
   game: GameMini;
   scheduledAt: string;
   status: string;
@@ -544,10 +563,12 @@ export interface PlayerRankRow {
 
 export interface AnnouncementView {
   id: string;
+  shortCode: string;
   category: string;
   title: string;
   body: string;
   matchId?: string;
+  matchSlug?: string;
   author?: string;
   publishedAt: string;
   registrationOpen: boolean;
@@ -660,6 +681,8 @@ export interface RegistrationView {
   reason?: string;
   createdAt: string;
   matchId?: string;
+  /** The linked match's pretty slug, for clean /match/<slug> URLs (null for general calls). */
+  matchSlug?: string;
   /** Game the sign-up is for — derived from the linked match, or supplied for general calls. */
   gameId?: string;
   gameName?: string;

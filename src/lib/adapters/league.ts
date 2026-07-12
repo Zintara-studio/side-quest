@@ -99,6 +99,7 @@ export function adaptFranchises(api: FranchiseSummary[]): (Standing & { id: stri
 
 export interface UpcomingItem {
   id: string;
+  slug: string;
   day: string;
   mon: string;
   meta: string;
@@ -112,6 +113,7 @@ export function adaptUpcoming(api: MatchSummary[]): UpcomingItem[] {
     const time = shortTime(m.scheduledAt);
     return {
       id: m.id,
+      slug: m.slug,
       day: valid ? pad2(d.getDate()) : NA,
       mon: valid ? MONTHS[d.getMonth()] : "",
       meta: [m.game.name.toUpperCase(), time].filter(Boolean).join(" · "),

@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import type { CSSProperties } from "react";
 import Link from "next/link";
+import { playerHref, franchiseHref, matchHref, announcementHref } from "@/lib/routes";
 import { SQ, FONT, rankAccent, announcementTagColors } from "../tokens";
 import { StateNote } from "../state-note";
 import {
@@ -266,7 +267,7 @@ function LiveMatchBanner({ rooms }: { rooms: MatchSummary[] }) {
     : primary.game?.name ?? "Your match";
   return (
     <Link
-      href={`/match/${primary.id}`}
+      href={matchHref(primary.slug)}
       style={{
         display: "flex",
         flexWrap: "wrap",
@@ -409,10 +410,15 @@ function PinnedBanner({ posts }: { posts: AnnouncementView[] }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 24 }}>
       {posts.map((a) => {
-        // Deep-link to a linked fixture when there is one; otherwise send to the full feed.
-        const href = a.matchId ? `/match/${a.matchId}` : "/announcements";
-        // First non-empty line of the body as a one-line preview (body is Markdown).
-        const preview = a.body.split("\n").map((l) => l.trim()).find((l) => l.length > 0) ?? "";
+        // Open the announcement's read page (where the Register / View-result action lives).
+        const href = announcementHref(a.shortCode);
+        // First non-empty line of the body as a one-line preview — strip Markdown syntax so it reads
+        // clean (headings/list markers/emphasis/links) rather than showing raw "## …" / "**…**".
+        const preview = (a.body.split("\n").map((l) => l.trim()).find((l) => l.length > 0) ?? "")
+          .replace(/^#{1,6}\s+/, "")
+          .replace(/^[-*>]\s+/, "")
+          .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+          .replace(/[*_`~]/g, "");
         return (
           <Link
             key={a.id}
@@ -741,7 +747,7 @@ function ChampionCard({
     >
       <div style={eyebrowStyle}>{season ? `${season.code} Champion` : "Season Champion"}</div>
       <Link
-        href={`/franchise/${champion.franchiseId}`}
+        href={champion.tag ? franchiseHref(champion.tag) : `/franchise/${champion.franchiseId}`}
         style={{ textDecoration: "none", color: SQ.ink }}
       >
         <div
@@ -823,7 +829,7 @@ function MatchGrid({ items, kind }: { items: UpcomingItem[]; kind: "upcoming" | 
       }}
     >
       {items.map((u) => (
-        <Link key={u.id} href={`/match/${u.id}`} style={cardStyle}>
+        <Link key={u.id} href={matchHref(u.slug)} style={cardStyle}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <span
               style={{
@@ -863,7 +869,7 @@ function MatchGrid({ items, kind }: { items: UpcomingItem[]; kind: "upcoming" | 
 function RegistrationCallCard({ a }: { a: AnnouncementView }) {
   return (
     <Link
-      href={`/register?announcement=${a.id}`}
+      href={announcementHref(a.shortCode)}
       style={{
         ...cardStyle,
         border: `1px solid rgba(232,96,44,.45)`,
@@ -910,7 +916,7 @@ function TopPlayersList({ rows }: { rows: PlayerRankRow[] }) {
         return (
           <Link
             key={p.playerId}
-            href={`/player/${p.playerId}`}
+            href={playerHref(p.gamerTag)}
             style={{
               display: "flex",
               alignItems: "center",
@@ -957,11 +963,8 @@ function LeagueFeed({ items }: { items: AnnouncementView[] }) {
         const [tagColor, tagBorder] = announcementTagColors(tag);
         const chipColor = a.registrationOpen ? SQ.ember : tagColor;
         const chipBorder = a.registrationOpen ? "rgba(232,96,44,.45)" : tagBorder;
-        const href = a.registrationOpen
-          ? `/register?announcement=${a.id}`
-          : a.matchId
-            ? `/match/${a.matchId}`
-            : null;
+        // Cards open the announcement's read page (which carries the Register / View-result action).
+        const href = announcementHref(a.shortCode);
         const inner = (
           <>
             <span
@@ -1059,7 +1062,7 @@ function Leaderboard({
           return (
             <Link
               key={r.franchiseId}
-              href={`/franchise/${r.franchiseId}`}
+              href={r.tag ? franchiseHref(r.tag) : `/franchise/${r.franchiseId}`}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -1125,7 +1128,7 @@ function SnapshotTable({ rows }: { rows: SeasonStandingView[] }) {
           return (
             <Link
               key={`${r.rank}-${r.tag}`}
-              href={`/franchise/${r.franchiseId}`}
+              href={r.tag ? franchiseHref(r.tag) : `/franchise/${r.franchiseId}`}
               style={{
                 display: "flex",
                 alignItems: "center",

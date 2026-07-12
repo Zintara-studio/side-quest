@@ -46,6 +46,7 @@ import type {
   StartSeasonRequest,
   UpdateAuctionRequest,
   UpdateBrandingRequest,
+  CreateGameRequest,
   UpdateGameRequest,
   UpdateProfileRequest,
   UpdateSettingsRequest,
@@ -96,6 +97,23 @@ export const useUpdateGame = () => {
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: UpdateGameRequest }) =>
       gamesApi.update(id, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["games"] }),
+  });
+};
+
+export const useCreateGame = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateGameRequest) => gamesApi.create(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["games"] }),
+  });
+};
+
+/** Main admin: seed the static games catalogue into the DB. */
+export const useSeedStaticConfig = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => adminApi.seed(),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["games"] }),
   });
 };
@@ -670,6 +688,15 @@ export const useCancelRegistration = () => {
       qc.invalidateQueries({ queryKey: ["registrations"] });
       qc.invalidateQueries({ queryKey: ["notifications"] });
     },
+  });
+};
+
+/** Player: remove a settled registration from their own My-Team history. */
+export const useHideRegistration = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => registrationsApi.hide(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["registrations"] }),
   });
 };
 

@@ -6,8 +6,16 @@ import { ScreenHeader } from "../screen-header";
 import { Toggle } from "../toggle";
 import { StateNote } from "@/components/sidequest/state-note";
 import { ConfirmModal } from "@/components/sidequest/confirm-modal";
-import { useGames, useUpdateGame, useCurrentSeason } from "@/lib/query/hooks";
+import { Modal } from "@/components/sidequest/modal";
+import {
+  useGames,
+  useUpdateGame,
+  useCreateGame,
+  useSeedStaticConfig,
+  useCurrentSeason,
+} from "@/lib/query/hooks";
 import { useAuth } from "@/lib/auth/context";
+import { apiErrorMessage } from "@/lib/api/client";
 import type { GameSummary, GameType } from "@/lib/api/types";
 
 const statLabel = {
@@ -405,14 +413,39 @@ function GameCard({ g, seasonActive }: { g: GameSummary; seasonActive: boolean }
 }
 
 export function GamesScreen() {
+  const { isSuperAdmin } = useAuth();
   const { data, isLoading, isError } = useGames();
   const seasonQ = useCurrentSeason();
   const seasonActive = !!seasonQ.data;
   const games = data ?? [];
+  const [addOpen, setAddOpen] = useState(false);
+  const seed = useSeedStaticConfig();
+
+  const addBtn = {
+    fontFamily: FONT.mono,
+    fontSize: 11,
+    letterSpacing: ".1em",
+    textTransform: "uppercase",
+    fontWeight: 700,
+    color: SQ.sidebar,
+    background: SQ.red,
+    border: "none",
+    padding: "9px 15px",
+    borderRadius: 6,
+    cursor: "pointer",
+  } as const;
 
   return (
     <div>
-      <ScreenHeader eyebrow="Title settings" title="GAMES" />
+      <ScreenHeader
+        eyebrow="Title settings"
+        title="GAMES"
+        action={
+          <button type="button" onClick={() => setAddOpen(true)} style={addBtn}>
+            + Add game
+          </button>
+        }
+      />
       <div
         style={{
           fontFamily: FONT.mono,
@@ -431,9 +464,21 @@ export function GamesScreen() {
       {isLoading ? (
         <StateNote>Loading games…</StateNote>
       ) : games.length === 0 ? (
-        <StateNote tone={isError ? "error" : "muted"}>
-          {isError ? "Couldn't load games (admin sign-in required)." : "No games yet."}
-        </StateNote>
+        <div>
+          <StateNote tone={isError ? "error" : "muted"}>
+            {isError ? "Couldn't load games (admin sign-in required)." : "No games yet."}
+          </StateNote>
+          {!isError && isSuperAdmin ? (
+            <button
+              type="button"
+              onClick={() => seed.mutate()}
+              disabled={seed.isPending}
+              style={{ ...addBtn, marginTop: 14, background: "transparent", color: SQ.ember, border: `1px solid ${SQ.inputBorder}` }}
+            >
+              {seed.isPending ? "Seeding…" : "Seed the default catalogue"}
+            </button>
+          ) : null}
+        </div>
       ) : (
         <div
           style={{
@@ -447,6 +492,104 @@ export function GamesScreen() {
           ))}
         </div>
       )}
+
+      <AddGameModal open={addOpen} onClose={() => setAddOpen(false)} />
     </div>
+  );
+}
+
+const GAME_TYPES: GameType[] = ["TACTICAL", "BATTLE_ROYALE", "SPORTS", "FIGHTING", "PARTY"];
+
+function AddGameModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const create = useCreateGame();
+  const [name, setName] = useState("");
+  const [format, setFormat] = useState("");
+  const [gameType, setGameType] = useState<GameType>("TACTICAL");
+  const [popularity, setPopularity] = useState("50");
+  const [err, setErr] = useState<string | null>(null);
+
+  const field = {
+    width: "100%",
+    background: SQ.inset,
+    border: `1px solid ${SQ.inputBorder}`,
+    borderRadius: 6,
+    padding: "9px 11px",
+    fontSize: 13,
+    color: SQ.ink,
+    marginTop: 4,
+  } as const;
+  const label = {
+    fontFamily: FONT.mono,
+    fontSize: 10,
+    letterSpacing: ".14em",
+    textTransform: "uppercase",
+    color: SQ.label,
+    marginTop: 14,
+    display: "block",
+  } as const;
+
+  const submit = async () => {
+    setErr(null);
+    if (!name.trim() || !format.trim()) {
+      setErr("Name and format are required.");
+      return;
+    }
+    try {
+      await create.mutateAsync({
+        name: name.trim(),
+        format: format.trim(),
+        gameType,
+        popularity: Math.max(0, Math.min(100, Number(popularity) || 0)),
+      });
+      setName("");
+      setFormat("");
+      setGameType("TACTICAL");
+      setPopularity("50");
+      onClose();
+    } catch (e) {
+      setErr(apiErrorMessage(e, "Couldn't add that game."));
+    }
+  };
+
+  return (
+    <Modal open={open} title="Add a game" onClose={onClose}>
+      <div style={{ padding: 18 }}>
+        <label style={{ ...label, marginTop: 0 }}>Name</label>
+        <input className="sq-field" style={field} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Deadlock" />
+        <label style={label}>Format</label>
+        <input className="sq-field" style={field} value={format} onChange={(e) => setFormat(e.target.value)} placeholder="e.g. 6v6 Hero Shooter" />
+        <label style={label}>Genre</label>
+        <select className="sq-field" style={{ ...field, cursor: "pointer" }} value={gameType} onChange={(e) => setGameType(e.target.value as GameType)}>
+          {GAME_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {GAME_TYPE_LABEL[t]}
+            </option>
+          ))}
+        </select>
+        <label style={label}>Popularity (0–100)</label>
+        <input className="sq-field" style={field} type="number" min={0} max={100} value={popularity} onChange={(e) => setPopularity(e.target.value)} />
+        <div style={{ fontFamily: FONT.mono, fontSize: 10.5, color: SQ.mute, marginTop: 10 }}>
+          Scoring defaults from the genre — tune it afterwards on the game card (weight is main-admin-only).
+        </div>
+        {err ? <div style={{ fontFamily: FONT.mono, fontSize: 12, color: SQ.ember, marginTop: 12 }}>{err}</div> : null}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 18 }}>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ fontFamily: FONT.mono, fontSize: 11, letterSpacing: ".1em", textTransform: "uppercase", color: SQ.faint, background: "transparent", border: `1px solid ${SQ.inputBorder}`, borderRadius: 6, padding: "9px 14px", cursor: "pointer" }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={create.isPending || !name.trim() || !format.trim()}
+            style={{ fontFamily: FONT.mono, fontSize: 11, letterSpacing: ".1em", textTransform: "uppercase", fontWeight: 700, color: SQ.sidebar, background: SQ.red, border: "none", borderRadius: 6, padding: "9px 16px", cursor: "pointer", opacity: create.isPending || !name.trim() || !format.trim() ? 0.6 : 1 }}
+          >
+            {create.isPending ? "Adding…" : "Add game"}
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }

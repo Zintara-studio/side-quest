@@ -20,6 +20,8 @@ interface AuthState {
   user: SessionUser | null;
   /** The signed-in user's player profile id (from /auth/me), or null if they have none. */
   playerId: string | null;
+  /** The signed-in user's gamerTag (from /auth/me) — used for pretty /player/<tag> links. */
+  gamerTag: string | null;
   /** Whether the initial refresh-on-load has resolved (success or failure). */
   hydrated: boolean;
 
@@ -44,6 +46,7 @@ export const useAuthStore = create<AuthState>()(
       refreshToken: null,
       user: null,
       playerId: null,
+      gamerTag: null,
       hydrated: false,
 
       setSession: (auth) =>
@@ -63,11 +66,13 @@ export const useAuthStore = create<AuthState>()(
             adminLevel: me.user.adminLevel,
           },
           playerId: me.player?.id ?? null,
+          gamerTag: me.player?.gamerTag ?? null,
         }),
 
       setHydrated: (v) => set({ hydrated: v }),
 
-      clear: () => set({ accessToken: null, refreshToken: null, user: null, playerId: null }),
+      clear: () =>
+        set({ accessToken: null, refreshToken: null, user: null, playerId: null, gamerTag: null }),
     }),
     {
       name: "sq-auth",

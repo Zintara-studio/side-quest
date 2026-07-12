@@ -12,6 +12,8 @@ import type { LoginRequest, RegisterRequest } from "@/lib/api/types";
 interface AuthContextValue {
   user: SessionUser | null;
   playerId: string | null;
+  /** The signed-in user's gamerTag, for pretty /player/<tag> links (null if no player profile). */
+  gamerTag: string | null;
   isAuthenticated: boolean;
   /** Any admin tier (appointed admin or the main admin). */
   isAdmin: boolean;
@@ -32,7 +34,7 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const { user, playerId, accessToken, refreshToken, hydrated, setSession, setUser, setHydrated, clear } =
+  const { user, playerId, gamerTag, accessToken, refreshToken, hydrated, setSession, setUser, setHydrated, clear } =
     useAuthStore();
   // Avoid a hydration mismatch: render the server/initial state until mounted on the client.
   const [mounted, setMounted] = useState(false);
@@ -117,6 +119,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value: AuthContextValue = {
     user,
     playerId,
+    gamerTag,
     isAuthenticated: Boolean(accessToken || refreshToken || user),
     isAdmin: (user?.adminLevel ?? "NONE") !== "NONE",
     isSuperAdmin: user?.adminLevel === "SUPER_ADMIN",

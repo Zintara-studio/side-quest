@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { playerHref, matchHref } from "@/lib/routes";
 import { SQ, FONT } from "../tokens";
 import { StateNote } from "../state-note";
 import { Modal } from "../modal";
@@ -493,7 +494,7 @@ function FranchisePanel({ mine }: { mine: FranchiseMineView }) {
               return (
                 <div key={p.playerId} style={{ borderTop: `1px solid ${SQ.hairlineCell}` }}>
                   <Link
-                    href={`/player/${p.playerId}`}
+                    href={playerHref(p.gamerTag)}
                     style={{
                       display: "flex",
                       alignItems: "center",
@@ -630,7 +631,7 @@ function FranchisePanel({ mine }: { mine: FranchiseMineView }) {
                             }}
                           >
                             <Link
-                              href={`/match/${m.matchId}`}
+                              href={matchHref(m.matchSlug ?? m.matchId)}
                               style={{ textDecoration: "none", color: SQ.ink, flex: 1, minWidth: 0 }}
                             >
                               <div style={{ fontSize: 14, fontWeight: 600 }}>{m.gameName}</div>
@@ -674,7 +675,7 @@ function FranchisePanel({ mine }: { mine: FranchiseMineView }) {
                       {previous.map((m) => (
                         <Link
                           key={m.matchId}
-                          href={`/match/${m.matchId}`}
+                          href={matchHref(m.matchSlug ?? m.matchId)}
                           style={{
                             display: "flex",
                             alignItems: "center",

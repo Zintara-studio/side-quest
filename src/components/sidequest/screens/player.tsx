@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { franchiseHref, matchHref } from "@/lib/routes";
 import { SQ, FONT } from "../tokens";
 import { StateNote } from "../state-note";
 import { Modal } from "../modal";
@@ -279,7 +280,7 @@ export function PlayerScreen({ id, base = "" }: { id?: string; base?: string }) 
               ) : null}
               {p.franchise ? (
                 <Link
-                  href={`${base}/franchise/${p.franchise.id}`}
+                  href={`${base}${franchiseHref(p.franchise.tag)}`}
                   style={{
                     fontFamily: FONT.mono,
                     fontSize: 11,
@@ -452,7 +453,7 @@ export function PlayerScreen({ id, base = "" }: { id?: string; base?: string }) 
                     {(matchesQ.data ?? []).map((m) => (
                       <Link
                         key={m.matchId}
-                        href={`${base}/match/${m.matchId}`}
+                        href={`${base}${matchHref(m.matchSlug ?? m.matchId)}`}
                         style={{
                           display: "flex",
                           alignItems: "center",

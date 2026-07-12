@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth/context";
+import { playerHref } from "@/lib/routes";
 import { useCurrentSeason, useNotifications } from "@/lib/query/hooks";
 import { ThemeToggle } from "@/lib/theme";
 import { NotificationBell } from "./notification-bell";
@@ -83,7 +84,7 @@ export function LeagueShell({
   const pathname = usePathname() ?? "/";
   const cur = activeKey(pathname);
   const router = useRouter();
-  const { user, playerId, isAuthenticated, isAdmin, logout } = useAuth();
+  const { user, playerId, gamerTag, isAuthenticated, isAdmin, logout } = useAuth();
 
   // Real current season drives the nav badge + footer tagline; falls back to a
   // neutral off-season label when no season is active (or while it loads).
@@ -287,7 +288,7 @@ export function LeagueShell({
               }}
             >
               <Link
-                href={playerId ? `/player/${playerId}` : isAdmin ? "/admin" : "/player"}
+                href={playerId ? playerHref(gamerTag ?? playerId) : isAdmin ? "/admin" : "/player"}
                 style={{
                   display: "flex",
                   alignItems: "center",

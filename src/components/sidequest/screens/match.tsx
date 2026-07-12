@@ -22,6 +22,7 @@ import { ConfirmModal } from "../confirm-modal";
 import { useAuth } from "@/lib/auth/context";
 import { apiErrorMessage } from "@/lib/api/client";
 import { shortDate, shortTime } from "@/lib/adapters/league";
+import { matchHref, franchiseHref } from "@/lib/routes";
 
 const ALL = "__all__";
 
@@ -244,7 +245,7 @@ function MatchHistory({ base }: { base: string }) {
               return (
                 <Link
                   key={m.id}
-                  href={`${base}/match/${m.id}`}
+                  href={`${base}${matchHref(m.slug)}`}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -692,7 +693,7 @@ function MatchDetail({ id, base }: { id: string; base: string }) {
               {m.participants.map((p) => (
                 <Link
                   key={p.franchiseId}
-                  href={`${base}/franchise/${p.franchiseId}`}
+                  href={`${base}${franchiseHref(p.tag)}`}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -794,7 +795,7 @@ function MatchDetail({ id, base }: { id: string; base: string }) {
                   );
                   // FFA leaderboard rows have no franchise (franchiseId null) — render a plain row.
                   return r.franchiseId ? (
-                    <Link key={r.franchiseId} href={`${base}/franchise/${r.franchiseId}`} style={rowStyle}>
+                    <Link key={r.franchiseId} href={`${base}${franchiseHref(r.franchiseTag)}`} style={rowStyle}>
                       {inner}
                     </Link>
                   ) : (

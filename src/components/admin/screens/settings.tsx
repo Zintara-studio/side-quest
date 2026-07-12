@@ -5,7 +5,7 @@ import Link from "next/link";
 import { SQ, FONT } from "../tokens";
 import { ScreenHeader } from "../screen-header";
 import { StateNote } from "@/components/sidequest/state-note";
-import { useSettings, useUpdateSettings } from "@/lib/query/hooks";
+import { useSettings, useUpdateSettings, useCurrentSeason } from "@/lib/query/hooks";
 
 const numberInput = {
   width: 88,
@@ -57,6 +57,9 @@ function Row({ label, children, center }: { label: string; children: ReactNode; 
 
 export function SettingsScreen() {
   const { data: s, isLoading, isError } = useSettings();
+  // The live current season is authoritative at /seasons/current — the stored settings.seasonName can
+  // go stale (it's only written on season start, never cleared on finish).
+  const seasonQ = useCurrentSeason();
   const update = useUpdateSettings();
 
   // Local, editable copy of the registration lock window; re-synced whenever settings load/refresh.
@@ -97,7 +100,7 @@ export function SettingsScreen() {
         >
           <div style={cardStyle}>
             <div style={{ ...cardHeader, marginBottom: 16 }}>Season</div>
-            <Row label="Current season">{s.seasonName || s.seasonId || "—"}</Row>
+            <Row label="Current season">{seasonQ.data ? seasonQ.data.name : "Between seasons"}</Row>
             <Row label="Registration lock (hours)" center>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <input

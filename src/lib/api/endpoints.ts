@@ -23,7 +23,9 @@ import type {
   FranchiseMatchView,
   FranchiseMineView,
   FranchiseSummary,
+  CreateGameRequest,
   GameDetail,
+  SeedResult,
   GameSummary,
   EnterRoundsRequest,
   InviteRequest,
@@ -107,6 +109,7 @@ export const authApi = {
 export const gamesApi = {
   list: (enabled?: boolean) =>
     api.get<GameSummary[]>("/games", { params: clean({ enabled }) }).then((r) => r.data),
+  create: (body: CreateGameRequest) => api.post<GameDetail>("/games", body).then((r) => r.data),
   update: (id: string, body: UpdateGameRequest) =>
     api.patch<GameDetail>(`/games/${id}`, body).then((r) => r.data),
 };
@@ -328,6 +331,8 @@ export const registrationsApi = {
   // Player: withdraw your own registration (owner-only, server-enforced).
   cancel: (id: string) =>
     api.post<RegistrationView>(`/registrations/${id}/cancel`).then((r) => r.data),
+  // Player: remove a settled registration from your own history (soft hide; terminal states only).
+  hide: (id: string) => api.delete<void>(`/registrations/${id}`).then((r) => r.data),
   // Discard a live registration or a FRANCHISE proposal. Reason is optional (body may be {}).
   reject: (id: string, reason?: string) =>
     api.post<RegistrationView>(`/registrations/${id}/reject`, { reason }).then((r) => r.data),
@@ -349,6 +354,8 @@ export const adminApi = {
     api.post<TeamMember>(`/admin/players/${playerId}/admin`, null).then((r) => r.data),
   revokeAdmin: (playerId: string) =>
     api.delete<void>(`/admin/players/${playerId}/admin`).then((r) => r.data),
+  // Main admin: seed static config (games catalogue) without a restart.
+  seed: () => api.post<SeedResult>("/admin/seed").then((r) => r.data),
 };
 
 // ---- disputes (any logged-in user) ----------------------------------------

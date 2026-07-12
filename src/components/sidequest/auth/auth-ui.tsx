@@ -244,7 +244,12 @@ export function SocialRow() {
       });
       g.accounts.id.renderButton(btnRef.current, {
         type: "standard",
-        theme: "outline",
+        // GIS renders inside a locked shadow-DOM iframe, so we can't apply the warm-paper/espresso
+        // tokens — the closest we can do is pick its dark/light variant from the site theme so it
+        // doesn't sit as a bright white block on the dark theme. (A token-exact button would require
+        // switching to the OAuth2 code-client flow, which changes the backend contract — out of scope.)
+        theme: document.documentElement.dataset.theme === "dark" ? "filled_black" : "outline",
+        shape: "pill",
         size: "large",
         text: "continue_with",
         width: 300,

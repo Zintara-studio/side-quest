@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { playerHref, matchHref } from "@/lib/routes";
 import { SQ, FONT } from "../tokens";
 import { StateNote } from "../state-note";
 import { Avatar } from "../avatar";
@@ -177,7 +178,7 @@ export function FranchiseScreen({ id, base = "" }: { id?: string; base?: string 
                 (rosterQ.data ?? []).map((p) => (
                   <Link
                     key={p.playerId}
-                    href={`${base}/player/${p.playerId}`}
+                    href={`${base}${playerHref(p.gamerTag)}`}
                     style={{
                       display: "flex",
                       alignItems: "center",
@@ -239,7 +240,7 @@ export function FranchiseScreen({ id, base = "" }: { id?: string; base?: string 
                     {(matchesQ.data ?? []).map((g) => (
                       <Link
                         key={g.matchId}
-                        href={`${base}/match/${g.matchId}`}
+                        href={`${base}${matchHref(g.matchSlug ?? g.matchId)}`}
                         style={{
                           display: "flex",
                           alignItems: "center",

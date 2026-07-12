@@ -105,7 +105,9 @@ export function ProfileEditor({ player, onClose }: { player: PlayerDetail; onClo
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>(player.avatarUrl);
   const [realName, setRealName] = useState(player.realName ?? "");
   const [phone, setPhone] = useState(player.phone ?? "");
-  const [contactEmail, setContactEmail] = useState(player.contactEmail ?? "");
+  // Contact email is a separate, publishable address (distinct from the login email). Prefill it with
+  // the account email on your own profile so it isn't an empty field asking for the same thing again.
+  const [contactEmail, setContactEmail] = useState(player.contactEmail ?? accountEmail ?? "");
   const [realNamePublic, setRealNamePublic] = useState(player.realNamePublic);
   const [phonePublic, setPhonePublic] = useState(player.phonePublic);
   const [contactEmailPublic, setContactEmailPublic] = useState(player.contactEmailPublic);

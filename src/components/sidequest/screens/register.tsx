@@ -106,6 +106,13 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
   const notVerified = !!meQ.data && meQ.data.status !== "VERIFIED";
   const needsVerification = mode === "FRANCHISE" && notVerified;
 
+  // Auction pool and franchise proposals are mutually exclusive (the backend blocks + auto-voids) — a
+  // player in the pool can't also propose a franchise. Warn upfront instead of failing on submit.
+  const inAuctionPool = (useMyRegistrations(!!playerId).data ?? []).some(
+    (r) => r.type === "AUCTION" && r.status === "ACTIVE" && !r.consumed,
+  );
+  const franchiseWhilePooled = mode === "FRANCHISE" && inAuctionPool;
+
   const [name, setName] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
   const [email, setEmail] = useState("");
@@ -142,7 +149,7 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (alreadyRegistered || registrationLocked || needsVerification) return;
+    if (alreadyRegistered || registrationLocked || needsVerification || franchiseWhilePooled) return;
     if (franchiseBlocked) {
       setError("Franchise bids are only accepted between seasons — a season is currently running.");
       return;
@@ -611,6 +618,26 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
               </div>
             ) : null}
 
+            {franchiseWhilePooled ? (
+              <div
+                style={{
+                  margin: "18px 0 0",
+                  padding: "12px 14px",
+                  borderRadius: 5,
+                  background: SQ.inset,
+                  border: `1px solid ${SQ.amber}`,
+                  color: SQ.ink,
+                  fontSize: 12.5,
+                  lineHeight: 1.55,
+                }}
+              >
+                <span style={{ color: SQ.amber, fontWeight: 700 }}>You&rsquo;re in the auction pool.</span>{" "}
+                Entering the auction and proposing a franchise are mutually exclusive — withdraw from the
+                auction pool (in <strong style={{ color: SQ.ink }}>My Team</strong>) before submitting a
+                franchise proposal.
+              </div>
+            ) : null}
+
             {alreadyRegistered ? (
               <div
                 style={{
@@ -670,7 +697,7 @@ export function RegisterScreen({ announcementId }: { announcementId?: string }) 
             {(() => {
               const disabled =
                 apply.isPending || alreadyRegistered || registrationLocked || franchiseBlocked ||
-                needsVerification;
+                needsVerification || franchiseWhilePooled;
               const label = alreadyRegistered
                 ? "Already registered"
                 : needsVerification

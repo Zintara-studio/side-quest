@@ -7,9 +7,12 @@ import com.sidequest.arena.model.User;
 import com.sidequest.arena.notifications.dto.NotificationView;
 import com.sidequest.arena.repo.NotificationRepository;
 import com.sidequest.arena.security.SecurityUtils;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
@@ -26,10 +29,20 @@ import java.util.UUID;
 @Service
 public class NotificationService {
 
+    /** Notifications are kept for 30 days, then swept — the table would otherwise grow without bound. */
+    private static final Duration RETENTION = Duration.ofDays(30);
+
     private final NotificationRepository notifications;
 
     public NotificationService(NotificationRepository notifications) {
         this.notifications = notifications;
+    }
+
+    /** Daily sweep: hard-delete notifications older than {@link #RETENTION}. */
+    @Scheduled(fixedDelay = 86_400_000L) // once a day
+    @Transactional
+    public void purgeOld() {
+        notifications.deleteByCreatedAtBefore(Instant.now().minus(RETENTION));
     }
 
     @Transactional(readOnly = true)

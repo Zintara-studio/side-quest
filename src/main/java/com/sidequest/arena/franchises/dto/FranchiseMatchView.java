@@ -7,6 +7,7 @@ import java.time.Instant;
  * {@code GET /franchises/:id/matches}, sorted by {@code scheduledAt} descending.
  *
  * @param matchId     match id
+ * @param matchSlug   the match's pretty slug (game-date-short), for building clean URLs
  * @param gameName    name of the game the match was for
  * @param scheduledAt when the match was scheduled
  * @param status      match status
@@ -15,6 +16,7 @@ import java.time.Instant;
  */
 public record FranchiseMatchView(
         String matchId,
+        String matchSlug,
         String gameName,
         Instant scheduledAt,
         String status,

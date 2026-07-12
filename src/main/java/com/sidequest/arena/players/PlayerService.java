@@ -124,12 +124,24 @@ public class PlayerService {
         return Cursors.paginate(summaries, cursor, limit);
     }
 
-    /** Full profile for a single player. */
+    /**
+     * Full profile for a single player, resolved by either the UUID or the (unique) gamerTag slug — so
+     * {@code /player/SammyUrfen} works alongside the legacy {@code /player/{uuid}}.
+     */
     @Transactional(readOnly = true)
-    public PlayerDetail get(UUID id) {
-        Player player = playerRepository.findById(id)
-                .orElseThrow(() -> ApiException.notFound("Player", id));
-        return toDetail(player);
+    public PlayerDetail get(String idOrTag) {
+        return toDetail(resolve(idOrTag));
+    }
+
+    /** Resolve a player by UUID (tried first) or by unique gamerTag. 404 if neither matches. */
+    private Player resolve(String idOrTag) {
+        try {
+            return playerRepository.findById(UUID.fromString(idOrTag))
+                    .orElseThrow(() -> ApiException.notFound("Player", idOrTag));
+        } catch (IllegalArgumentException notAUuid) {
+            return playerRepository.findByGamerTagIgnoreCase(idOrTag)
+                    .orElseThrow(() -> ApiException.notFound("Player", idOrTag));
+        }
     }
 
     /**
@@ -137,9 +149,8 @@ public class PlayerService {
      * placement when results exist. Empty if the player has no franchise.
      */
     @Transactional(readOnly = true)
-    public List<PlayerMatchView> matches(UUID id) {
-        Player player = playerRepository.findById(id)
-                .orElseThrow(() -> ApiException.notFound("Player", id));
+    public List<PlayerMatchView> matches(String idOrTag) {
+        Player player = resolve(idOrTag);
 
         Franchise franchise = player.getFranchise();
         if (franchise == null) {
@@ -167,15 +178,14 @@ public class PlayerService {
      * the public ones.
      */
     @Transactional(readOnly = true)
-    public List<UsernameView> usernames(UUID id) {
-        Player player = playerRepository.findById(id)
-                .orElseThrow(() -> ApiException.notFound("Player", id));
+    public List<UsernameView> usernames(String idOrTag) {
+        Player player = resolve(idOrTag);
 
         boolean privileged = isOwner(player) || SecurityUtils.isAdmin();
 
         List<PlayerGameUsername> usernames = privileged
-                ? playerGameUsernameRepository.findByPlayerId(id)
-                : playerGameUsernameRepository.findByPlayerIdAndIsPublicTrue(id);
+                ? playerGameUsernameRepository.findByPlayerId(player.getId())
+                : playerGameUsernameRepository.findByPlayerIdAndIsPublicTrue(player.getId());
 
         return usernames.stream()
                 .map(u -> new UsernameView(
@@ -331,6 +341,7 @@ public class PlayerService {
         Integer total = row != null ? row.getTotal() : null;
         return new PlayerMatchView(
                 match.getId().toString(),
+                match.getSlug(),
                 match.getGame().getName(),
                 match.getScheduledAt(),
                 match.getStatus().name(),

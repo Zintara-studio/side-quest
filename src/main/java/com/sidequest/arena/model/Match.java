@@ -8,6 +8,7 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Index;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -36,6 +37,15 @@ public class Match extends BaseEntity {
 
     @Column(name = "scheduled_at", nullable = false)
     private Instant scheduledAt;
+
+    /**
+     * Human-readable, unique URL slug — {@code <game>-<yyyy-MM-dd>-<short>} (e.g.
+     * {@code valorant-2026-07-12-a1b2c}). Auto-generated on first persist (see {@link #assignSlug()}) so
+     * links read {@code /match/valorant-…} instead of a raw UUID. Nullable so a Postgres ADD COLUMN on an
+     * existing table doesn't fail; every new row gets one.
+     */
+    @Column(name = "slug", unique = true, length = 160)
+    private String slug;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 32)
@@ -77,4 +87,26 @@ public class Match extends BaseEntity {
     /** Set once results are published; used to make the scoring job idempotent. */
     @Column(name = "results_published_at")
     private Instant resultsPublishedAt;
+
+    /**
+     * Build the URL slug on first persist from the game + scheduled date + a short random disambiguator
+     * (several matches can share a game and date). Runs for both admin-created and seeded matches.
+     */
+    @PrePersist
+    void assignSlug() {
+        if (slug != null && !slug.isBlank()) {
+            return;
+        }
+        String gamePart = (game != null && game.getName() != null ? game.getName() : "match")
+                .toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", "-")
+                .replaceAll("(^-+|-+$)", "");
+        String datePart = scheduledAt != null
+                ? scheduledAt.atZone(java.time.ZoneOffset.UTC).toLocalDate().toString()
+                : "tbd";
+        byte[] rnd = new byte[4];
+        new java.security.SecureRandom().nextBytes(rnd);
+        String shortPart = java.util.HexFormat.of().formatHex(rnd); // 8 hex chars — collision-safe per game+date
+        slug = gamePart + "-" + datePart + "-" + shortPart;
+    }
 }

@@ -48,19 +48,19 @@ public class PlayerController {
 
     /** Full profile for a single player. */
     @GetMapping("/{id}")
-    public PlayerDetail get(@PathVariable UUID id) {
+    public PlayerDetail get(@PathVariable String id) {
         return playerService.get(id);
     }
 
     /** Match history for the player's franchise. */
     @GetMapping("/{id}/matches")
-    public List<PlayerMatchView> matches(@PathVariable UUID id) {
+    public List<PlayerMatchView> matches(@PathVariable String id) {
         return playerService.matches(id);
     }
 
     /** The player's game handles (all if owner/admin, otherwise only public). */
     @GetMapping("/{id}/usernames")
-    public List<UsernameView> usernames(@PathVariable UUID id) {
+    public List<UsernameView> usernames(@PathVariable String id) {
         return playerService.usernames(id);
     }
 

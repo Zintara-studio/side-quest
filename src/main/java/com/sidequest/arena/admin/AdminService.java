@@ -6,6 +6,7 @@ import com.sidequest.arena.admin.dto.ResolveDisputeRequest;
 import com.sidequest.arena.admin.dto.TeamMember;
 import com.sidequest.arena.audit.AuditService;
 import com.sidequest.arena.common.ApiException;
+import com.sidequest.arena.games.GameCatalogSeeder;
 import com.sidequest.arena.model.AdminLevel;
 import com.sidequest.arena.model.AuditLog;
 import com.sidequest.arena.model.Dispute;
@@ -54,6 +55,7 @@ public class AdminService {
     private final DisputeRepository disputeRepository;
     private final NotificationService notificationService;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final GameCatalogSeeder gameCatalogSeeder;
     private final AuditService auditService;
 
     public AdminService(PlayerRepository playerRepository,
@@ -65,6 +67,7 @@ public class AdminService {
                         DisputeRepository disputeRepository,
                         NotificationService notificationService,
                         RefreshTokenRepository refreshTokenRepository,
+                        GameCatalogSeeder gameCatalogSeeder,
                         AuditService auditService) {
         this.playerRepository = playerRepository;
         this.franchiseRepository = franchiseRepository;
@@ -75,7 +78,19 @@ public class AdminService {
         this.disputeRepository = disputeRepository;
         this.notificationService = notificationService;
         this.refreshTokenRepository = refreshTokenRepository;
+        this.gameCatalogSeeder = gameCatalogSeeder;
         this.auditService = auditService;
+    }
+
+    /**
+     * Main admin: seed the static config (games catalogue) into the database on demand — the same
+     * idempotent seed that runs at first boot, so a live instance can be filled without a restart.
+     */
+    @Transactional
+    public com.sidequest.arena.admin.dto.SeedResult seedStaticConfig() {
+        int created = gameCatalogSeeder.seedGames();
+        auditService.record("config.seed", "Game", "-", created + " game(s) seeded");
+        return new com.sidequest.arena.admin.dto.SeedResult(created, gameRepository.count());
     }
 
     /** Control-room KPIs, aggregate totals and recent audit activity. */

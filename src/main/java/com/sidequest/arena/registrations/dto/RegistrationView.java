@@ -19,6 +19,7 @@ import java.util.List;
  * @param reason     rejection reason or approval note, nullable
  * @param createdAt  when the application was submitted
  * @param matchId    the linked match id, when the registration was tied to a match, nullable
+ * @param matchSlug  the linked match's pretty slug, for building clean URLs, nullable
  * @param gameId     the resolved game id (from the linked match, else the game hint), nullable
  * @param gameName   the resolved game name, so the frontend can label the entry without a lookup, nullable
  * @param members    the squad roster (captain + invited players with their invite status); empty for
@@ -41,6 +42,7 @@ public record RegistrationView(
         String reason,
         Instant createdAt,
         String matchId,
+        String matchSlug,
         String gameId,
         String gameName,
         List<MemberView> members,

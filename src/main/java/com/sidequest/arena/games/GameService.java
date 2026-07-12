@@ -3,6 +3,7 @@ package com.sidequest.arena.games;
 import com.sidequest.arena.audit.AuditService;
 import com.sidequest.arena.common.ApiException;
 import com.sidequest.arena.security.SecurityUtils;
+import com.sidequest.arena.games.dto.CreateGameRequest;
 import com.sidequest.arena.games.dto.GameDetail;
 import com.sidequest.arena.games.dto.GameMatchView;
 import com.sidequest.arena.games.dto.GameSummary;
@@ -64,6 +65,27 @@ public class GameService {
         Game game = gameRepository.findById(id)
                 .orElseThrow(() -> ApiException.notFound("Game", id));
         return toDetail(game);
+    }
+
+    /**
+     * Admin: add a new title. The name must be free (case-insensitive); scoring defaults from the genre
+     * (tune later via {@link #update}). Audited; evicts the games cache. 409 on a duplicate name.
+     */
+    @CacheEvict(value = CacheConfig.GAMES, allEntries = true)
+    @Transactional
+    public GameDetail create(CreateGameRequest req) {
+        String name = req.name().trim();
+        if (gameRepository.existsByNameIgnoreCase(name)) {
+            throw ApiException.conflict("A game named \"" + name + "\" already exists.");
+        }
+        Game game = GameCatalogSeeder.buildGame(name, req.format().trim(), req.gameType(),
+                req.popularity() != null ? req.popularity() : 0, true);
+        if (req.iconUrl() != null && !req.iconUrl().isBlank()) {
+            game.setIconUrl(req.iconUrl().trim());
+        }
+        Game saved = gameRepository.save(game);
+        auditService.record("game.create", "Game", saved.getId().toString(), saved.getName());
+        return toDetail(saved);
     }
 
     /**

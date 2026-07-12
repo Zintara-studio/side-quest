@@ -20,9 +20,11 @@ import com.sidequest.arena.repo.MatchRepository;
 import com.sidequest.arena.repo.SeasonRepository;
 import com.sidequest.arena.repo.UserRepository;
 import com.sidequest.arena.security.SecurityUtils;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -167,6 +169,23 @@ public class AnnouncementService {
         return toView(saved);
     }
 
+    /** Non-pinned announcements are kept for 30 days, then swept. Pinned notices persist by design. */
+    private static final Duration RETENTION = Duration.ofDays(30);
+
+    /**
+     * Daily sweep: remove non-pinned announcements older than {@link #RETENTION}. Routes each through
+     * {@link #delete(String)} (not a bulk SQL delete) so a still-open registration call's sign-ups are
+     * properly voided rather than stranded.
+     */
+    @Scheduled(fixedDelay = 86_400_000L) // once a day
+    @Transactional
+    public void purgeOld() {
+        Instant cutoff = Instant.now().minus(RETENTION);
+        for (Announcement stale : announcementRepository.findByPinnedFalseAndPublishedAtBefore(cutoff)) {
+            delete(stale.getId().toString());
+        }
+    }
+
     /** Delete an announcement (404 if missing) and record an audit entry. */
     @Transactional
     public void delete(String id) {
@@ -255,9 +274,17 @@ public class AnnouncementService {
     }
 
     /** Load an announcement by its string id, or throw 404 (an unparseable id can never match). */
-    private Announcement require(String id) {
-        return announcementRepository.findById(parseId(id))
-                .orElseThrow(() -> ApiException.notFound("Announcement", id));
+    private Announcement require(String idOrCode) {
+        // Resolve by the short code (tried first — that's what links now carry) or the legacy UUID.
+        return announcementRepository.findByShortCode(idOrCode)
+                .or(() -> {
+                    try {
+                        return announcementRepository.findById(java.util.UUID.fromString(idOrCode));
+                    } catch (IllegalArgumentException notAUuid) {
+                        return java.util.Optional.empty();
+                    }
+                })
+                .orElseThrow(() -> ApiException.notFound("Announcement", idOrCode));
     }
 
     private static UUID parseId(String id) {
@@ -270,15 +297,18 @@ public class AnnouncementService {
 
     private static AnnouncementView toView(Announcement a) {
         String matchId = a.getMatch() != null ? a.getMatch().getId().toString() : null;
+        String matchSlug = a.getMatch() != null ? a.getMatch().getSlug() : null;
         String author = a.getAuthor() != null ? a.getAuthor().getName() : null;
         String gameId = a.getGame() != null ? a.getGame().getId().toString() : null;
         String gameName = a.getGame() != null ? a.getGame().getName() : null;
         return new AnnouncementView(
                 a.getId().toString(),
+                a.getShortCode(),
                 a.getCategory() != null ? a.getCategory().name() : null,
                 a.getTitle(),
                 a.getBody(),
                 matchId,
+                matchSlug,
                 author,
                 a.getPublishedAt(),
                 a.isRegistrationOpen(),

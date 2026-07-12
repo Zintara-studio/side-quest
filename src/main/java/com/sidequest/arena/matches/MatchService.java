@@ -1263,15 +1263,25 @@ public class MatchService {
     // ---- loaders ----
 
     /** Load a match by its string id, or throw 404 (an unparseable id can never match). */
-    private Match require(String id) {
-        return matchRepository.findById(parseId(id, "Match"))
-                .orElseThrow(() -> ApiException.notFound("Match", id));
+    private Match require(String idOrSlug) {
+        return matchRepository.findById(resolveMatchId(idOrSlug))
+                .orElseThrow(() -> ApiException.notFound("Match", idOrSlug));
     }
 
     /** Like {@link #require}, but row-locked — mutations that must serialize per match use this. */
-    private Match requireForUpdate(String id) {
-        return matchRepository.findByIdForUpdate(parseId(id, "Match"))
-                .orElseThrow(() -> ApiException.notFound("Match", id));
+    private Match requireForUpdate(String idOrSlug) {
+        return matchRepository.findByIdForUpdate(resolveMatchId(idOrSlug))
+                .orElseThrow(() -> ApiException.notFound("Match", idOrSlug));
+    }
+
+    /** Resolve a match id from either the UUID (tried first) or the unique URL slug. 404 if neither. */
+    private UUID resolveMatchId(String idOrSlug) {
+        try {
+            return UUID.fromString(idOrSlug);
+        } catch (IllegalArgumentException notAUuid) {
+            return matchRepository.findBySlug(idOrSlug).map(Match::getId)
+                    .orElseThrow(() -> ApiException.notFound("Match", idOrSlug));
+        }
     }
 
     /**
@@ -1321,6 +1331,7 @@ public class MatchService {
                 .toList();
         return new MatchSummary(
                 match.getId().toString(),
+                match.getSlug(),
                 toGameMini(match.getGame()),
                 match.getScheduledAt(),
                 match.getStatus() == null ? null : match.getStatus().name(),
@@ -1347,6 +1358,7 @@ public class MatchService {
         boolean hasResults = resultRowRepository.existsByMatchId(match.getId());
         return new MatchDetail(
                 match.getId().toString(),
+                match.getSlug(),
                 toGameMini(match.getGame()),
                 match.getScheduledAt(),
                 match.getStatus() == null ? null : match.getStatus().name(),

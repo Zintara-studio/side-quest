@@ -142,8 +142,15 @@ public class RegistrationService {
         // If this entry is responding to a specific registration call, that call must still be open —
         // a stale link (closed/deleted call) can't submit past the UI. This is the authoritative guard.
         if (request.announcementId() != null && !request.announcementId().isBlank()) {
-            Announcement call = announcementRepository
-                    .findById(parseId(request.announcementId(), "Announcement")).orElse(null);
+            // The register link now carries the announcement's short code; still accept a legacy UUID.
+            String ref = request.announcementId();
+            Announcement call = announcementRepository.findByShortCode(ref).or(() -> {
+                try {
+                    return announcementRepository.findById(UUID.fromString(ref));
+                } catch (IllegalArgumentException notAUuid) {
+                    return java.util.Optional.empty();
+                }
+            }).orElse(null);
             if (call == null || !call.isRegistrationOpen()) {
                 throw ApiException.badRequest("This registration call has closed.");
             }
@@ -169,6 +176,18 @@ public class RegistrationService {
             throw ApiException.badRequest(
                     "Franchise proposals can only be submitted between seasons — a season is currently active.");
         }
+        // Auction pool and franchise proposal are mutually exclusive. A player who's in the auction pool
+        // cannot ALSO propose a franchise — block it. (The reverse — entering the pool while a proposal
+        // is pending — auto-withdraws that proposal in the AUCTION branch below; auction takes priority.)
+        if (request.type() == RegistrationType.FRANCHISE) {
+            boolean pooled = registrationRepository.findByPlayerId(player.getId()).stream()
+                    .anyMatch(r -> r.getType() == RegistrationType.AUCTION
+                            && r.getStatus() == RegistrationStatus.ACTIVE && !r.isConsumed());
+            if (pooled) {
+                throw ApiException.conflict(
+                        "You're in the auction pool — withdraw from it before proposing a franchise.");
+            }
+        }
         // Auction registration closes the moment an admin locks the pool for the upcoming auction.
         if (request.type() == RegistrationType.AUCTION
                 && auctionRepository.existsByPoolLockedAtIsNotNullAndStatusNot(AuctionStatus.COMPLETED)) {
@@ -182,6 +201,15 @@ public class RegistrationService {
                             && r.getStatus() == RegistrationStatus.ACTIVE && !r.isConsumed());
             if (alreadyPooled) {
                 throw ApiException.conflict("You're already in the auction pool.");
+            }
+            // Entering the pool supersedes any pending franchise proposal (mutually exclusive) — auto-
+            // withdraw it so the player is never in both. Auction is the priority per the league rules.
+            for (Registration reg : registrationRepository.findByPlayerId(player.getId())) {
+                if (reg.getType() == RegistrationType.FRANCHISE
+                        && reg.getStatus() == RegistrationStatus.PENDING) {
+                    voidRegistration(reg, RegistrationStatus.WITHDRAWN,
+                            "Auto-withdrawn — you entered the auction pool.");
+                }
             }
         }
         // Every non-franchise entry needs at least one game (franchise proposals carry no games).
@@ -360,6 +388,7 @@ public class RegistrationService {
             return List.of();
         }
         return registrationRepository.findByPlayerId(player.getId()).stream()
+                .filter(r -> !r.isHidden()) // player-removed history stays out of their own list
                 .sorted(Comparator.comparing(Registration::getCreatedAt,
                         Comparator.nullsLast(Comparator.reverseOrder())))
                 .map(this::toView)
@@ -590,6 +619,27 @@ public class RegistrationService {
         auditService.record("registration.cancel", "Registration", registration.getId().toString(),
                 player.getGamerTag() + " withdrew " + describe(registration));
         return toView(registration);
+    }
+
+    /**
+     * Player: remove one of their own <em>settled</em> registrations from their My-Team history (a soft
+     * hide, not a hard delete). Only allowed for terminal states — a live FORMING/ACTIVE/PENDING entry
+     * must be withdrawn first, not hidden.
+     */
+    @Transactional
+    public void hideOwnRegistration(String id) {
+        Player player = currentPlayer();
+        Registration registration = load(id);
+        if (registration.getPlayer() == null || !registration.getPlayer().getId().equals(player.getId())) {
+            throw ApiException.forbidden("You can only remove your own registrations");
+        }
+        RegistrationStatus s = registration.getStatus();
+        if (s == RegistrationStatus.FORMING || s == RegistrationStatus.ACTIVE
+                || s == RegistrationStatus.PENDING) {
+            throw ApiException.conflict("Withdraw this registration before removing it from your history.");
+        }
+        registration.setHidden(true);
+        registrationRepository.save(registration);
     }
 
     /**
@@ -894,6 +944,8 @@ public class RegistrationService {
 
         String matchId = registration.getMatch() != null
                 ? registration.getMatch().getId().toString() : null;
+        String matchSlug = registration.getMatch() != null
+                ? registration.getMatch().getSlug() : null;
 
         Game game = registration.getGame();
         String gameId = game != null ? game.getId().toString() : null;
@@ -912,6 +964,7 @@ public class RegistrationService {
                 registration.getReason(),
                 registration.getCreatedAt(),
                 matchId,
+                matchSlug,
                 gameId,
                 gameName,
                 members,

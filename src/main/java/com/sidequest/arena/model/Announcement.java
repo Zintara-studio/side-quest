@@ -7,6 +7,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -74,4 +75,21 @@ public class Announcement extends BaseEntity {
     /** For a SQUAD registration call: the roster size squads should register for (invite cap). Nullable. */
     @Column(name = "team_size")
     private Integer teamSize;
+
+    /**
+     * Short, URL-friendly public code (e.g. {@code k3F9tqA1}) used in links instead of the long UUID —
+     * announcements are ephemeral (30-day retention), so a short random code is plenty. Auto-generated on
+     * first persist. Nullable so a Postgres ADD COLUMN doesn't fail on an existing table.
+     */
+    @Column(name = "short_code", unique = true, length = 16)
+    private String shortCode;
+
+    @PrePersist
+    void assignShortCode() {
+        if (shortCode == null || shortCode.isBlank()) {
+            byte[] rnd = new byte[6];
+            new java.security.SecureRandom().nextBytes(rnd);
+            shortCode = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(rnd); // 8 chars
+        }
+    }
 }

@@ -22,6 +22,7 @@ import java.util.List;
  */
 public record MatchDetail(
         String id,
+        String slug,
         GameMini game,
         Instant scheduledAt,
         String status,

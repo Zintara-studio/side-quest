@@ -93,6 +93,14 @@ public class Registration extends BaseEntity {
     @Column(name = "consumed", nullable = false)
     private boolean consumed = false;
 
+    /**
+     * Whether the player has removed this (terminal) registration from their own "My Team" history. A
+     * soft flag rather than a hard delete so squad-invite rows referencing it stay intact. {@code default
+     * false} so a Postgres ADD COLUMN backfills existing rows.
+     */
+    @Column(name = "hidden", nullable = false, columnDefinition = "boolean default false")
+    private boolean hidden = false;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "reviewed_by")
     private User reviewedBy;

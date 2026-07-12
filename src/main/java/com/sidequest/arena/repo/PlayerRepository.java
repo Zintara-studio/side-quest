@@ -29,6 +29,8 @@ public interface PlayerRepository extends JpaRepository<Player, UUID> {
 
     Optional<Player> findByGamerTagIgnoreCase(String gamerTag);
 
+    boolean existsByGamerTagIgnoreCase(String gamerTag);
+
     List<Player> findByFranchiseId(UUID franchiseId);
 
     List<Player> findByStatus(PlayerStatus status);

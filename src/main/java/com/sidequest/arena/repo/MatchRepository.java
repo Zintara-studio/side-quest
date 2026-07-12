@@ -16,6 +16,8 @@ import java.util.UUID;
 
 public interface MatchRepository extends JpaRepository<Match, UUID> {
 
+    Optional<Match> findBySlug(String slug);
+
     List<Match> findAllByOrderByScheduledAtDesc();
 
     List<Match> findByStatusOrderByScheduledAtDesc(MatchStatus status);

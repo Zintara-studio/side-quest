@@ -30,4 +30,9 @@ public interface AnnouncementRepository extends JpaRepository<Announcement, UUID
 
     /** Pinned notices, newest first — surfaces on the public home page even after they age out of the feed. */
     List<Announcement> findByPinnedTrueOrderByPublishedAtDesc();
+
+    /** Non-pinned posts older than the cutoff — the 30-day retention sweep (pinned notices are exempt). */
+    List<Announcement> findByPinnedFalseAndPublishedAtBefore(java.time.Instant cutoff);
+
+    java.util.Optional<Announcement> findByShortCode(String shortCode);
 }

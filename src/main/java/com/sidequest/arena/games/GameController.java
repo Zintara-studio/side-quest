@@ -1,16 +1,20 @@
 package com.sidequest.arena.games;
 
+import com.sidequest.arena.games.dto.CreateGameRequest;
 import com.sidequest.arena.games.dto.GameDetail;
 import com.sidequest.arena.games.dto.GameSummary;
 import com.sidequest.arena.games.dto.UpdateGameRequest;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -40,6 +44,14 @@ public class GameController {
     @GetMapping("/{id}")
     public GameDetail get(@PathVariable UUID id) {
         return gameService.get(id);
+    }
+
+    /** Admin: add a new title (scoring defaults from the genre; tune later via PATCH). 201 on success. */
+    @PostMapping
+    @PreAuthorize("hasRole('ADMIN')")
+    @ResponseStatus(HttpStatus.CREATED)
+    public GameDetail create(@Valid @RequestBody CreateGameRequest request) {
+        return gameService.create(request);
     }
 
     /** Admin: applies the non-null fields of the request to the game and returns the refreshed detail. */

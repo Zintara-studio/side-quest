@@ -11,4 +11,6 @@ public interface GameRepository extends JpaRepository<Game, UUID> {
     List<Game> findByEnabledTrueOrderByPopularityDesc();
 
     List<Game> findAllByOrderByPopularityDesc();
+
+    boolean existsByNameIgnoreCase(String name);
 }

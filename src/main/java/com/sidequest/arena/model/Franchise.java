@@ -6,6 +6,7 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -15,7 +16,13 @@ import lombok.Setter;
  * leader, season-scoped standings ({@code points}, {@code rank}) recomputed by the scoring engine.
  */
 @Entity
-@Table(name = "franchises")
+@Table(name = "franchises", uniqueConstraints = {
+        // A franchise name and tag are each unique across the whole league — reserved even after a
+        // franchise is discarded (discard only flips active=false, the row stays), so a name can never
+        // be reused. Enforced in the service (case-insensitive, ignoring active) + these DB backstops.
+        @UniqueConstraint(name = "uk_franchises_name", columnNames = "name"),
+        @UniqueConstraint(name = "uk_franchises_tag", columnNames = "tag")
+})
 @Getter
 @Setter
 @NoArgsConstructor

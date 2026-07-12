@@ -3,6 +3,7 @@ package com.sidequest.arena.admin;
 import com.sidequest.arena.admin.dto.DisputeView;
 import com.sidequest.arena.admin.dto.OverviewResponse;
 import com.sidequest.arena.admin.dto.ResolveDisputeRequest;
+import com.sidequest.arena.admin.dto.SeedResult;
 import com.sidequest.arena.admin.dto.TeamMember;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -54,6 +55,13 @@ public class AdminController {
     @GetMapping("/team")
     public List<TeamMember> team() {
         return adminService.team();
+    }
+
+    /** Main admin only: seed static config (games catalogue) into the DB without a restart. */
+    @PostMapping("/seed")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    public SeedResult seed() {
+        return adminService.seedStaticConfig();
     }
 
     /** Main admin only: appoint a player as an admin. */

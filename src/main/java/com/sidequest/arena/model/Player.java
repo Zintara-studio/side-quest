@@ -21,7 +21,10 @@ import lombok.Setter;
 @Entity
 @Table(name = "players", indexes = {
         @Index(name = "idx_players_franchise", columnList = "franchise_id"),
-        @Index(name = "idx_players_points", columnList = "points")
+        @Index(name = "idx_players_points", columnList = "points"),
+        // gamerTag is the public handle/username and must be unique site-wide. The app layer also
+        // rejects case-insensitive duplicates at signup; this index is the DB backstop against exact dups.
+        @Index(name = "idx_players_gamer_tag", columnList = "gamer_tag", unique = true)
 })
 @Getter
 @Setter

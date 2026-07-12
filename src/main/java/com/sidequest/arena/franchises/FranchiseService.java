@@ -158,6 +158,7 @@ public class FranchiseService {
     @CacheEvict(value = CacheConfig.FRANCHISES, allEntries = true)
     @Transactional
     public FranchiseDetail create(CreateFranchiseRequest req) {
+        requireNameTagAvailable(req.name(), req.tag(), null);
         Franchise franchise = new Franchise();
         franchise.setName(req.name());
         franchise.setTag(req.tag());
@@ -186,6 +187,15 @@ public class FranchiseService {
     public FranchiseDetail update(String id, UpdateFranchiseRequest req) {
         Franchise franchise = require(id);
 
+        // Reject a rename onto a name/tag already used by ANOTHER franchise (active or discarded).
+        if (req.name() != null && !req.name().equalsIgnoreCase(franchise.getName())
+                && franchiseRepository.existsByNameIgnoreCaseAndIdNot(req.name(), franchise.getId())) {
+            throw ApiException.conflict("A franchise named \"" + req.name() + "\" already exists.");
+        }
+        if (req.tag() != null && !req.tag().equalsIgnoreCase(franchise.getTag())
+                && franchiseRepository.existsByTagIgnoreCaseAndIdNot(req.tag(), franchise.getId())) {
+            throw ApiException.conflict("The tag \"" + req.tag() + "\" is already in use.");
+        }
         if (req.name() != null) {
             franchise.setName(req.name());
         }
@@ -488,6 +498,9 @@ public class FranchiseService {
         franchise.setRank(0);
         franchise.setActive(true);
         franchise.setOwnerPlayer(applicant);
+        // The proposed name/derived tag must be free league-wide (another proposal may have been
+        // promoted first, or the name reused from a discarded franchise).
+        requireNameTagAvailable(franchise.getName(), franchise.getTag(), null);
         Franchise saved = franchiseRepository.save(franchise);
 
         applicant.setFranchise(saved);
@@ -779,16 +792,39 @@ public class FranchiseService {
         return sb.length() > 0 ? sb.toString() : "TBD";
     }
 
-    /** Require the current caller to be an admin or the owner of this franchise. */
+    /**
+     * Require the current caller to be the main admin (super-admin) or the owner of this franchise.
+     * Franchise management is main-admin-only, so a regular appointed admin is NOT sufficient here —
+     * only the franchise's own owner or the super-admin may act.
+     */
     private void requireOwnerOrAdmin(Franchise franchise) {
-        if (SecurityUtils.isAdmin()) {
+        if (SecurityUtils.isSuperAdmin()) {
             return;
         }
         Player owner = franchise.getOwnerPlayer();
         boolean isOwner = owner != null && owner.getUser() != null
                 && owner.getUser().getId().equals(SecurityUtils.currentUserId());
         if (!isOwner) {
-            throw ApiException.forbidden("Only the franchise owner or an admin can do this");
+            throw ApiException.forbidden("Only the franchise owner or the main admin can do this");
+        }
+    }
+
+    /**
+     * Franchise name + tag are unique league-wide (case-insensitive), reserved even across discarded
+     * franchises. {@code excludeId} is the franchise being renamed (null on create).
+     */
+    private void requireNameTagAvailable(String name, String tag, java.util.UUID excludeId) {
+        boolean nameTaken = excludeId == null
+                ? franchiseRepository.existsByNameIgnoreCase(name)
+                : franchiseRepository.existsByNameIgnoreCaseAndIdNot(name, excludeId);
+        if (nameTaken) {
+            throw ApiException.conflict("A franchise named \"" + name + "\" already exists.");
+        }
+        boolean tagTaken = excludeId == null
+                ? franchiseRepository.existsByTagIgnoreCase(tag)
+                : franchiseRepository.existsByTagIgnoreCaseAndIdNot(tag, excludeId);
+        if (tagTaken) {
+            throw ApiException.conflict("The tag \"" + tag + "\" is already in use.");
         }
     }
 
@@ -803,9 +839,16 @@ public class FranchiseService {
     }
 
     /** Load a franchise by its string id, or throw 404 (an unparseable id can never match). */
-    private Franchise require(String id) {
-        return franchiseRepository.findById(parseId(id, "Franchise"))
-                .orElseThrow(() -> ApiException.notFound("Franchise", id));
+    private Franchise require(String idOrTag) {
+        // Resolve by UUID (tried first) or by the unique tag slug, so /franchise/RXG works alongside
+        // /franchise/{uuid}. Tags are short codes, never valid UUIDs, so there's no ambiguity.
+        try {
+            return franchiseRepository.findById(java.util.UUID.fromString(idOrTag))
+                    .orElseThrow(() -> ApiException.notFound("Franchise", idOrTag));
+        } catch (IllegalArgumentException notAUuid) {
+            return franchiseRepository.findByTagIgnoreCase(idOrTag)
+                    .orElseThrow(() -> ApiException.notFound("Franchise", idOrTag));
+        }
     }
 
     /** Load a player by its string id, or throw 404 (an unparseable id can never match). */
@@ -972,6 +1015,7 @@ public class FranchiseService {
         String gameName = match.getGame() != null ? match.getGame().getName() : null;
         return new FranchiseMatchView(
                 match.getId().toString(),
+                match.getSlug(),
                 gameName,
                 match.getScheduledAt(),
                 match.getStatus() != null ? match.getStatus().name() : null,

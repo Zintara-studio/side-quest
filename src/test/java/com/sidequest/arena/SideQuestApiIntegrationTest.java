@@ -1166,6 +1166,13 @@ class SideQuestApiIntegrationTest {
         // ...and cannot appoint/revoke other admins.
         assertThat(post("/admin/players/" + pPlayerId + "/admin", null, adminToken).getStatusCode())
                 .isEqualTo(HttpStatus.FORBIDDEN);
+        // ...franchise management is main-admin-only.
+        ObjectNode fr = mapper.createObjectNode();
+        fr.put("name", "Appointee FC " + UUID.randomUUID().toString().substring(0, 6));
+        fr.put("tag", "AFC");
+        assertThat(post("/franchises", fr, adminToken).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        // ...and the static-config seed is main-admin-only.
+        assertThat(post("/admin/seed", null, adminToken).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
 
         // Revoke the appointee → plain player again, control room closed (after re-login).
         assertThat(delete("/admin/players/" + pPlayerId + "/admin", superAdmin).getStatusCode())
@@ -1256,5 +1263,51 @@ class SideQuestApiIntegrationTest {
         // Leave a terminal auction so later reads aren't affected.
         assertThat(post("/auctions/" + auctionId + "/complete", null, admin).getStatusCode().is2xxSuccessful())
                 .isTrue();
+    }
+
+    /** gamerTag + franchise-name uniqueness, admin add-game (+ dup reject), and the static-config seed. */
+    @Test
+    @Order(14)
+    void uniquenessAddGameAndSeed() {
+        String suffix = UUID.randomUUID().toString().substring(0, 6);
+
+        // (a) the display name doubles as the public gamerTag and must be unique site-wide.
+        String name = "Dupe" + suffix;
+        ObjectNode reg1 = mapper.createObjectNode();
+        reg1.put("name", name);
+        reg1.put("email", "dupe1-" + suffix + "@sidequest.gg");
+        reg1.put("password", "password123");
+        assertThat(post("/auth/register", reg1, null).getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+        ObjectNode reg2 = mapper.createObjectNode();
+        reg2.put("name", name); // same handle
+        reg2.put("email", "dupe2-" + suffix + "@sidequest.gg");
+        reg2.put("password", "password123");
+        assertThat(post("/auth/register", reg2, null).getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+
+        String admin = login("admin@sidequest.gg", "password");
+
+        // (b) franchise name is unique — reusing an existing franchise's name is rejected (no new row made).
+        JsonNode existingFranchise = get("/franchises", null).get("items").get(0);
+        ObjectNode dupFranchise = mapper.createObjectNode();
+        dupFranchise.put("name", existingFranchise.get("name").asText());
+        dupFranchise.put("tag", "ZZ" + suffix.substring(0, 3));
+        assertThat(post("/franchises", dupFranchise, admin).getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+
+        // (c) admin can add a game; a duplicate name is rejected.
+        String gname = "Deadlock " + suffix;
+        ObjectNode game = mapper.createObjectNode();
+        game.put("name", gname);
+        game.put("format", "6v6 Hero Shooter");
+        game.put("gameType", "TACTICAL");
+        game.put("popularity", 55);
+        ResponseEntity<String> created = post("/games", game, admin);
+        assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(parse(created).get("name").asText()).isEqualTo(gname);
+        assertThat(post("/games", game, admin).getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+
+        // (d) the static-config seed is idempotent and reports the catalogue total.
+        ResponseEntity<String> seed = post("/admin/seed", null, admin);
+        assertThat(seed.getStatusCode().is2xxSuccessful()).isTrue();
+        assertThat(parse(seed).get("gamesTotal").asInt()).isGreaterThan(0);
     }
 }

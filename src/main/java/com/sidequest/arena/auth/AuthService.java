@@ -86,6 +86,10 @@ public class AuthService {
         if (userRepository.existsByEmailIgnoreCase(request.email())) {
             throw new ApiException(ErrorCode.EMAIL_TAKEN, "Email already registered");
         }
+        // The display name doubles as the public gamerTag/username, which must be unique site-wide.
+        if (playerRepository.existsByGamerTagIgnoreCase(request.name())) {
+            throw ApiException.conflict("That display name is already taken — pick another.");
+        }
 
         User user = new User();
         user.setName(request.name());
@@ -187,7 +191,8 @@ public class AuthService {
 
             Player player = new Player();
             player.setUser(user);
-            player.setGamerTag(user.getName());
+            // A Google user can't be re-prompted for a name, so auto-suffix on collision rather than fail.
+            player.setGamerTag(uniqueGamerTag(user.getName()));
             player.setStatus(PlayerStatus.VERIFIED); // Google verified the email → auction-eligible
             playerRepository.save(player);
         } else if (!user.isEmailVerified()) {
@@ -311,6 +316,20 @@ public class AuthService {
                     player.setStatus(PlayerStatus.VERIFIED);
                     playerRepository.save(player);
                 });
+    }
+
+    /**
+     * A gamerTag unique site-wide, derived from {@code base}: returns it as-is when free, else appends a
+     * numeric discriminator ("Alex" → "Alex2" → "Alex3"). Used for SSO sign-ups where the user can't be
+     * re-prompted; the DB unique index backstops the (rare) race.
+     */
+    private String uniqueGamerTag(String base) {
+        String candidate = base;
+        int n = 1;
+        while (playerRepository.existsByGamerTagIgnoreCase(candidate)) {
+            candidate = base + (++n);
+        }
+        return candidate;
     }
 
     /** Blocks a suspended player from acquiring or renewing a session. */

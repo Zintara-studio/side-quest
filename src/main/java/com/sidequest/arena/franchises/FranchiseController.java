@@ -84,14 +84,14 @@ public class FranchiseController {
 
     /** Create a franchise (admin only). */
     @PostMapping
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public ResponseEntity<FranchiseDetail> create(@Valid @RequestBody CreateFranchiseRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(franchiseService.create(request));
     }
 
     /** Update a franchise's fields and/or in-game leader (admin only). */
     @PatchMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public FranchiseDetail update(@PathVariable String id, @Valid @RequestBody UpdateFranchiseRequest request) {
         return franchiseService.update(id, request);
     }
@@ -106,49 +106,49 @@ public class FranchiseController {
 
     /** Assign a player to the franchise's roster (admin only); returns the updated roster. */
     @PostMapping("/{id}/roster")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public List<RosterMember> assignPlayer(@PathVariable String id, @Valid @RequestBody AssignPlayerRequest request) {
         return franchiseService.assignPlayer(id, request);
     }
 
     /** Elevate a player to franchise owner (admin only). */
     @PostMapping("/{id}/owner")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public FranchiseDetail setOwner(@PathVariable String id, @Valid @RequestBody AssignRoleRequest request) {
         return franchiseService.setOwner(id, request);
     }
 
     /** Candidate players for this franchise's owner/manager slot (admin or the franchise owner). */
     @GetMapping("/{id}/eligible-owners")
-    @PreAuthorize("hasAnyRole('ADMIN','FRANCHISE_OWNER')")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN','FRANCHISE_OWNER')")
     public List<FranchiseDetail.PersonView> eligibleOwners(@PathVariable String id) {
         return franchiseService.eligiblePlayers(parseId(id, "Franchise"));
     }
 
     /** Create a franchise from an approved franchise-creation proposal / registration (admin only). */
     @PostMapping("/from-proposal/{registrationId}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public FranchiseDetail createFromProposal(@PathVariable String registrationId) {
         return franchiseService.createFromProposal(parseId(registrationId, "Registration"));
     }
 
     /** Set the franchise manager (admin or the franchise owner; ownership enforced in the service). */
     @PostMapping("/{id}/manager")
-    @PreAuthorize("hasAnyRole('ADMIN','FRANCHISE_OWNER')")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN','FRANCHISE_OWNER')")
     public FranchiseDetail setManager(@PathVariable String id, @Valid @RequestBody AssignRoleRequest request) {
         return franchiseService.setManager(id, request);
     }
 
     /** Discard (deactivate) a franchise (admin only; blocked during an active season). */
     @PostMapping("/{id}/discard")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public FranchiseDetail discard(@PathVariable String id) {
         return franchiseService.discard(id);
     }
 
     /** Bring a previously discarded franchise back into the league (admin only). */
     @PostMapping("/{id}/restore")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public FranchiseDetail restore(@PathVariable String id) {
         return franchiseService.restore(id);
     }

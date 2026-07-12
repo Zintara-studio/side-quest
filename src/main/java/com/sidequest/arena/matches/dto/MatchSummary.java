@@ -19,6 +19,7 @@ import java.util.List;
  */
 public record MatchSummary(
         String id,
+        String slug,
         GameMini game,
         Instant scheduledAt,
         String status,

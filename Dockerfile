@@ -6,11 +6,14 @@ WORKDIR /build
 COPY package.json package-lock.json* ./
 RUN npm ci
 
-# The API origin is BAKED IN at build time (NEXT_PUBLIC_* is inlined into the client bundle), so it must
-# be supplied as a build arg — a runtime env var would be too late. Point it at the browser-reachable
-# API URL for the target environment (e.g. https://api.your-domain.com/v1).
+# The public config is BAKED IN at build time (NEXT_PUBLIC_* is inlined into the client bundle), so it
+# must be supplied as build args — a runtime env var would be too late. NEXT_PUBLIC_API_URL points at the
+# browser-reachable API (e.g. https://your-host/v1); NEXT_PUBLIC_GOOGLE_CLIENT_ID enables the Google
+# button (leave empty to hide it).
 ARG NEXT_PUBLIC_API_URL=http://localhost:8080/v1
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ARG NEXT_PUBLIC_GOOGLE_CLIENT_ID=
+ENV NEXT_PUBLIC_GOOGLE_CLIENT_ID=$NEXT_PUBLIC_GOOGLE_CLIENT_ID
 
 COPY . .
 # `next build` + the postbuild hook produce a self-contained .next/standalone (server.js + static + public).

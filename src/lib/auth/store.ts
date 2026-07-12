@@ -3,13 +3,15 @@
 // localStorage so a returning visitor stays signed in across reloads.
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
-import type { AuthResponse, AuthUserView, MeResponse } from "@/lib/api/types";
+import type { AdminLevel, AuthResponse, AuthUserView, MeResponse } from "@/lib/api/types";
 
 export interface SessionUser {
   id: string;
   name: string;
   email: string;
   role: string;
+  /** Admin tier (orthogonal to role) — "NONE" for a plain player. */
+  adminLevel: AdminLevel;
 }
 
 interface AuthState {
@@ -32,6 +34,7 @@ const toUser = (u: AuthUserView): SessionUser => ({
   name: u.name,
   email: u.email,
   role: u.role,
+  adminLevel: u.adminLevel,
 });
 
 export const useAuthStore = create<AuthState>()(
@@ -57,6 +60,7 @@ export const useAuthStore = create<AuthState>()(
             name: me.user.name,
             email: me.user.email,
             role: me.user.role,
+            adminLevel: me.user.adminLevel,
           },
           playerId: me.player?.id ?? null,
         }),

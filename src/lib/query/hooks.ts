@@ -717,6 +717,30 @@ export const useAdminOverview = (enabled = true) =>
     staleTime: STALE_LIST,
   });
 
+export const useAdminTeam = (enabled = true) =>
+  useQuery({
+    queryKey: ["admin", "team"],
+    queryFn: () => adminApi.team(),
+    enabled,
+    staleTime: STALE_LIST,
+  });
+
+export const useAppointAdmin = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (playerId: string) => adminApi.appointAdmin(playerId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "team"] }),
+  });
+};
+
+export const useRevokeAdmin = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (playerId: string) => adminApi.revokeAdmin(playerId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "team"] }),
+  });
+};
+
 export const useSettings = () =>
   useQuery({ queryKey: qk.settings(), queryFn: () => adminApi.settings(), staleTime: STALE_LIST });
 

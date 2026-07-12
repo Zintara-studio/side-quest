@@ -14,6 +14,7 @@ import {
   AuthError,
   OrDivider,
   SocialRow,
+  hasGoogleAuth,
   AuthFootnote,
   authLinkStyle,
 } from "./auth-ui";
@@ -114,8 +115,12 @@ export function LoginForm() {
         <AuthError>{error}</AuthError>
         <AuthSubmit disabled={pending}>{pending ? "Signing in…" : "Sign in ▸"}</AuthSubmit>
       </form>
-      <OrDivider />
-      <SocialRow />
+      {hasGoogleAuth ? (
+        <>
+          <OrDivider />
+          <SocialRow />
+        </>
+      ) : null}
       <AuthFootnote>
         New to Side Quest?{" "}
         <Link href="/signup" style={authLinkStyle}>

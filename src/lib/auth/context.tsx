@@ -13,7 +13,10 @@ interface AuthContextValue {
   user: SessionUser | null;
   playerId: string | null;
   isAuthenticated: boolean;
+  /** Any admin tier (appointed admin or the main admin). */
   isAdmin: boolean;
+  /** The single main admin — gates the sensitive, undo-less actions + admin appointment. */
+  isSuperAdmin: boolean;
   hydrated: boolean;
   /** Resolves to the signed-in user's role (e.g. "ADMIN") so callers can route accordingly. */
   login: (body: LoginRequest) => Promise<string>;
@@ -115,7 +118,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user,
     playerId,
     isAuthenticated: Boolean(accessToken || refreshToken || user),
-    isAdmin: user?.role === "ADMIN",
+    isAdmin: (user?.adminLevel ?? "NONE") !== "NONE",
+    isSuperAdmin: user?.adminLevel === "SUPER_ADMIN",
     hydrated: mounted ? hydrated : false,
     login,
     signup,

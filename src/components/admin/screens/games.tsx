@@ -7,6 +7,7 @@ import { Toggle } from "../toggle";
 import { StateNote } from "@/components/sidequest/state-note";
 import { ConfirmModal } from "@/components/sidequest/confirm-modal";
 import { useGames, useUpdateGame, useCurrentSeason } from "@/lib/query/hooks";
+import { useAuth } from "@/lib/auth/context";
 import type { GameSummary, GameType } from "@/lib/api/types";
 
 const statLabel = {
@@ -114,6 +115,7 @@ function ScoreField({
 const toInt = (v: string) => Math.max(0, Math.floor(Number(v) || 0));
 
 function GameCard({ g, seasonActive }: { g: GameSummary; seasonActive: boolean }) {
+  const { isSuperAdmin } = useAuth();
   const updateGame = useUpdateGame();
   const [typeColor, typeBorder] = GAME_TYPE_COLORS[g.gameType];
 
@@ -291,8 +293,13 @@ function GameCard({ g, seasonActive }: { g: GameSummary; seasonActive: boolean }
           <ScoreField
             label="WEIGHT"
             value={draft.standingsWeight}
-            hint={`${(toInt(draft.standingsWeight) / 100).toFixed(2)}×`}
-            busy={updateGame.isPending}
+            hint={
+              isSuperAdmin
+                ? `${(toInt(draft.standingsWeight) / 100).toFixed(2)}×`
+                : "main admin only"
+            }
+            // Changing a game's standings weight re-weights the whole table — main-admin-only.
+            busy={updateGame.isPending || !isSuperAdmin}
             width={72}
             numeric
             onChange={(v) => setDraft((d) => ({ ...d, standingsWeight: v }))}

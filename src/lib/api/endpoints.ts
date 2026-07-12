@@ -42,6 +42,7 @@ import type {
   MeResponse,
   NotificationView,
   OverviewResponse,
+  TeamMember,
   PageResponse,
   UnreadCountResponse,
   PlayerDetail,
@@ -276,6 +277,8 @@ export const standingsApi = {
 
 export interface AnnouncementListParams {
   category?: string;
+  /** Only pinned notices (home page uses this to surface league-pinned posts). */
+  pinned?: boolean;
   limit?: number;
   cursor?: string;
 }
@@ -340,6 +343,12 @@ export const adminApi = {
   disputes: () => api.get<DisputeView[]>("/admin/disputes").then((r) => r.data),
   resolveDispute: (id: string, body: ResolveDisputeRequest) =>
     api.post<DisputeView>(`/admin/disputes/${id}/resolve`, body).then((r) => r.data),
+  team: () => api.get<TeamMember[]>("/admin/team").then((r) => r.data),
+  // Main admin only. Appointed admins are players, so these are keyed by playerId.
+  appointAdmin: (playerId: string) =>
+    api.post<TeamMember>(`/admin/players/${playerId}/admin`, null).then((r) => r.data),
+  revokeAdmin: (playerId: string) =>
+    api.delete<void>(`/admin/players/${playerId}/admin`).then((r) => r.data),
 };
 
 // ---- disputes (any logged-in user) ----------------------------------------

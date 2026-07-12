@@ -77,7 +77,24 @@ function AnnouncementRow({ a }: { a: AnnouncementView }) {
         {a.registrationOpen ? "REGISTER" : tag}
       </div>
       <div style={{ flex: 1, minWidth: 200 }}>
-        <div style={{ fontSize: 17, fontWeight: 600 }}>{a.title}</div>
+        <div style={{ fontSize: 17, fontWeight: 600, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {a.title}
+          {a.pinned ? (
+            <span
+              style={{
+                fontFamily: FONT.mono,
+                fontSize: 9,
+                letterSpacing: ".12em",
+                color: SQ.ember,
+                border: `1px solid rgba(232,96,44,.45)`,
+                padding: "3px 7px",
+                borderRadius: 4,
+              }}
+            >
+              ★ PINNED
+            </span>
+          ) : null}
+        </div>
         {a.body ? (
           isLong && !expanded ? (
             <>

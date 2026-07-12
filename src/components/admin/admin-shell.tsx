@@ -17,6 +17,8 @@ interface NavItem {
   badgeKey?: "franchiseProposals" | "openDisputes" | "resultsToEnter";
   /** Renders a live-pulse "LIVE" pill instead of a numeric badge while the auction is running. */
   liveKey?: "auction";
+  /** Only shown to the main admin (super-admin) — the sensitive, main-admin-only areas. */
+  superOnly?: boolean;
 }
 interface NavGroup {
   label: string;
@@ -29,7 +31,8 @@ const navGroups: NavGroup[] = [
     items: [
       { href: "/admin", label: "Overview" },
       { href: "/admin/matches", label: "Matches", badgeKey: "resultsToEnter" },
-      { href: "/admin/auction", label: "Auction", liveKey: "auction" },
+      // The auction workflow is main-admin-only; a regular admin watches from the public auction page.
+      { href: "/admin/auction", label: "Auction", liveKey: "auction", superOnly: true },
       // Match sign-ups (solo/squad per fixture). No queue badge: match registrations are live from
       // creation — there is no pending-review state since the approval system was removed.
       { href: "/admin/registrations", label: "Registrations" },
@@ -49,6 +52,7 @@ const navGroups: NavGroup[] = [
     label: "SYSTEM",
     items: [
       { href: "/admin/history", label: "History" },
+      { href: "/admin/team", label: "Admins", superOnly: true },
       { href: "/admin/settings", label: "Settings" },
     ],
   },
@@ -83,7 +87,7 @@ function FullScreen({ children }: { children: ReactNode }) {
 export function AdminShell({ children, fontClass }: { children: ReactNode; fontClass: string }) {
   const pathname = usePathname() ?? "/admin";
   const router = useRouter();
-  const { user, isAdmin, hydrated, logout } = useAuth();
+  const { user, playerId, isAdmin, isSuperAdmin, hydrated, logout } = useAuth();
 
   // Protect every /admin route: non-admins are bounced to sign-in.
   useEffect(() => {
@@ -194,7 +198,9 @@ export function AdminShell({ children, fontClass }: { children: ReactNode; fontC
               >
                 {grp.label}
               </div>
-              {grp.items.map((it) => {
+              {grp.items
+                .filter((it) => !it.superOnly || isSuperAdmin)
+                .map((it) => {
                 const active = isActive(it.href);
                 const badgeCount =
                   it.badgeKey === "franchiseProposals"
@@ -386,6 +392,24 @@ export function AdminShell({ children, fontClass }: { children: ReactNode; fontC
         >
           <div style={{ ...monoTiny, color: SQ.mute }}>{seasonLabel}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <Link
+              href={playerId ? `/player/${playerId}` : "/"}
+              title="Switch to the public player site"
+              style={{
+                fontFamily: FONT.mono,
+                fontSize: 10.5,
+                letterSpacing: ".12em",
+                textTransform: "uppercase",
+                color: SQ.mute,
+                textDecoration: "none",
+                border: `1px solid ${SQ.hairline}`,
+                borderRadius: 999,
+                padding: "6px 12px",
+                whiteSpace: "nowrap",
+              }}
+            >
+              ◂ Player site
+            </Link>
             <NotificationBell href="/admin/notifications" />
             <ThemeToggle />
             <Link

@@ -24,11 +24,15 @@ export interface LoginRequest {
   password: string;
 }
 
+/** Admin tier, orthogonal to role. "NONE" = not an admin, "ADMIN" = appointed, "SUPER_ADMIN" = main admin. */
+export type AdminLevel = "NONE" | "ADMIN" | "SUPER_ADMIN";
+
 export interface AuthUserView {
   id: string;
   name: string;
   email: string;
   role: string;
+  adminLevel: AdminLevel;
 }
 
 export interface AuthResponse {
@@ -67,6 +71,7 @@ export interface MeUserView {
   email: string;
   phone?: string;
   role: string;
+  adminLevel: AdminLevel;
 }
 
 export interface MePlayerView {
@@ -546,6 +551,8 @@ export interface AnnouncementView {
   author?: string;
   publishedAt: string;
   registrationOpen: boolean;
+  /** Pinned to the public home page as an important / league-pinned notice. */
+  pinned: boolean;
   gameId?: string;
   gameName?: string;
   registrationType?: RegistrationType;
@@ -559,17 +566,21 @@ export interface CreateAnnouncementRequest {
   body: string;
   matchId?: string;
   registrationOpen?: boolean;
+  /** Pin this announcement to the home page. */
+  pinned?: boolean;
   gameId?: string;
   registrationType?: RegistrationType;
   /** SQUAD registration calls: the roster cap squads registering from this post must respect. */
   teamSize?: number;
 }
 
-/** Admin edit of an existing announcement — only content, not its registration wiring. */
+/** Admin edit of an existing announcement — content + pin state, not its registration wiring. */
 export interface UpdateAnnouncementRequest {
   category?: string;
   title?: string;
   body?: string;
+  /** Pin/unpin; omit to leave unchanged (a nullable flag on the backend). */
+  pinned?: boolean;
 }
 
 // ---- registrations ---------------------------------------------------------
@@ -704,6 +715,17 @@ export interface OverviewResponse {
   }[];
 }
 
+/** A staff account in the admin roster (an admin of some tier, or a franchise manager). */
+export interface TeamMember {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  adminLevel: AdminLevel;
+  /** The linked player id, or null (only players can be appointed admins). */
+  playerId: string | null;
+}
+
 export interface SettingsView {
   seasonId: string;
   seasonName: string;
@@ -810,6 +832,8 @@ export interface AuctionLotView {
   id: string;
   playerId: string;
   gamerTag: string;
+  /** The player's profile picture (/media/{id} URL); public — shown to spectators and bidders. */
+  avatarUrl?: string | null;
   /** The player's real name from registration — present only for bidders/admin (null for spectators). */
   realName?: string | null;
   status: AuctionLotStatus;
@@ -882,6 +906,8 @@ export interface AuctionView {
   /** When set and in the future, a lot just sold and the room is in a brief SOLD intermission. */
   intermissionUntil: string | null;
   currentLot: AuctionLotView | null;
+  /** The lot that just resolved (SOLD/UNSOLD) and triggered the intermission — drives the card. */
+  lastResolvedLot: AuctionLotView | null;
   franchises: AuctionFranchiseView[];
   lots: AuctionLotView[];
   recentBids: AuctionBidView[];

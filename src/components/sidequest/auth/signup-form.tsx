@@ -14,6 +14,7 @@ import {
   AuthError,
   OrDivider,
   SocialRow,
+  hasGoogleAuth,
   AuthFootnote,
   authLinkStyle,
 } from "./auth-ui";
@@ -128,8 +129,12 @@ export function SignupForm() {
           {pending ? "Creating account…" : "Create account ▸"}
         </AuthSubmit>
       </form>
-      <OrDivider />
-      <SocialRow />
+      {hasGoogleAuth ? (
+        <>
+          <OrDivider />
+          <SocialRow />
+        </>
+      ) : null}
       <AuthFootnote>
         Already registered?{" "}
         <Link href="/login" style={authLinkStyle}>

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { SQ, FONT } from "../tokens";
 import { StateNote } from "../state-note";
 import { Modal } from "../modal";
+import { Avatar } from "../avatar";
 import { useAuth, apiErrorMessage } from "@/lib/auth/context";
 import { useMyFranchise, useActiveAuction, useAuction, usePlaceBid, useJoinAuction } from "@/lib/query/hooks";
 import { useAuctionSocket } from "@/lib/query/use-auction-socket";
@@ -215,13 +216,17 @@ function BidRoom({
     [auction.lots, myFranchiseId],
   );
 
-  // The most recently sold lot drives the SOLD intermission card.
-  const justSold = useMemo(
+  // The lot that just resolved (sold OR unsold) drives the intermission card, and its status decides
+  // which card to show. Prefer the server's authoritative lastResolvedLot; fall back to the newest
+  // resolved lot by order for older snapshots that predate the field.
+  const justResolved = useMemo(
     () =>
+      auction.lastResolvedLot ??
       auction.lots
-        .filter((l) => l.status === "SOLD")
-        .sort((a, b) => b.lotOrder - a.lotOrder)[0] ?? null,
-    [auction.lots],
+        .filter((l) => l.status === "SOLD" || l.status === "UNSOLD")
+        .sort((a, b) => b.lotOrder - a.lotOrder)[0] ??
+      null,
+    [auction.lastResolvedLot, auction.lots],
   );
 
   const queuedCount = auction.lots.filter((l) => l.status === "QUEUED").length;
@@ -345,8 +350,12 @@ function BidRoom({
       <div className="sqar-grid">
         <div className="sqar-hero">
           {myAF ? <WalletBar af={myAF} /> : null}
-          {inIntermission && justSold ? (
-            <SoldCard lot={justSold} secondsLeft={intermissionLeft} />
+          {inIntermission && justResolved ? (
+            justResolved.status === "SOLD" ? (
+              <SoldCard lot={justResolved} secondsLeft={intermissionLeft} />
+            ) : (
+              <UnsoldCard lot={justResolved} secondsLeft={intermissionLeft} />
+            )
           ) : currentLot ? (
             <HeroLot
               auction={auction}
@@ -703,16 +712,19 @@ function HeroLot({
       <div style={{ display: "flex", flexWrap: "wrap", gap: 18, justifyContent: "space-between", alignItems: "flex-start" }}>
         <div style={{ minWidth: 0, flex: "1 1 220px" }}>
           <div style={{ ...eyebrow, color: SQ.ember }}>ON THE BLOCK</div>
-          <div
-            style={{
-              fontFamily: FONT.display,
-              fontSize: "clamp(30px,5vw,52px)",
-              lineHeight: 0.92,
-              marginTop: 8,
-              wordBreak: "break-word",
-            }}
-          >
-            {lot.gamerTag}
+          <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 8, flexWrap: "wrap" }}>
+            <Avatar url={lot.avatarUrl} alt={lot.gamerTag} size={64} radius={14} />
+            <div
+              style={{
+                fontFamily: FONT.display,
+                fontSize: "clamp(30px,5vw,52px)",
+                lineHeight: 0.92,
+                wordBreak: "break-word",
+                minWidth: 0,
+              }}
+            >
+              {lot.gamerTag}
+            </div>
           </div>
           {lot.realName ? (
             // Present only for bidders/admin (the backend nulls it for spectators).
@@ -1008,7 +1020,10 @@ function SoldCard({ lot, secondsLeft }: { lot: AuctionLotView; secondsLeft: numb
       >
         SOLD!
       </div>
-      <div style={{ fontFamily: FONT.display, fontSize: "clamp(24px,4vw,40px)", lineHeight: 1, marginTop: 16, wordBreak: "break-word" }}>
+      <div style={{ display: "flex", justifyContent: "center", marginTop: 16 }}>
+        <Avatar url={lot.avatarUrl} alt={lot.gamerTag} size={72} radius={16} />
+      </div>
+      <div style={{ fontFamily: FONT.display, fontSize: "clamp(24px,4vw,40px)", lineHeight: 1, marginTop: 12, wordBreak: "break-word" }}>
         {lot.gamerTag}
       </div>
       <div style={{ fontFamily: FONT.mono, fontSize: 12, letterSpacing: ".08em", color: SQ.mute, marginTop: 14 }}>
@@ -1019,6 +1034,49 @@ function SoldCard({ lot, secondsLeft }: { lot: AuctionLotView; secondsLeft: numb
       </div>
       <div style={{ fontFamily: FONT.display, fontSize: "clamp(26px,4.6vw,40px)", color: SQ.green, marginTop: 12 }}>
         {money(lot.soldPrice)}
+      </div>
+      <div style={{ fontFamily: FONT.mono, fontSize: 11, color: SQ.mute, marginTop: 18 }}>
+        {secondsLeft != null && secondsLeft > 0 ? `Next player in ${secondsLeft}s…` : "Next player incoming…"}
+      </div>
+    </div>
+  );
+}
+
+// ---- UNSOLD intermission card (no bids / admin marked unsold) ---------------
+
+function UnsoldCard({ lot, secondsLeft }: { lot: AuctionLotView; secondsLeft: number | null }) {
+  return (
+    <div
+      className="sqar-sold"
+      style={{
+        background: SQ.panel,
+        border: `1px solid ${SQ.hairline}`,
+        borderRadius: 14,
+        padding: "clamp(26px,5vw,44px) 22px",
+        textAlign: "center",
+      }}
+    >
+      <div
+        className="sqar-badge"
+        style={{
+          display: "inline-block",
+          fontFamily: FONT.display,
+          fontSize: "clamp(34px,7vw,60px)",
+          lineHeight: 0.9,
+          letterSpacing: "-.02em",
+          color: SQ.mute,
+        }}
+      >
+        UNSOLD
+      </div>
+      <div style={{ display: "flex", justifyContent: "center", marginTop: 16 }}>
+        <Avatar url={lot.avatarUrl} alt={lot.gamerTag} size={72} radius={16} />
+      </div>
+      <div style={{ fontFamily: FONT.display, fontSize: "clamp(24px,4vw,40px)", lineHeight: 1, marginTop: 12, wordBreak: "break-word" }}>
+        {lot.gamerTag}
+      </div>
+      <div style={{ fontFamily: FONT.mono, fontSize: 12, letterSpacing: ".06em", color: SQ.mute, marginTop: 14 }}>
+        No sale — returns to the pool
       </div>
       <div style={{ fontFamily: FONT.mono, fontSize: 11, color: SQ.mute, marginTop: 18 }}>
         {secondsLeft != null && secondsLeft > 0 ? `Next player in ${secondsLeft}s…` : "Next player incoming…"}

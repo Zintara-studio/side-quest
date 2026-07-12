@@ -222,6 +222,7 @@ export function AnnouncementsScreen() {
   const [editTitle, setEditTitle] = useState("");
   const [editCategory, setEditCategory] = useState("GENERAL");
   const [editBody, setEditBody] = useState("");
+  const [editPinned, setEditPinned] = useState(false);
   const [editErr, setEditErr] = useState<string | null>(null);
   const gamesQ = useGames(true);
   // All matches (not just SCHEDULED) so result / recap posts can point at a
@@ -234,6 +235,7 @@ export function AnnouncementsScreen() {
   const [showPreview, setShowPreview] = useState(false);
   const [matchId, setMatchId] = useState("");
   const [registrationOpen, setRegistrationOpen] = useState(false);
+  const [pinned, setPinned] = useState(false);
   const [gameId, setGameId] = useState("");
   const [registrationType, setRegistrationType] = useState<RegistrationType>("PLAYER");
   // Roster cap for SQUAD registration calls — squads registering from this post can invite up to this many.
@@ -280,6 +282,7 @@ export function AnnouncementsScreen() {
     setEditTitle(a.title);
     setEditBody(a.body);
     setEditCategory(a.category);
+    setEditPinned(a.pinned);
     setEditErr(null);
   };
 
@@ -293,7 +296,7 @@ export function AnnouncementsScreen() {
     }
     setEditErr(null);
     update.mutate(
-      { id: editing.id, body: { title, body, category: editCategory } },
+      { id: editing.id, body: { title, body, category: editCategory, pinned: editPinned } },
       {
         onSuccess: () => setEditing(null),
         onError: (e) => setEditErr(apiErrorMessage(e, "Couldn't save changes.")),
@@ -320,6 +323,7 @@ export function AnnouncementsScreen() {
       body: body.trim(),
       matchId: matchId || undefined,
       registrationOpen,
+      pinned,
       gameId: registrationOpen && gameId ? gameId : undefined,
       registrationType: registrationOpen ? registrationType : undefined,
       // Only meaningful for SQUAD calls — the roster cap squads must respect.
@@ -331,6 +335,7 @@ export function AnnouncementsScreen() {
     setShowPreview(false);
     setMatchId("");
     setRegistrationOpen(false);
+    setPinned(false);
     setGameId("");
     setRegistrationType("PLAYER");
     setTeamSize(5);
@@ -500,6 +505,26 @@ export function AnnouncementsScreen() {
             This is a registration call (players can register from it)
           </label>
 
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 9,
+              margin: "12px 0 0",
+              fontSize: 13,
+              color: SQ.faint,
+              cursor: "pointer",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={pinned}
+              onChange={(e) => setPinned(e.target.checked)}
+              style={{ accentColor: SQ.red }}
+            />
+            Pin to the home page (important / league-pinned)
+          </label>
+
           {registrationOpen ? (
             <div style={{ display: "flex", gap: 12, marginTop: 12, flexWrap: "wrap" }}>
               <div style={{ flex: 1, minWidth: 140 }}>
@@ -641,7 +666,26 @@ export function AnnouncementsScreen() {
                     {a.registrationOpen ? "REGISTER" : tag}
                   </span>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 14, fontWeight: 600 }}>{a.title}</div>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>
+                      {a.title}
+                      {a.pinned ? (
+                        <span
+                          style={{
+                            fontFamily: FONT.mono,
+                            fontSize: 9,
+                            letterSpacing: ".1em",
+                            color: SQ.ember,
+                            border: `1px solid rgba(232,96,44,.45)`,
+                            padding: "2px 6px",
+                            borderRadius: 4,
+                            marginLeft: 8,
+                            verticalAlign: "middle",
+                          }}
+                        >
+                          PINNED
+                        </span>
+                      ) : null}
+                    </div>
                     <div style={{ fontFamily: FONT.mono, fontSize: 10, color: SQ.mute, marginTop: 2 }}>
                       {shortDate(a.publishedAt)}
                       {a.gameName ? ` · ${a.gameName}` : ""}
@@ -808,6 +852,26 @@ export function AnnouncementsScreen() {
           onChange={(e) => setEditBody(e.target.value)}
           placeholder="Write the announcement copy…  (Markdown supported)"
         />
+
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 9,
+            margin: "16px 0 0",
+            fontSize: 13,
+            color: SQ.faint,
+            cursor: "pointer",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={editPinned}
+            onChange={(e) => setEditPinned(e.target.checked)}
+            style={{ accentColor: SQ.red }}
+          />
+          Pin to the home page (important / league-pinned)
+        </label>
 
         {editErr ? (
           <div style={{ fontFamily: FONT.mono, fontSize: 12, color: SQ.ember, marginTop: 12 }}>

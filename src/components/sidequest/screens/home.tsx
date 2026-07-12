@@ -66,6 +66,9 @@ export function HomeScreen() {
   const recentQ = useMatches({ status: "COMPLETED", limit: 6 });
   const playersQ = usePlayers({ limit: 100 });
   const announcementsQ = useAnnouncements({ limit: 12 });
+  // Pinned notices are fetched separately so a long-lived "league-pinned" post still surfaces on home
+  // even after it has aged past the newest-12 feed window.
+  const pinnedQ = useAnnouncements({ pinned: true, limit: 3 });
   const topPlayersQ = useTopPlayers(5);
   const seasonQ = useCurrentSeason();
   const seasonsQ = useSeasons();
@@ -111,6 +114,7 @@ export function HomeScreen() {
   }, [recentQ.data]);
 
   const announcements = announcementsQ.data?.items ?? [];
+  const pinnedPosts = pinnedQ.data?.items ?? [];
   const registrationCalls = announcements.filter((a) => a.registrationOpen).slice(0, 4);
   const feed = announcements.slice(0, 6);
   const topPlayers = topPlayersQ.data ?? [];
@@ -146,6 +150,9 @@ export function HomeScreen() {
 
       {/* an in-progress / scheduled auction is headline news in either season state */}
       {activeAuction ? <AuctionBanner auction={activeAuction} /> : null}
+
+      {/* league-pinned notices — shown in both season states */}
+      {pinnedPosts.length > 0 ? <PinnedBanner posts={pinnedPosts} /> : null}
 
       {offSeason ? (
         <OffSeason
@@ -393,6 +400,74 @@ function AuctionBanner({ auction }: { auction: AuctionView }) {
         Enter the room ▸
       </span>
     </Link>
+  );
+}
+
+// ---- pinned notices --------------------------------------------------------
+
+function PinnedBanner({ posts }: { posts: AnnouncementView[] }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 24 }}>
+      {posts.map((a) => {
+        // Deep-link to a linked fixture when there is one; otherwise send to the full feed.
+        const href = a.matchId ? `/match/${a.matchId}` : "/announcements";
+        // First non-empty line of the body as a one-line preview (body is Markdown).
+        const preview = a.body.split("\n").map((l) => l.trim()).find((l) => l.length > 0) ?? "";
+        return (
+          <Link
+            key={a.id}
+            href={href}
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: 14,
+              padding: "16px 20px",
+              borderRadius: 10,
+              textDecoration: "none",
+              border: `1px solid ${SQ.ember}`,
+              background: "linear-gradient(90deg,rgba(232,96,44,.10),transparent)",
+              color: SQ.ink,
+            }}
+          >
+            <span
+              style={{
+                fontFamily: FONT.mono,
+                fontSize: 9,
+                letterSpacing: ".14em",
+                color: SQ.ember,
+                border: `1px solid ${SQ.ember}`,
+                borderRadius: 999,
+                padding: "4px 10px",
+                whiteSpace: "nowrap",
+              }}
+            >
+              ★ PINNED
+            </span>
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-.01em" }}>{a.title}</div>
+              {preview ? (
+                <div
+                  style={{
+                    fontFamily: FONT.mono,
+                    fontSize: 10.5,
+                    letterSpacing: ".04em",
+                    color: SQ.faint,
+                    marginTop: 5,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    maxWidth: "100%",
+                  }}
+                >
+                  {preview}
+                </div>
+              ) : null}
+            </div>
+          </Link>
+        );
+      })}
+    </div>
   );
 }
 

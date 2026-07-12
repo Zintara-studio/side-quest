@@ -188,18 +188,12 @@ export function OrDivider() {
   );
 }
 
-const socialBtn = {
-  width: "100%",
-  fontFamily: FONT.mono,
-  fontSize: 11.5,
-  letterSpacing: ".08em",
-  color: SQ.faint,
-  background: "transparent",
-  border: `1px solid ${SQ.inputBorder}`,
-  padding: "12px",
-  borderRadius: 5,
-  cursor: "pointer",
-} as const;
+/**
+ * Whether any social sign-in provider is configured (Google is the only one wired). Callers use this
+ * to hide the OR divider + social section entirely when there's nothing to show, so the divider never
+ * dangles over an empty block. Build-time constant — NEXT_PUBLIC_* is inlined by Next.
+ */
+export const hasGoogleAuth = !!process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
 
 /** Minimal typing for the Google Identity Services global we load on demand. */
 type GoogleId = {
@@ -275,12 +269,14 @@ export function SocialRow() {
     };
   }, [clientId, googleLogin, router]);
 
+  // No social providers configured (Google is the only one wired) → render nothing so the caller's
+  // OR divider doesn't dangle over an empty block. Discord isn't offered: there is no Discord auth
+  // backend, and a permanently-disabled "Coming soon" button reads as unfinished UI.
+  if (!clientId) return null;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10, alignItems: "center" }}>
-      {clientId ? <div ref={btnRef} style={{ minHeight: 44 }} /> : null}
-      <button type="button" style={socialBtn} disabled title="Coming soon">
-        Continue with Discord
-      </button>
+      <div ref={btnRef} style={{ minHeight: 44 }} />
     </div>
   );
 }

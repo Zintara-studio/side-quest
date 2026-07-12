@@ -83,7 +83,7 @@ export function LeagueShell({
   const pathname = usePathname() ?? "/";
   const cur = activeKey(pathname);
   const router = useRouter();
-  const { user, playerId, isAuthenticated, isAdmin, hydrated, logout } = useAuth();
+  const { user, playerId, isAuthenticated, isAdmin, logout } = useAuth();
 
   // Real current season drives the nav badge + footer tagline; falls back to a
   // neutral off-season label when no season is active (or while it loads).
@@ -111,12 +111,8 @@ export function LeagueShell({
 
   const [confirmOut, setConfirmOut] = useState(false);
 
-  // Admins belong in the control room — bounce them out of the public site.
-  useEffect(() => {
-    if (hydrated && isAdmin) {
-      router.replace("/admin");
-    }
-  }, [hydrated, isAdmin, router]);
+  // Admins are welcome on the public site (an appointed admin is also a player) — no eviction.
+  // A "Control room" switch (below) takes them to /admin when they want it.
 
   const onLogout = async () => {
     await logout();
@@ -258,6 +254,26 @@ export function LeagueShell({
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          {isAdmin ? (
+            <Link
+              href="/admin"
+              title="Go to the admin control room"
+              style={{
+                fontFamily: FONT.mono,
+                fontSize: 10.5,
+                letterSpacing: ".12em",
+                textTransform: "uppercase",
+                color: SQ.ember,
+                textDecoration: "none",
+                border: `1px solid ${SQ.ember}`,
+                borderRadius: 999,
+                padding: "5px 11px",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Control room ▸
+            </Link>
+          ) : null}
           <NotificationBell />
           <ThemeToggle />
           {isAuthenticated && user ? (
@@ -271,7 +287,7 @@ export function LeagueShell({
               }}
             >
               <Link
-                href={user.role === "ADMIN" ? "/admin" : playerId ? `/player/${playerId}` : "/player"}
+                href={playerId ? `/player/${playerId}` : isAdmin ? "/admin" : "/player"}
                 style={{
                   display: "flex",
                   alignItems: "center",

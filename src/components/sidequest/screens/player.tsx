@@ -338,72 +338,105 @@ export function PlayerScreen({ id, base = "" }: { id?: string; base?: string }) 
           >
             {/* usernames + proficiencies */}
             <div>
-              <div style={sectionLabel}>Game Usernames</div>
-              {(usernamesQ.data ?? []).length === 0 ? (
-                <StateNote>No public game handles.</StateNote>
-              ) : (
-                (usernamesQ.data ?? []).map((u) => (
-                  <div
-                    key={`${u.gameId}-${u.handle}`}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      padding: "13px 0",
-                      borderTop: `1px solid ${SQ.hairlineCell}`,
-                    }}
-                  >
-                    <div>
-                      <div style={{ fontSize: 14, fontWeight: 600 }}>{u.handle}</div>
+              <div style={sectionLabel}>Games</div>
+              {(() => {
+                // One row per game: join the visibility-filtered handles (/usernames) with the
+                // proficiency stats (from the profile DTO) by gameId — the same union the editor does,
+                // so a game shows its handle + PUBLIC/PRIVATE chip AND its rating/rank/K-D/level in one
+                // consistent element (previously two disjoint blocks that dropped rank/K-D/level).
+                const handleByGame = new Map((usernamesQ.data ?? []).map((u) => [u.gameId, u]));
+                const nameByGame = new Map<string, string>();
+                p.proficiencies.forEach((pr) => nameByGame.set(pr.gameId, pr.gameName));
+                (usernamesQ.data ?? []).forEach((u) => nameByGame.set(u.gameId, u.gameName));
+                const ids = [
+                  ...new Set<string>([
+                    ...p.proficiencies.map((pr) => pr.gameId),
+                    ...(usernamesQ.data ?? []).map((u) => u.gameId),
+                  ]),
+                ];
+                if (ids.length === 0) return <StateNote>No games listed.</StateNote>;
+                return ids.map((gameId) => {
+                  const prof = p.proficiencies.find((pr) => pr.gameId === gameId);
+                  const handle = handleByGame.get(gameId);
+                  const gameName = nameByGame.get(gameId) ?? gameId;
+                  const stats: { label: string; value: string }[] = [];
+                  if (prof) {
+                    stats.push({ label: "RATING", value: String(prof.rating) });
+                    if (prof.rankTier) stats.push({ label: "RANK", value: prof.rankTier });
+                    if (prof.kd != null) stats.push({ label: "K/D", value: String(prof.kd) });
+                    if (prof.accountLevel != null) stats.push({ label: "LVL", value: String(prof.accountLevel) });
+                  }
+                  return (
+                    <div
+                      key={gameId}
+                      style={{ padding: "13px 0", borderTop: `1px solid ${SQ.hairlineCell}` }}
+                    >
                       <div
                         style={{
-                          fontFamily: FONT.mono,
-                          fontSize: 10,
-                          letterSpacing: ".1em",
-                          color: SQ.mute,
-                          marginTop: 2,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 10,
                         }}
                       >
-                        {u.gameName}
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 14, fontWeight: 600 }}>
+                            {handle?.handle ? handle.handle : <span style={{ color: SQ.mute }}>—</span>}
+                          </div>
+                          <div
+                            style={{
+                              fontFamily: FONT.mono,
+                              fontSize: 10,
+                              letterSpacing: ".1em",
+                              color: SQ.mute,
+                              marginTop: 2,
+                            }}
+                          >
+                            {gameName}
+                          </div>
+                        </div>
+                        {handle ? (
+                          <div
+                            style={{
+                              fontFamily: FONT.mono,
+                              fontSize: 10,
+                              letterSpacing: ".1em",
+                              color: handle.isPublic ? SQ.green : SQ.mute,
+                              border: `1px solid ${handle.isPublic ? "rgba(31,157,99,.45)" : SQ.inputBorder}`,
+                              padding: "5px 9px",
+                              borderRadius: 4,
+                              flex: "0 0 auto",
+                            }}
+                          >
+                            {handle.isPublic ? "PUBLIC" : "PRIVATE"}
+                          </div>
+                        ) : null}
                       </div>
+                      {stats.length > 0 ? (
+                        <div
+                          style={{ display: "flex", gap: 18, flexWrap: "wrap", marginTop: 9 }}
+                        >
+                          {stats.map((s) => (
+                            <div key={s.label} style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                              <span
+                                style={{
+                                  fontFamily: FONT.mono,
+                                  fontSize: 10,
+                                  letterSpacing: ".1em",
+                                  color: SQ.label,
+                                }}
+                              >
+                                {s.label}
+                              </span>
+                              <span style={{ fontFamily: FONT.display, fontSize: 16 }}>{s.value}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
-                    <div
-                      style={{
-                        fontFamily: FONT.mono,
-                        fontSize: 10,
-                        letterSpacing: ".1em",
-                        color: u.isPublic ? SQ.green : SQ.mute,
-                        border: `1px solid ${u.isPublic ? "rgba(31,157,99,.45)" : SQ.inputBorder}`,
-                        padding: "5px 9px",
-                        borderRadius: 4,
-                      }}
-                    >
-                      {u.isPublic ? "PUBLIC" : "PRIVATE"}
-                    </div>
-                  </div>
-                ))
-              )}
-
-              {p.proficiencies.length > 0 ? (
-                <>
-                  <div style={{ ...sectionLabel, margin: "26px 0 14px" }}>Proficiency</div>
-                  {p.proficiencies.map((pr) => (
-                    <div
-                      key={pr.gameId}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        padding: "11px 0",
-                        borderTop: `1px solid ${SQ.hairlineCell}`,
-                      }}
-                    >
-                      <span style={{ fontSize: 13.5 }}>{pr.gameName}</span>
-                      <span style={{ fontFamily: FONT.display, fontSize: 16 }}>{pr.rating}</span>
-                    </div>
-                  ))}
-                </>
-              ) : null}
+                  );
+                });
+              })()}
             </div>
 
             {/* past matches */}

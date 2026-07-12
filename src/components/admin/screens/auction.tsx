@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import Link from "next/link";
 import { SQ, FONT } from "../tokens";
 import { ScreenHeader } from "../screen-header";
 import { TableScroll } from "../table-scroll";
+import { useAuth } from "@/lib/auth/context";
 import { StateNote } from "@/components/sidequest/state-note";
 import { Modal } from "@/components/sidequest/modal";
 import { ConfirmModal } from "@/components/sidequest/confirm-modal";
@@ -193,7 +195,8 @@ function StatusChip({ status }: { status: AuctionLotStatus }) {
 /* ===================================================================== */
 
 export function AuctionScreen() {
-  const activeQ = useActiveAuction();
+  const { isSuperAdmin } = useAuth();
+  const activeQ = useActiveAuction(isSuperAdmin);
   // Persist the current auction id from the active poll. It survives completion
   // (active -> null) so the just-finished results stay on screen until the admin
   // explicitly starts a new one via onReset.
@@ -202,6 +205,24 @@ export function AuctionScreen() {
   useEffect(() => {
     if (activeQ.data) setBoardId(activeQ.data.id);
   }, [activeQ.data]);
+
+  // The whole auction workflow is main-admin-only; an appointed admin watches from the public page.
+  if (!isSuperAdmin) {
+    return (
+      <div>
+        <ScreenHeader eyebrow="Player auction" title="AUCTION" />
+        <div style={{ marginTop: 24 }}>
+          <StateNote>
+            The player auction is run by the main admin. You can follow it live on the public{" "}
+            <Link href="/auction" style={{ color: SQ.ember }}>
+              auction page
+            </Link>
+            .
+          </StateNote>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -1021,11 +1042,17 @@ function LiveBoard({ a }: { a: AuctionView }) {
 
   const lot = a.currentLot;
   const queuedLots = a.lots.filter((l) => l.status === "QUEUED");
-  // Brief post-sale intermission: a lot just sold and the room waits for the next nomination.
+  // Brief post-resolution intermission: a lot just resolved (sold OR unsold) and the room waits for
+  // the next nomination. Key the banner on the just-resolved lot — SOLD-only would re-show a previous
+  // sale during an unsold pause.
   const inIntermission =
     !!a.intermissionUntil && new Date(a.intermissionUntil).getTime() > Date.now() + skew;
-  const justSold = inIntermission
-    ? a.lots.filter((l) => l.status === "SOLD").sort((x, y) => y.lotOrder - x.lotOrder)[0] ?? null
+  const justResolved = inIntermission
+    ? a.lastResolvedLot ??
+      a.lots
+        .filter((l) => l.status === "SOLD" || l.status === "UNSOLD")
+        .sort((x, y) => y.lotOrder - x.lotOrder)[0] ??
+      null
     : null;
   // The auction no longer auto-completes: with nothing on the block and nothing queued, prompt Complete.
   const allDone = !lot && queuedLots.length === 0;
@@ -1063,34 +1090,58 @@ function LiveBoard({ a }: { a: AuctionView }) {
         </span>
       </div>
 
-      {/* just-sold intermission banner */}
-      {justSold ? (
-        <div
-          style={{
-            ...card,
-            marginBottom: 16,
-            borderColor: "rgba(31,157,99,.4)",
-            background: "linear-gradient(180deg,rgba(31,157,99,.09),transparent)",
-            display: "flex",
-            alignItems: "center",
-            gap: 16,
-            flexWrap: "wrap",
-          }}
-        >
-          <span style={{ fontFamily: FONT.mono, fontSize: 11, letterSpacing: ".16em", fontWeight: 700, color: SQ.green }}>
-            ● SOLD
-          </span>
-          <div style={{ fontSize: 16, color: SQ.ink }}>
-            <span style={{ fontWeight: 700 }}>{justSold.gamerTag}</span>
-            <span style={{ color: SQ.mute }}> → </span>
-            <span style={{ fontFamily: FONT.mono, fontWeight: 700, color: SQ.ember }}>{justSold.soldToTag ?? "—"}</span>
-            <span style={{ color: SQ.mute }}> for </span>
-            <span style={{ fontFamily: FONT.mono, fontWeight: 700 }}>{coin(justSold.soldPrice)}</span>
+      {/* just-resolved intermission banner (sold or unsold) */}
+      {justResolved ? (
+        justResolved.status === "SOLD" ? (
+          <div
+            style={{
+              ...card,
+              marginBottom: 16,
+              borderColor: "rgba(31,157,99,.4)",
+              background: "linear-gradient(180deg,rgba(31,157,99,.09),transparent)",
+              display: "flex",
+              alignItems: "center",
+              gap: 16,
+              flexWrap: "wrap",
+            }}
+          >
+            <span style={{ fontFamily: FONT.mono, fontSize: 11, letterSpacing: ".16em", fontWeight: 700, color: SQ.green }}>
+              ● SOLD
+            </span>
+            <div style={{ fontSize: 16, color: SQ.ink }}>
+              <span style={{ fontWeight: 700 }}>{justResolved.gamerTag}</span>
+              <span style={{ color: SQ.mute }}> → </span>
+              <span style={{ fontFamily: FONT.mono, fontWeight: 700, color: SQ.ember }}>{justResolved.soldToTag ?? "—"}</span>
+              <span style={{ color: SQ.mute }}> for </span>
+              <span style={{ fontFamily: FONT.mono, fontWeight: 700 }}>{coin(justResolved.soldPrice)}</span>
+            </div>
+            <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 10.5, color: SQ.mute }}>
+              Next lot coming up…
+            </span>
           </div>
-          <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 10.5, color: SQ.mute }}>
-            Next lot coming up…
-          </span>
-        </div>
+        ) : (
+          <div
+            style={{
+              ...card,
+              marginBottom: 16,
+              display: "flex",
+              alignItems: "center",
+              gap: 16,
+              flexWrap: "wrap",
+            }}
+          >
+            <span style={{ fontFamily: FONT.mono, fontSize: 11, letterSpacing: ".16em", fontWeight: 700, color: SQ.mute }}>
+              ● UNSOLD
+            </span>
+            <div style={{ fontSize: 16, color: SQ.ink }}>
+              <span style={{ fontWeight: 700 }}>{justResolved.gamerTag}</span>
+              <span style={{ color: SQ.mute }}> went unsold — returns to the pool</span>
+            </div>
+            <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 10.5, color: SQ.mute }}>
+              Next lot coming up…
+            </span>
+          </div>
+        )
       ) : null}
 
       {/* current lot card */}

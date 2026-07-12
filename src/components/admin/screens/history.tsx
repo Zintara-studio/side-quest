@@ -15,6 +15,7 @@ import {
   useFinishSeason,
   useMatches,
 } from "@/lib/query/hooks";
+import { useAuth } from "@/lib/auth/context";
 import { apiErrorMessage } from "@/lib/api/client";
 import { shortDate } from "@/lib/adapters/league";
 
@@ -59,6 +60,7 @@ export function HistoryScreen() {
     return isAll ? all : all.filter((m) => m.seasonId === code || !m.seasonId);
   }, [matchesQ.data, isAll, code]);
 
+  const { isSuperAdmin } = useAuth();
   const startSeason = useStartSeason();
   const finishSeason = useFinishSeason();
   const [newCode, setNewCode] = useState("");
@@ -107,7 +109,8 @@ export function HistoryScreen() {
     <div>
       <ScreenHeader eyebrow="Seasons & archives" title="HISTORY" />
 
-      {/* season lifecycle controls */}
+      {/* season lifecycle controls — starting/finishing a season is main-admin-only */}
+      {isSuperAdmin ? (
       <div
         style={{
           background: SQ.panel,
@@ -191,6 +194,21 @@ export function HistoryScreen() {
         {msg ? <div style={{ fontFamily: FONT.mono, fontSize: 12, color: SQ.green, marginTop: 8 }}>{msg}</div> : null}
         {err ? <div style={{ fontFamily: FONT.mono, fontSize: 12, color: SQ.ember, marginTop: 8 }}>{err}</div> : null}
       </div>
+      ) : (
+        <div
+          style={{
+            background: SQ.panel,
+            border: `1px solid ${SQ.hairline}`,
+            borderRadius: 9,
+            padding: 18,
+            margin: "18px 0 24px",
+            fontSize: 12.5,
+            color: SQ.mute,
+          }}
+        >
+          Starting and finishing seasons is done by the main admin.
+        </div>
+      )}
 
       {/* season selector */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 20 }}>

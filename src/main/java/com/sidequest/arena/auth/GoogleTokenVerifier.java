@@ -44,13 +44,24 @@ public class GoogleTokenVerifier {
         }
         GoogleIdToken.Payload payload = idToken.getPayload();
         Object name = payload.get("name");
+        Object givenName = payload.get("given_name");
+        Object picture = payload.get("picture");
         return new GoogleIdentity(
                 payload.getEmail(),
                 name == null ? payload.getEmail() : name.toString(),
+                givenName == null ? null : givenName.toString(),
+                picture == null ? null : picture.toString(),
                 Boolean.TRUE.equals(payload.getEmailVerified()),
                 payload.getSubject());
     }
 
-    public record GoogleIdentity(String email, String name, boolean emailVerified, String subject) {
+    /**
+     * The trusted claims we consume. {@code name}/{@code givenName}/{@code picture} are used to
+     * pre-fill the onboarding form for a first-time Google user; {@code picture} is an external
+     * googleusercontent URL (rendered as-is, never stored through the media pipeline). Note the
+     * id_token does NOT carry a phone number, so phone cannot be pre-filled from Google.
+     */
+    public record GoogleIdentity(String email, String name, String givenName, String picture,
+                                 boolean emailVerified, String subject) {
     }
 }

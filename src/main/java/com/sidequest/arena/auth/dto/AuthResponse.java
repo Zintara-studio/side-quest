@@ -18,7 +18,9 @@ public record AuthResponse(
             String name,
             String email,
             String role,
-            String adminLevel
+            String adminLevel,
+            /** True for a fresh SSO account that must complete the onboarding step (pick a username). */
+            boolean onboardingRequired
     ) {
     }
 }

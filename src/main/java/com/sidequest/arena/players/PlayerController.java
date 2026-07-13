@@ -7,12 +7,14 @@ import com.sidequest.arena.players.dto.PlayerMatchView;
 import com.sidequest.arena.players.dto.PlayerSummary;
 import com.sidequest.arena.players.dto.UpdatePlayerRequest;
 import com.sidequest.arena.players.dto.UpdateStatusRequest;
+import com.sidequest.arena.players.dto.UsernameAvailability;
 import com.sidequest.arena.players.dto.UsernameView;
 import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -44,6 +46,24 @@ public class PlayerController {
             @RequestParam(required = false) Integer limit,
             @RequestParam(required = false) String cursor) {
         return playerService.list(franchiseId, gameId, status, limit, cursor);
+    }
+
+    /**
+     * Live username-availability check for the signup / onboarding forms. Public (usernames are public
+     * anyway) and a cheap indexed lookup. This literal path is matched ahead of {@code /players/{id}}.
+     */
+    @GetMapping("/username-available")
+    public UsernameAvailability usernameAvailable(@RequestParam String username) {
+        return playerService.usernameAvailability(username);
+    }
+
+    /**
+     * Completes first-time onboarding for the signed-in (SSO) account: claims the immutable username and
+     * applies the optional profile fields. Requires a session; operates only on the caller's own player.
+     */
+    @PostMapping("/onboard")
+    public PlayerDetail onboard(@Valid @RequestBody UpdatePlayerRequest request) {
+        return playerService.onboard(request);
     }
 
     /** Full profile for a single player. */

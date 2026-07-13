@@ -27,7 +27,9 @@ public record MeResponse(
             String avatarUrl,
             String status,
             int points,
-            String franchiseId
+            String franchiseId,
+            /** True while this account still needs to complete onboarding (pick a username). */
+            boolean onboardingRequired
     ) {
     }
 }

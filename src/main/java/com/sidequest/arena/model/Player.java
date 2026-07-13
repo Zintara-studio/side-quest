@@ -81,4 +81,13 @@ public class Player extends BaseEntity {
 
     @Column(nullable = false)
     private int points = 0;
+
+    /**
+     * True only for a fresh Google/OAuth signup that hasn't completed the "choose your username +
+     * profile" onboarding step. Defaults false so every existing player — and every email signup,
+     * which types its username up front — is already onboarded. Cleared when onboarding is submitted.
+     * The explicit {@code default false} lets the additive Postgres column backfill existing rows.
+     */
+    @Column(name = "onboarding_required", nullable = false, columnDefinition = "boolean not null default false")
+    private boolean onboardingRequired = false;
 }

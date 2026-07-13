@@ -48,8 +48,12 @@ public record PlayerDetail(
         List<ProficiencyView> proficiencies
 ) {
 
-    /** Minimal owning-user view; intentionally omits email and other PII. */
-    public record UserMini(String name) {
+    /**
+     * Minimal owning-user view. {@code email} is the account (login) email and is per-field private
+     * like the contact fields: it is populated only for a privileged viewer (owner, admin, or the
+     * player's franchise owner/manager) and {@code null} otherwise, so it is never leaked publicly.
+     */
+    public record UserMini(String name, String email) {
     }
 
     /** Minimal franchise reference. */

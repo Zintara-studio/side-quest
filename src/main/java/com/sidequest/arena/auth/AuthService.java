@@ -19,6 +19,7 @@ import com.sidequest.arena.model.PlayerStatus;
 import com.sidequest.arena.model.RefreshToken;
 import com.sidequest.arena.model.Role;
 import com.sidequest.arena.model.User;
+import com.sidequest.arena.players.UsernameRules;
 import com.sidequest.arena.repo.PlayerRepository;
 import com.sidequest.arena.repo.RefreshTokenRepository;
 import com.sidequest.arena.repo.UserRepository;
@@ -86,13 +87,15 @@ public class AuthService {
         if (userRepository.existsByEmailIgnoreCase(request.email())) {
             throw new ApiException(ErrorCode.EMAIL_TAKEN, "Email already registered");
         }
-        // The display name doubles as the public gamerTag/username, which must be unique site-wide.
-        if (playerRepository.existsByGamerTagIgnoreCase(request.name())) {
-            throw ApiException.conflict("That display name is already taken — pick another.");
+        // The name typed at signup IS the public username (gamerTag): enforce the shared username shape
+        // (no spaces, allowed charset, length) and case-insensitive uniqueness so "sammy" == "Sammy".
+        String username = UsernameRules.require(request.name());
+        if (playerRepository.existsByGamerTagIgnoreCase(username)) {
+            throw ApiException.conflict("That username is already taken — pick another.");
         }
 
         User user = new User();
-        user.setName(request.name());
+        user.setName(username);
         user.setEmail(request.email());
         user.setPhone(request.phone());
         user.setRole(Role.PLAYER);
@@ -102,7 +105,7 @@ public class AuthService {
 
         Player player = new Player();
         player.setUser(user);
-        player.setGamerTag(request.name());
+        player.setGamerTag(username);
         player.setStatus(PlayerStatus.PENDING);
         playerRepository.save(player);
 
@@ -191,9 +194,22 @@ public class AuthService {
 
             Player player = new Player();
             player.setUser(user);
-            // A Google user can't be re-prompted for a name, so auto-suffix on collision rather than fail.
-            player.setGamerTag(uniqueGamerTag(user.getName()));
-            player.setStatus(PlayerStatus.VERIFIED); // Google verified the email → auction-eligible
+            // A first-time Google user has NOT chosen a username yet — we must never silently adopt their
+            // Google display name as the immutable public handle (the old behaviour). Park a unique
+            // placeholder and flag the account for onboarding; the real username is claimed on the
+            // onboarding step (POST /players/onboard), which is mandatory before the account is usable.
+            player.setGamerTag(placeholderGamerTag());
+            player.setOnboardingRequired(true);
+            player.setStatus(PlayerStatus.VERIFIED); // Google verified the email → auction-eligible once onboarded
+            // Pre-fill what the Google token gives us so onboarding is one tap for most users: the picture
+            // (an external googleusercontent URL, rendered directly — never stored via the media pipeline)
+            // and the display name (seeds the private real-name field). The id_token carries no phone.
+            if (identity.picture() != null && !identity.picture().isBlank()) {
+                player.setAvatarUrl(identity.picture());
+            }
+            if (identity.name() != null && !identity.name().isBlank()) {
+                player.setRealName(identity.name());
+            }
             playerRepository.save(player);
         } else if (!user.isEmailVerified()) {
             // Google just proved ownership of a previously-UNVERIFIED account. Invalidate any password an
@@ -290,7 +306,8 @@ public class AuthService {
                         player.getAvatarUrl(),
                         player.getStatus().name(),
                         player.getPoints(),
-                        player.getFranchise() == null ? null : player.getFranchise().getId().toString()))
+                        player.getFranchise() == null ? null : player.getFranchise().getId().toString(),
+                        player.isOnboardingRequired()))
                 .orElse(null);
 
         return new MeResponse(userView, playerView);
@@ -319,16 +336,18 @@ public class AuthService {
     }
 
     /**
-     * A gamerTag unique site-wide, derived from {@code base}: returns it as-is when free, else appends a
-     * numeric discriminator ("Alex" → "Alex2" → "Alex3"). Used for SSO sign-ups where the user can't be
-     * re-prompted; the DB unique index backstops the (rare) race.
+     * A throwaway, unique placeholder gamerTag for a fresh SSO account that hasn't chosen a real
+     * username yet (its {@code onboardingRequired} flag is set). It satisfies the non-null + unique
+     * gamer_tag constraint until the onboarding step replaces it; the user never sees it because the
+     * client routes an onboarding-required account straight to the onboarding screen.
      */
-    private String uniqueGamerTag(String base) {
-        String candidate = base;
-        int n = 1;
-        while (playerRepository.existsByGamerTagIgnoreCase(candidate)) {
-            candidate = base + (++n);
-        }
+    private String placeholderGamerTag() {
+        String candidate;
+        do {
+            byte[] rnd = new byte[5];
+            new java.security.SecureRandom().nextBytes(rnd);
+            candidate = "player-" + java.util.HexFormat.of().formatHex(rnd);
+        } while (playerRepository.existsByGamerTagIgnoreCase(candidate));
         return candidate;
     }
 
@@ -357,12 +376,16 @@ public class AuthService {
         refreshToken.setRevoked(false);
         refreshTokenRepository.save(refreshToken);
 
+        boolean onboardingRequired = playerRepository.findByUserId(user.getId())
+                .map(Player::isOnboardingRequired)
+                .orElse(false);
         AuthResponse.UserView userView = new AuthResponse.UserView(
                 user.getId().toString(),
                 user.getName(),
                 user.getEmail(),
                 user.getRole().name(),
-                user.getAdminLevel().name());
+                user.getAdminLevel().name(),
+                onboardingRequired);
 
         return new AuthResponse(
                 accessToken,

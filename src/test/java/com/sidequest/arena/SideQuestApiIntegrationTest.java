@@ -258,7 +258,8 @@ class SideQuestApiIntegrationTest {
     void registerVerifyThenLoginNewPlayer() {
         String email = "rookie_" + UUID.randomUUID().toString().substring(0, 8) + "@sidequest.gg";
         ObjectNode body = mapper.createObjectNode();
-        body.put("name", "Test Rookie");
+        // Username: no spaces (enforced by UsernameRules), unique per run to avoid case-insensitive clashes.
+        body.put("name", "TestRookie_" + email.substring(7, 15));
         body.put("email", email);
         body.put("password", "password123");
 
@@ -297,7 +298,8 @@ class SideQuestApiIntegrationTest {
     void otpWrongCodeReplayAndForgotPassword() {
         String email = "otp_" + UUID.randomUUID().toString().substring(0, 8) + "@sidequest.gg";
         ObjectNode reg = mapper.createObjectNode();
-        reg.put("name", "OTP Tester");
+        // Username: no spaces (UsernameRules), unique per run.
+        reg.put("name", "OTPTester_" + email.substring(4, 12));
         reg.put("email", email);
         reg.put("password", "password123");
         assertThat(post("/auth/register", reg, null).getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
@@ -1309,5 +1311,51 @@ class SideQuestApiIntegrationTest {
         ResponseEntity<String> seed = post("/admin/seed", null, admin);
         assertThat(seed.getStatusCode().is2xxSuccessful()).isTrue();
         assertThat(parse(seed).get("gamesTotal").asInt()).isGreaterThan(0);
+    }
+
+    /**
+     * NEW profile security + username rules: an admin may VIEW every field (incl. the account email)
+     * but must NOT edit another player's profile; the account email is stripped for spectators;
+     * username availability reflects case-insensitive uniqueness; onboarding is closed once an account
+     * is set up; and a username with spaces is rejected at registration.
+     */
+    @Test
+    @Order(49)
+    void profileEditOwnerOnlyUsernameRulesAndOnboardGuard() {
+        String admin = login("admin@sidequest.gg", "password");
+        String raghavan = login("raghavan@sidequest.gg", "password");
+        String raghavanId = playerIdOf(raghavan);
+
+        // (a) an admin sees every field (incl. the account email) but must NOT edit another's profile.
+        assertThat(get("/players/" + raghavanId, admin).get("user").get("email").asText())
+                .isEqualTo("raghavan@sidequest.gg");
+        ObjectNode edit = mapper.createObjectNode();
+        edit.put("bio", "edited by admin");
+        assertThat(patch("/players/" + raghavanId, edit, admin).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN);
+        // The owner still can.
+        assertThat(patch("/players/" + raghavanId, edit, raghavan).getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        // (b) the account email is never exposed to a spectator.
+        assertThat(get("/players/" + raghavanId, null).get("user").hasNonNull("email")).isFalse();
+
+        // (c) username availability: a taken name (case-insensitive) vs a free valid name.
+        assertThat(get("/players/username-available?username=raghavan", null).get("available").asBoolean())
+                .isFalse();
+        String free = "Free" + UUID.randomUUID().toString().substring(0, 6);
+        assertThat(get("/players/username-available?username=" + free, null).get("available").asBoolean())
+                .isTrue();
+
+        // (d) onboarding is closed for an already-onboarded account.
+        ObjectNode onboard = mapper.createObjectNode();
+        onboard.put("gamerTag", free);
+        assertThat(post("/players/onboard", onboard, raghavan).getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+
+        // (e) a username with spaces is rejected at registration (the no-spaces rule, end-to-end).
+        ObjectNode spaced = mapper.createObjectNode();
+        spaced.put("name", "Has Space");
+        spaced.put("email", "spaced-" + UUID.randomUUID().toString().substring(0, 6) + "@sidequest.gg");
+        spaced.put("password", "password123");
+        assertThat(post("/auth/register", spaced, null).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
 }

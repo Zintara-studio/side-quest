@@ -20,6 +20,7 @@ import com.sidequest.arena.players.dto.PlayerMatchView;
 import com.sidequest.arena.players.dto.PlayerSummary;
 import com.sidequest.arena.players.dto.UpdatePlayerRequest;
 import com.sidequest.arena.players.dto.UpdateStatusRequest;
+import com.sidequest.arena.players.dto.UsernameAvailability;
 import com.sidequest.arena.players.dto.UsernameView;
 import com.sidequest.arena.repo.FranchiseRepository;
 import com.sidequest.arena.repo.MatchParticipantRepository;
@@ -203,18 +204,92 @@ public class PlayerService {
         Player player = playerRepository.findById(id)
                 .orElseThrow(() -> ApiException.notFound("Player", id));
 
-        if (!isOwner(player) && !SecurityUtils.isAdmin()) {
+        // A profile is editable ONLY by its owner — not by admins. Admins (and franchise leaders) may
+        // VIEW every field (see canViewPrivate), but editing someone else's personal details, avatar,
+        // or privacy toggles would be a serious authority overreach, so it is forbidden outright.
+        // Admin-only account actions live on dedicated endpoints (e.g. updateStatus).
+        if (!isOwner(player)) {
             throw ApiException.forbidden("You may only edit your own profile");
         }
 
         // The gamer tag (username) is claimed at signup and is immutable — the request field is ignored
-        // here so it can never be changed via profile edit (nor via any other path).
+        // here so it can never be changed via profile edit (nor via any other path). Onboarding is the
+        // one exception (see onboard()), where an SSO account claims its username for the first time.
         if (request.avatarUrl() != null) {
             // Only accept a server-issued /media/{id} reference (or blank to clear) — never an arbitrary
             // external/data URL, which would be rendered as an <img> to every viewer of the profile.
             String avatar = MediaRefs.normalize(request.avatarUrl(), "avatarUrl");
             player.setAvatarUrl(avatar.isEmpty() ? null : avatar);
         }
+        applyEditableProfile(player, request);
+
+        Player saved = playerRepository.save(player);
+        applyProficiencies(saved, request);
+        return toDetail(saved);
+    }
+
+    /**
+     * Completes onboarding for a first-time SSO account: claims the immutable username and applies the
+     * (optional, skippable) profile fields in one step. This is the ONLY path that may set a gamerTag
+     * after account creation, and only while {@code onboardingRequired} is still true — so it can never
+     * be used to rename an established account.
+     */
+    @CacheEvict(value = CacheConfig.PLAYERS, allEntries = true)
+    @Transactional
+    public PlayerDetail onboard(UpdatePlayerRequest request) {
+        UUID userId = SecurityUtils.currentUserId();
+        Player player = playerRepository.findByUserId(userId)
+                .orElseThrow(() -> ApiException.notFound("Player", userId));
+
+        if (!player.isOnboardingRequired()) {
+            throw ApiException.conflict("Your account is already set up.");
+        }
+
+        // Claim the username — validate the shape and enforce case-insensitive uniqueness. (The current
+        // value is a throwaway placeholder, so it never collides with the chosen name.)
+        String username = UsernameRules.require(request.gamerTag());
+        if (!username.equalsIgnoreCase(player.getGamerTag())
+                && playerRepository.existsByGamerTagIgnoreCase(username)) {
+            throw ApiException.conflict("That username is already taken — pick another.");
+        }
+        player.setGamerTag(username);
+        // Keep the account display-name in step with the chosen username (as the email-signup path does).
+        // The User is a managed entity in this transaction, so the change is flushed on commit.
+        player.getUser().setName(username);
+
+        // Avatar: keep the pre-filled Google picture (an external URL) when unchanged; otherwise only a
+        // server-issued /media/{id} reference is accepted — never an arbitrary external URL slipped in here.
+        if (request.avatarUrl() != null && !request.avatarUrl().equals(player.getAvatarUrl())) {
+            String avatar = MediaRefs.normalize(request.avatarUrl(), "avatarUrl");
+            player.setAvatarUrl(avatar.isEmpty() ? null : avatar);
+        }
+        applyEditableProfile(player, request);
+        player.setOnboardingRequired(false);
+
+        Player saved = playerRepository.save(player);
+        applyProficiencies(saved, request);
+        return toDetail(saved);
+    }
+
+    /**
+     * Whether a candidate username is free to claim: valid in shape AND not already taken
+     * (case-insensitively). Powers the live availability check on the signup / onboarding forms.
+     */
+    @Transactional(readOnly = true)
+    public UsernameAvailability usernameAvailability(String username) {
+        String reason = UsernameRules.validate(username);
+        if (reason != null) {
+            return new UsernameAvailability(false, reason);
+        }
+        String trimmed = username.trim();
+        if (playerRepository.existsByGamerTagIgnoreCase(trimmed)) {
+            return new UsernameAvailability(false, "That username is already taken.");
+        }
+        return new UsernameAvailability(true, null);
+    }
+
+    /** Applies the editable profile fields (everything except the immutable username + avatar). */
+    private static void applyEditableProfile(Player player, UpdatePlayerRequest request) {
         if (request.region() != null) {
             player.setRegion(request.region());
         }
@@ -239,18 +314,16 @@ public class PlayerService {
         if (request.contactEmailPublic() != null) {
             player.setContactEmailPublic(request.contactEmailPublic());
         }
+    }
 
-        Player saved = playerRepository.save(player);
-
-        // Per-game skill + handle go through the single canonical writer shared with auction registration.
+    /** Per-game skill + handle go through the single canonical writer shared with auction registration. */
+    private void applyProficiencies(Player saved, UpdatePlayerRequest request) {
         if (request.proficiencies() != null) {
             profileWriter.upsert(saved, request.proficiencies().stream()
                     .filter(e -> e != null && e.gameId() != null)
                     .map(PlayerService::toUpsert)
                     .toList());
         }
-
-        return toDetail(saved);
     }
 
     /** Map a profile-form game line to the shared writer's input, parsing the string game id. */
@@ -380,6 +453,9 @@ public class PlayerService {
         String realName = privileged || player.isRealNamePublic() ? player.getRealName() : null;
         String phone = privileged || player.isPhonePublic() ? player.getPhone() : null;
         String contactEmail = privileged || player.isContactEmailPublic() ? player.getContactEmail() : null;
+        // The account (login) email is never public — only a privileged viewer sees it. This is what
+        // lets an admin or franchise leader see the email a player signed up with (blank otherwise).
+        String accountEmail = privileged ? player.getUser().getEmail() : null;
 
         return new PlayerDetail(
                 player.getId().toString(),
@@ -395,7 +471,7 @@ public class PlayerService {
                 player.isContactEmailPublic(),
                 player.getStatus().name(),
                 player.getPoints(),
-                new PlayerDetail.UserMini(player.getUser().getName()),
+                new PlayerDetail.UserMini(player.getUser().getName(), accountEmail),
                 franchiseMini,
                 proficiencies);
     }

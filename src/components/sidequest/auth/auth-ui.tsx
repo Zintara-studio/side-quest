@@ -254,7 +254,12 @@ export function SocialRow() {
         callback: async (resp) => {
           if (!resp.credential) return;
           try {
-            const role = await googleLogin(resp.credential);
+            const { role, onboardingRequired } = await googleLogin(resp.credential);
+            // A first-time Google user must pick a username + complete their profile before anything else.
+            if (onboardingRequired) {
+              router.push("/onboarding");
+              return;
+            }
             const safe = safeNextPath(new URLSearchParams(window.location.search).get("next"));
             router.push(safe ?? (role === "ADMIN" ? "/admin" : "/"));
           } catch {

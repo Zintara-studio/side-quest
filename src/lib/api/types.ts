@@ -33,6 +33,8 @@ export interface AuthUserView {
   email: string;
   role: string;
   adminLevel: AdminLevel;
+  /** True for a fresh SSO account that must complete onboarding (pick a username) before using the app. */
+  onboardingRequired: boolean;
 }
 
 export interface AuthResponse {
@@ -81,6 +83,8 @@ export interface MePlayerView {
   status: string;
   points: number;
   franchiseId?: string;
+  /** True while this account still needs to complete onboarding (pick a username). */
+  onboardingRequired: boolean;
 }
 
 export interface MeResponse {
@@ -174,7 +178,8 @@ export interface PlayerDetail {
   contactEmailPublic: boolean;
   status: string;
   points: number;
-  user: { name: string };
+  /** email is the account (login) email — present only for a privileged viewer (owner/admin/franchise lead). */
+  user: { name: string; email?: string | null };
   franchise: { id: string; name: string; tag: string } | null;
   proficiencies: {
     gameId: string;
@@ -210,6 +215,21 @@ export interface UpdateProfileRequest {
   phonePublic?: boolean;
   contactEmailPublic?: boolean;
   proficiencies?: ProfileGameEntry[];
+}
+
+/** Result of GET /players/username-available — whether a candidate username is free to claim. */
+export interface UsernameAvailability {
+  available: boolean;
+  /** Human-readable reason when unavailable (bad shape or already taken); null when available. */
+  reason?: string | null;
+}
+
+/**
+ * Body for POST /players/onboard — a first-time SSO account claiming its username plus the optional
+ * (skippable) profile fields. Mirrors UpdateProfileRequest but REQUIRES the immutable gamerTag.
+ */
+export interface OnboardRequest extends UpdateProfileRequest {
+  gamerTag: string;
 }
 
 /** Response from POST /media — the stored asset id and its serving url (e.g. /media/{id}). */

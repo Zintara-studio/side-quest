@@ -50,6 +50,7 @@ import type {
   UpdateGameRequest,
   UpdateProfileRequest,
   UpdateSettingsRequest,
+  OnboardRequest,
 } from "@/lib/api/types";
 
 // Per-domain cache freshness. The global default (providers.tsx) is 30s; these lengthen it for data
@@ -166,6 +167,33 @@ export const useUpdateProfile = () => {
       qc.invalidateQueries({ queryKey: qk.playerUsernames(v.id) });
       // The edited player may appear on a franchise roster (contact fields / avatar).
       qc.invalidateQueries({ queryKey: ["franchises"] });
+    },
+  });
+};
+
+/**
+ * Live username-availability for the signup / onboarding forms. Feed it an ALREADY-debounced value —
+ * the query key changes per value, so debounce in the component to avoid a request per keystroke.
+ * Disabled below the minimum length so short/empty inputs don't hit the API.
+ */
+export const useUsernameAvailability = (debouncedUsername: string) => {
+  const value = debouncedUsername.trim();
+  return useQuery({
+    queryKey: ["username-available", value.toLowerCase()],
+    queryFn: () => playersApi.usernameAvailable(value),
+    enabled: value.length >= 3,
+    staleTime: 30_000,
+    retry: false,
+  });
+};
+
+/** First-time SSO onboarding: claim the username + apply the profile, then refresh derived caches. */
+export const useOnboard = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: OnboardRequest) => playersApi.onboard(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["players"] });
     },
   });
 };

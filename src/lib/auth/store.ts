@@ -22,6 +22,8 @@ interface AuthState {
   playerId: string | null;
   /** The signed-in user's gamerTag (from /auth/me) — used for pretty /player/<tag> links. */
   gamerTag: string | null;
+  /** True while a fresh SSO account still must complete onboarding (pick a username). Gates the app. */
+  onboardingRequired: boolean;
   /** Whether the initial refresh-on-load has resolved (success or failure). */
   hydrated: boolean;
 
@@ -47,6 +49,7 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       playerId: null,
       gamerTag: null,
+      onboardingRequired: false,
       hydrated: false,
 
       setSession: (auth) =>
@@ -54,6 +57,7 @@ export const useAuthStore = create<AuthState>()(
           accessToken: auth.accessToken,
           refreshToken: auth.refreshToken,
           user: toUser(auth.user),
+          onboardingRequired: auth.user.onboardingRequired,
         }),
 
       setUser: (me) =>
@@ -67,12 +71,21 @@ export const useAuthStore = create<AuthState>()(
           },
           playerId: me.player?.id ?? null,
           gamerTag: me.player?.gamerTag ?? null,
+          // Fall back to the last-known flag when a session has no player yet (shouldn't happen post-signup).
+          onboardingRequired: me.player?.onboardingRequired ?? false,
         }),
 
       setHydrated: (v) => set({ hydrated: v }),
 
       clear: () =>
-        set({ accessToken: null, refreshToken: null, user: null, playerId: null, gamerTag: null }),
+        set({
+          accessToken: null,
+          refreshToken: null,
+          user: null,
+          playerId: null,
+          gamerTag: null,
+          onboardingRequired: false,
+        }),
     }),
     {
       name: "sq-auth",

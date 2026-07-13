@@ -6,6 +6,7 @@ import { SQ, FONT } from "../tokens";
 import { ScreenHeader } from "../screen-header";
 import { TableScroll } from "../table-scroll";
 import { StateNote } from "@/components/sidequest/state-note";
+import { Avatar } from "@/components/sidequest/avatar";
 import { Modal } from "@/components/sidequest/modal";
 import { usePlayers, useUpdatePlayerStatus } from "@/lib/query/hooks";
 import { apiErrorMessage } from "@/lib/auth/context";
@@ -228,15 +229,7 @@ export function PlayersScreen() {
                 href={`/admin/player/${p.id}`}
                 style={{ flex: 1, display: "flex", alignItems: "center", gap: 11, textDecoration: "none", color: SQ.ink }}
               >
-                <div
-                  style={{
-                    width: 28,
-                    height: 28,
-                    borderRadius: "50%",
-                    background: SQ.avatar,
-                    border: `1px solid ${SQ.avatarBorder}`,
-                  }}
-                />
+                <Avatar url={p.avatarUrl} alt={p.gamerTag} size={28} />
                 <span style={{ fontWeight: 600, fontSize: 14 }}>{p.gamerTag}</span>
               </Link>
               <div style={{ width: 160, fontFamily: FONT.mono, fontSize: 11, color: SQ.faint }}>

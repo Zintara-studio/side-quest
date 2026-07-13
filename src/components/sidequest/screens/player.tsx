@@ -117,7 +117,7 @@ function segBtn(selected: boolean) {
 export function PlayerScreen({ id, base = "" }: { id?: string; base?: string }) {
   // Own-profile detection: only the signed-in owner sees the discreet report/appeal tools. When no id is
   // supplied (the /player route), a signed-in user sees their own profile.
-  const { playerId, isAdmin } = useAuth();
+  const { playerId } = useAuth();
   const effectiveId = id ?? playerId ?? undefined;
 
   const pq = usePlayer(effectiveId);
@@ -126,7 +126,9 @@ export function PlayerScreen({ id, base = "" }: { id?: string; base?: string }) 
   const p = pq.data;
 
   const isOwner = !!effectiveId && !!playerId && playerId === effectiveId;
-  const canEdit = !!p && (isOwner || isAdmin);
+  // Editing is strictly owner-only — admins (and franchise leaders) can VIEW every field but must not
+  // edit someone else's personal details. The backend enforces the same rule; this just hides the button.
+  const canEdit = !!p && isOwner;
   const [editing, setEditing] = useState(false);
   const myDisputesQ = useMyDisputes(isOwner);
   const createDispute = useCreateDispute();
@@ -234,7 +236,7 @@ export function PlayerScreen({ id, base = "" }: { id?: string; base?: string }) 
                 {p.user?.name ?? p.gamerTag}
                 {p.region ? ` · ${p.region}` : ""}
               </div>
-              {p.realName || p.phone || p.contactEmail ? (
+              {p.realName || p.phone || p.contactEmail || p.user?.email ? (
                 <div
                   style={{
                     marginTop: 10,
@@ -248,6 +250,11 @@ export function PlayerScreen({ id, base = "" }: { id?: string; base?: string }) 
                   {p.realName ? <span>{p.realName}</span> : null}
                   {p.phone ? <span>☎ {p.phone}</span> : null}
                   {p.contactEmail ? <span>✉ {p.contactEmail}</span> : null}
+                  {/* Account (login) email — only present for privileged viewers (owner/admin/franchise
+                      lead). Labelled distinctly so it isn't confused with the contact email above. */}
+                  {p.user?.email && p.user.email !== p.contactEmail ? (
+                    <span>✉ {p.user.email} <span style={{ color: SQ.steel }}>· account</span></span>
+                  ) : null}
                 </div>
               ) : null}
               {p.bio ? (

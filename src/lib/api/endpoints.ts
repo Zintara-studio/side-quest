@@ -52,6 +52,8 @@ import type {
   PlayerRankRow,
   PlayerSummary,
   UpdateProfileRequest,
+  UsernameAvailability,
+  OnboardRequest,
   UpdateBrandingRequest,
   RegisterRequest,
   RegisterResponse,
@@ -136,9 +138,17 @@ export const playersApi = {
     api.get<UsernameView[]>(`/players/${id}/usernames`).then((r) => r.data),
   updateStatus: (id: string, status: string) =>
     api.patch<PlayerDetail>(`/players/${id}/status`, { status }).then((r) => r.data),
-  // Owner/admin profile edit: contact fields + per-field privacy + per-game skill/handle upserts.
+  // Owner-only profile edit: contact fields + per-field privacy + per-game skill/handle upserts.
   updateProfile: (id: string, body: UpdateProfileRequest) =>
     api.patch<PlayerDetail>(`/players/${id}`, body).then((r) => r.data),
+  // Live availability check for the signup / onboarding username field (public, cheap).
+  usernameAvailable: (username: string) =>
+    api
+      .get<UsernameAvailability>("/players/username-available", { params: { username } })
+      .then((r) => r.data),
+  // First-time SSO onboarding: claim the immutable username + apply the optional profile fields.
+  onboard: (body: OnboardRequest) =>
+    api.post<PlayerDetail>("/players/onboard", body).then((r) => r.data),
 };
 
 // ---- media -----------------------------------------------------------------

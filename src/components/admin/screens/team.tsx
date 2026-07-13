@@ -67,12 +67,13 @@ function TierBadge({ level }: { level: string }) {
 export function TeamScreen() {
   const { isSuperAdmin } = useAuth();
   const teamQ = useAdminTeam(isSuperAdmin);
-  const playersQ = usePlayers({ limit: 100 });
+  const playersQ = usePlayers({ limit: 200 });
   const appoint = useAppointAdmin();
   const revoke = useRevokeAdmin();
 
   const [search, setSearch] = useState("");
   const [pendingRevoke, setPendingRevoke] = useState<TeamMember | null>(null);
+  const [pendingAppoint, setPendingAppoint] = useState<{ id: string; gamerTag: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   const admins = useMemo(
@@ -84,13 +85,14 @@ export function TeamScreen() {
     [admins],
   );
 
-  // Appoint picker: verified players who aren't already admins, filtered by the search box.
+  // Appoint picker: players who aren't already admins, filtered by the search box. The full list is
+  // shown (scrollable) rather than truncated — the search box narrows it. Alphabetical for scanability.
   const candidates = useMemo(() => {
     const q = search.trim().toLowerCase();
     return (playersQ.data?.items ?? [])
       .filter((p) => !adminPlayerIds.has(p.id))
       .filter((p) => (q ? p.gamerTag.toLowerCase().includes(q) : true))
-      .slice(0, 8);
+      .sort((a, b) => a.gamerTag.localeCompare(b.gamerTag));
   }, [playersQ.data, adminPlayerIds, search]);
 
   if (!isSuperAdmin) {
@@ -102,13 +104,16 @@ export function TeamScreen() {
     );
   }
 
-  const onAppoint = async (playerId: string) => {
+  const onAppoint = async () => {
+    if (!pendingAppoint) return;
     setErr(null);
     try {
-      await appoint.mutateAsync(playerId);
+      await appoint.mutateAsync(pendingAppoint.id);
+      setPendingAppoint(null);
       setSearch("");
     } catch (e) {
       setErr(apiErrorMessage(e, "Couldn't appoint that player."));
+      setPendingAppoint(null);
     }
   };
 
@@ -208,43 +213,69 @@ export function TeamScreen() {
           ) : candidates.length === 0 ? (
             <StateNote>{search ? "No matching players." : "No players to appoint."}</StateNote>
           ) : (
-            candidates.map((p) => (
-              <div
-                key={p.id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 12,
-                  padding: "10px 0",
-                  borderTop: `1px solid ${SQ.hairlineCell}`,
-                }}
-              >
-                <Avatar url={p.avatarUrl} alt={p.gamerTag} size={30} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>{p.gamerTag}</div>
-                  <div style={{ fontFamily: FONT.mono, fontSize: 10, color: SQ.mute, marginTop: 1 }}>
-                    {p.franchiseName ?? "Free agent"}
+            <>
+              <div style={{ maxHeight: 360, overflowY: "auto", margin: "0 -4px", padding: "0 4px" }}>
+                {candidates.map((p) => (
+                  <div
+                    key={p.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                      padding: "10px 0",
+                      borderTop: `1px solid ${SQ.hairlineCell}`,
+                    }}
+                  >
+                    <Avatar url={p.avatarUrl} alt={p.gamerTag} size={30} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 600 }}>{p.gamerTag}</div>
+                      <div style={{ fontFamily: FONT.mono, fontSize: 10, color: SQ.mute, marginTop: 1 }}>
+                        {p.franchiseName ?? "Free agent"}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setPendingAppoint({ id: p.id, gamerTag: p.gamerTag })}
+                      disabled={appoint.isPending}
+                      style={{ ...btn, color: SQ.sidebar, background: SQ.red }}
+                    >
+                      Make admin
+                    </button>
                   </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onAppoint(p.id)}
-                  disabled={appoint.isPending}
-                  style={{ ...btn, color: SQ.sidebar, background: SQ.red }}
-                >
-                  Make admin
-                </button>
+                ))}
               </div>
-            ))
+              <div style={{ fontFamily: FONT.mono, fontSize: 10, color: SQ.steel, marginTop: 10 }}>
+                {candidates.length} {candidates.length === 1 ? "player" : "players"}
+                {search ? " matching" : " available"}
+              </div>
+            </>
           )}
         </div>
       </div>
+
+      <ConfirmModal
+        open={!!pendingAppoint}
+        title="Appoint as admin?"
+        message={
+          <>
+            <strong>{pendingAppoint?.gamerTag}</strong> will gain admin access — they can manage
+            matches, auctions, registrations, franchises and announcements. They will not be able to
+            appoint other admins (only you, the main admin, can). You can revoke this at any time.
+          </>
+        }
+        confirmLabel="Make admin"
+        busy={appoint.isPending}
+        onConfirm={onAppoint}
+        onClose={() => setPendingAppoint(null)}
+      />
 
       <ConfirmModal
         open={!!pendingRevoke}
         title="Revoke admin access?"
         message={`${pendingRevoke?.name ?? "This admin"} will lose admin access immediately and return to being a player.`}
         confirmLabel="Revoke"
+        tone="destructive"
+        busy={revoke.isPending}
         onConfirm={onRevoke}
         onClose={() => setPendingRevoke(null)}
       />

@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { SQ } from "../tokens";
+import { SQ, FONT } from "../tokens";
 import { useAuth, apiErrorMessage } from "@/lib/auth/context";
 import { safeNextPath } from "@/lib/nav";
-import { useCurrentSeason } from "@/lib/query/hooks";
+import { useCurrentSeason, useUsernameAvailability } from "@/lib/query/hooks";
+import { validateUsername, USERNAME_MIN } from "@/lib/username";
 import {
   AuthCard,
   AuthField,
@@ -24,15 +25,41 @@ export function SignupForm() {
   const { signup } = useAuth();
   const season = useCurrentSeason().data;
   const [name, setName] = useState("");
+  const [debouncedName, setDebouncedName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
+  // Debounce the username before the availability lookup (no request per keystroke).
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedName(name), 400);
+    return () => clearTimeout(t);
+  }, [name]);
+
+  const usernameFormatError = name.trim() ? validateUsername(name) : null;
+  const availQ = useUsernameAvailability(usernameFormatError ? "" : debouncedName);
+  const checking = !usernameFormatError && debouncedName.trim().length >= USERNAME_MIN && availQ.isFetching;
+  const usernameFree =
+    !usernameFormatError && availQ.data?.available === true && debouncedName === name;
+  const usernameTaken =
+    !usernameFormatError && availQ.data && !availQ.data.available && debouncedName === name
+      ? availQ.data.reason
+      : null;
+
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    const uReason = validateUsername(name);
+    if (uReason) {
+      setError(uReason);
+      return;
+    }
+    if (usernameTaken) {
+      setError("That username is already taken — pick another.");
+      return;
+    }
     if (password !== confirm) {
       setError("Passwords do not match.");
       return;
@@ -61,14 +88,30 @@ export function SignupForm() {
     >
       <form onSubmit={onSubmit}>
         <AuthField
-          label="DISPLAY NAME"
+          label="USERNAME"
           name="name"
-          placeholder="e.g. Raghavan"
-          autoComplete="name"
+          placeholder="e.g. NightHawk"
+          autoComplete="username"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
           required
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
+        <div style={{ margin: "-8px 0 14px", fontFamily: FONT.mono, fontSize: 11, minHeight: 15 }}>
+          {usernameFormatError ? (
+            <span style={{ color: SQ.ember }}>{usernameFormatError}</span>
+          ) : checking ? (
+            <span style={{ color: SQ.steel }}>Checking availability…</span>
+          ) : usernameFree ? (
+            <span style={{ color: SQ.green }}>✓ {name} is available</span>
+          ) : usernameTaken ? (
+            <span style={{ color: SQ.ember }}>{usernameTaken}</span>
+          ) : (
+            <span style={{ color: SQ.steel }}>Your public handle — permanent, can&apos;t be changed later.</span>
+          )}
+        </div>
         <AuthField
           label="EMAIL"
           type="email"
@@ -125,7 +168,7 @@ export function SignupForm() {
           </span>
         </label>
         <AuthError>{error}</AuthError>
-        <AuthSubmit disabled={pending}>
+        <AuthSubmit disabled={pending || !!usernameFormatError || !!usernameTaken}>
           {pending ? "Creating account…" : "Create account ▸"}
         </AuthSubmit>
       </form>

@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/lib/theme";
 import { useAuth } from "@/lib/auth/context";
+import { useMediaQuery } from "@/lib/use-media-query";
 import { playerHref } from "@/lib/routes";
 import { useActiveAuction, useAdminOverview, useCurrentSeason, useRegistrations } from "@/lib/query/hooks";
 import { ConfirmModal } from "@/components/sidequest/confirm-modal";
@@ -111,9 +112,49 @@ export function AdminShell({ children, fontClass }: { children: ReactNode; fontC
   const auctionLive = isAdmin && activeAuctionQ.data?.status === "LIVE";
 
   const [confirmOut, setConfirmOut] = useState(false);
+  // Below this width the fixed 244px sidebar is unusable, so it becomes a slide-in drawer + hamburger.
+  const isMobile = useMediaQuery("(max-width: 860px)");
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  // Close the drawer whenever the route changes (a nav tap navigated away).
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [pathname]);
 
   if (!hydrated) return <FullScreen>Checking access…</FullScreen>;
   if (!isAdmin) return <FullScreen>Redirecting to sign in…</FullScreen>;
+
+  // Sidebar: a static in-flow column on desktop; a fixed, off-canvas drawer on mobile.
+  const asideStyle: CSSProperties = isMobile
+    ? {
+        position: "fixed",
+        left: 0,
+        top: 0,
+        bottom: 0,
+        width: 264,
+        zIndex: 60,
+        background: SQ.sidebar,
+        borderRight: `1px solid ${SQ.hairline}`,
+        display: "flex",
+        flexDirection: "column",
+        overflowY: "auto",
+        transform: mobileNavOpen ? "translateX(0)" : "translateX(-100%)",
+        transition: "transform .22s ease",
+        boxShadow: mobileNavOpen ? "0 0 40px rgba(0,0,0,.35)" : "none",
+      }
+    : {
+        flex: "0 0 244px",
+        width: 244,
+        background: SQ.sidebar,
+        borderRight: `1px solid ${SQ.hairline}`,
+        position: "sticky",
+        top: 0,
+        alignSelf: "flex-start",
+        minHeight: "100vh",
+        display: "flex",
+        flexDirection: "column",
+      };
+  const closeDrawer = () => setMobileNavOpen(false);
 
   const isActive = (href: string) =>
     href === "/admin" ? pathname === "/admin" : pathname === href || pathname.startsWith(href + "/");
@@ -138,23 +179,19 @@ export function AdminShell({ children, fontClass }: { children: ReactNode; fontC
         alignItems: "stretch",
       }}
     >
+      {/* backdrop behind the mobile drawer */}
+      {isMobile && mobileNavOpen ? (
+        <div
+          onClick={closeDrawer}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 55 }}
+        />
+      ) : null}
+
       {/* ===== SIDEBAR ===== */}
-      <aside
-        style={{
-          flex: "0 0 244px",
-          width: 244,
-          background: SQ.sidebar,
-          borderRight: `1px solid ${SQ.hairline}`,
-          position: "sticky",
-          top: 0,
-          alignSelf: "flex-start",
-          minHeight: "100vh",
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
+      <aside style={asideStyle}>
         <Link
           href="/admin"
+          onClick={closeDrawer}
           style={{
             // Fixed header height, shared with the topbar (below), so their bottom borders line up.
             height: 60,
@@ -224,6 +261,7 @@ export function AdminShell({ children, fontClass }: { children: ReactNode; fontC
                   <Link
                     key={it.href}
                     href={it.href}
+                    onClick={closeDrawer}
                     style={{
                       display: "flex",
                       alignItems: "center",
@@ -316,6 +354,7 @@ export function AdminShell({ children, fontClass }: { children: ReactNode; fontC
         >
           <Link
             href="/admin/profile"
+            onClick={closeDrawer}
             style={{
               display: "flex",
               alignItems: "center",
@@ -398,26 +437,56 @@ export function AdminShell({ children, fontClass }: { children: ReactNode; fontC
             borderBottom: `1px solid ${SQ.hairline}`,
           }}
         >
-          <div style={{ ...monoTiny, color: SQ.mute }}>{seasonLabel}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+            {isMobile ? (
+              <button
+                type="button"
+                onClick={() => setMobileNavOpen(true)}
+                aria-label="Open menu"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 36,
+                  height: 36,
+                  borderRadius: 7,
+                  border: `1px solid ${SQ.inputBorder}`,
+                  background: "transparent",
+                  color: SQ.ink,
+                  cursor: "pointer",
+                  fontSize: 17,
+                  lineHeight: 1,
+                  flex: "0 0 auto",
+                }}
+              >
+                ☰
+              </button>
+            ) : null}
+            <div style={{ ...monoTiny, color: SQ.mute, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {seasonLabel}
+            </div>
+          </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <Link
-              href={playerId ? playerHref(gamerTag ?? playerId) : "/"}
-              title="Switch to the public player site"
-              style={{
-                fontFamily: FONT.mono,
-                fontSize: 10.5,
-                letterSpacing: ".12em",
-                textTransform: "uppercase",
-                color: SQ.mute,
-                textDecoration: "none",
-                border: `1px solid ${SQ.hairline}`,
-                borderRadius: 999,
-                padding: "6px 12px",
-                whiteSpace: "nowrap",
-              }}
-            >
-              ◂ Player site
-            </Link>
+            {!isMobile ? (
+              <Link
+                href={playerId ? playerHref(gamerTag ?? playerId) : "/"}
+                title="Switch to the public player site"
+                style={{
+                  fontFamily: FONT.mono,
+                  fontSize: 10.5,
+                  letterSpacing: ".12em",
+                  textTransform: "uppercase",
+                  color: SQ.mute,
+                  textDecoration: "none",
+                  border: `1px solid ${SQ.hairline}`,
+                  borderRadius: 999,
+                  padding: "6px 12px",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                ◂ Player site
+              </Link>
+            ) : null}
             <NotificationBell href="/admin/notifications" />
             <ThemeToggle />
             <Link

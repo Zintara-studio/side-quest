@@ -14,6 +14,8 @@ interface AuthContextValue {
   playerId: string | null;
   /** The signed-in user's gamerTag, for pretty /player/<tag> links (null if no player profile). */
   gamerTag: string | null;
+  /** True while a fresh SSO account still must complete onboarding (pick a username). */
+  onboardingRequired: boolean;
   isAuthenticated: boolean;
   /** Any admin tier (appointed admin or the main admin). */
   isAdmin: boolean;
@@ -26,15 +28,17 @@ interface AuthContextValue {
   signup: (body: RegisterRequest) => Promise<{ verificationRequired: boolean; email: string }>;
   /** Confirms the email with its OTP, establishes the session and returns the role. */
   verifyEmail: (email: string, code: string) => Promise<string>;
-  /** Signs in with a Google id_token (verified server-side) and returns the role. */
-  googleLogin: (idToken: string) => Promise<string>;
+  /** Signs in with a Google id_token (verified server-side); returns the role + onboarding flag. */
+  googleLogin: (idToken: string) => Promise<{ role: string; onboardingRequired: boolean }>;
+  /** Re-fetches /auth/me into the session store (e.g. after onboarding flips onboardingRequired). */
+  refreshUser: () => Promise<void>;
   logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const { user, playerId, gamerTag, accessToken, refreshToken, hydrated, setSession, setUser, setHydrated, clear } =
+  const { user, playerId, gamerTag, onboardingRequired, accessToken, refreshToken, hydrated, setSession, setUser, setHydrated, clear } =
     useAuthStore();
   // Avoid a hydration mismatch: render the server/initial state until mounted on the client.
   const [mounted, setMounted] = useState(false);
@@ -103,7 +107,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       /* player id resolves on next load */
     }
-    return auth.user.role;
+    // Surface the onboarding flag so the caller can route a brand-new SSO user to /onboarding.
+    return { role: auth.user.role, onboardingRequired: auth.user.onboardingRequired };
+  };
+
+  const refreshUser = async () => {
+    try {
+      setUser(await authApi.me());
+    } catch {
+      /* leave the current session snapshot in place on a transient failure */
+    }
   };
 
   const logout = async () => {
@@ -120,6 +133,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user,
     playerId,
     gamerTag,
+    onboardingRequired,
     isAuthenticated: Boolean(accessToken || refreshToken || user),
     isAdmin: (user?.adminLevel ?? "NONE") !== "NONE",
     isSuperAdmin: user?.adminLevel === "SUPER_ADMIN",
@@ -128,6 +142,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signup,
     verifyEmail,
     googleLogin,
+    refreshUser,
     logout,
   };
 

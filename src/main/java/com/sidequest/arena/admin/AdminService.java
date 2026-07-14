@@ -44,7 +44,8 @@ import java.util.UUID;
 public class AdminService {
 
     /** Number of recent audit rows surfaced on the overview. */
-    private static final int RECENT_ACTIVITY_LIMIT = 10;
+    // The overview panel is scrollable, so surface a fuller trail (the repo already bounds the fetch at 50).
+    private static final int RECENT_ACTIVITY_LIMIT = 40;
 
     private final PlayerRepository playerRepository;
     private final FranchiseRepository franchiseRepository;

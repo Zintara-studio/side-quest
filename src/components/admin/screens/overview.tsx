@@ -225,6 +225,9 @@ export function OverviewScreen() {
                   border: `1px solid ${SQ.hairline}`,
                   borderRadius: 8,
                   padding: "6px 18px",
+                  // Scrollable so a busy trail doesn't push the page down — the panel stays a fixed size.
+                  maxHeight: 440,
+                  overflowY: "auto",
                 }}
               >
                 {activity.map((a, i) => (
@@ -249,8 +252,22 @@ export function OverviewScreen() {
                     >
                       {a.time}
                     </div>
-                    <div style={{ flex: 1 }}>
-                      <span style={{ fontSize: 13.5 }}>{a.text}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13.5, color: SQ.ink }}>{a.title}</div>
+                      {a.meta ? (
+                        <div
+                          style={{
+                            fontFamily: FONT.mono,
+                            fontSize: 10.5,
+                            color: SQ.dim,
+                            marginTop: 3,
+                            lineHeight: 1.5,
+                            overflowWrap: "anywhere",
+                          }}
+                        >
+                          {a.meta}
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 ))}

@@ -125,7 +125,10 @@ export function PlayerScreen({ id, base = "" }: { id?: string; base?: string }) 
   const usernamesQ = usePlayerUsernames(effectiveId);
   const p = pq.data;
 
-  const isOwner = !!effectiveId && !!playerId && playerId === effectiveId;
+  // Own-profile detection must compare the LOADED player's canonical id to the session's playerId —
+  // NOT effectiveId, which may be a pretty slug (e.g. /player/Crazy8) that never equals a UUID. Basing
+  // this on the resolved p.id makes it correct whether the URL used the gamerTag slug or the raw id.
+  const isOwner = !!p && !!playerId && p.id === playerId;
   // Editing is strictly owner-only — admins (and franchise leaders) can VIEW every field but must not
   // edit someone else's personal details. The backend enforces the same rule; this just hides the button.
   const canEdit = !!p && isOwner;

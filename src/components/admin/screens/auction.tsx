@@ -13,6 +13,7 @@ import { SearchableSelect } from "@/components/sidequest/searchable-select";
 import { apiErrorMessage } from "@/lib/api/client";
 import {
   useActiveAuction,
+  useAuctionPool,
   useAuction,
   useCancelAuction,
   useCreateAuction,
@@ -260,6 +261,10 @@ function CreateAuctionForm({ onCreated }: { onCreated: (id: string) => void }) {
   const franchisesQ = useFranchises({ active: true, limit: 100 });
   const create = useCreateAuction();
   const franchises = franchisesQ.data?.items ?? [];
+  // Show the standing registration pool (who'll be auto-pulled as lots) BEFORE the auction is created,
+  // so the admin can see who has signed up without having to create an auction first.
+  const poolQ = useAuctionPool();
+  const poolPlayers = poolQ.data?.players ?? [];
 
   const [title, setTitle] = useState("");
   const [basePrice, setBasePrice] = useState("100");
@@ -307,6 +312,18 @@ function CreateAuctionForm({ onCreated }: { onCreated: (id: string) => void }) {
       <div style={{ fontSize: 12.5, color: SQ.mute, lineHeight: 1.5, marginBottom: 18 }}>
         The lot pool is auto-pulled from the current AUCTION-registration entrants — no need to pick
         players here.
+      </div>
+
+      {/* The standing pool, visible before creation so the admin knows who has registered. */}
+      <div style={{ ...fieldLabel, marginBottom: 8 }}>
+        REGISTERED POOL {poolPlayers.length ? `· ${poolPlayers.length}` : ""}
+      </div>
+      <div style={{ marginBottom: 20 }}>
+        {poolQ.isLoading ? (
+          <StateNote>Loading pool…</StateNote>
+        ) : (
+          <PoolPreview lots={poolPlayers} />
+        )}
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 14 }}>

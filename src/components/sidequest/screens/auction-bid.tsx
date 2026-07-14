@@ -1,14 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { SQ, FONT } from "../tokens";
 import { StateNote } from "../state-note";
 import { Modal } from "../modal";
 import { Avatar } from "../avatar";
 import { useAuth, apiErrorMessage } from "@/lib/auth/context";
-import { useMyFranchise, useActiveAuction, useAuction, usePlaceBid, useJoinAuction } from "@/lib/query/hooks";
+import { useMyFranchise, useActiveAuction, useAuctionPool, useAuction, usePlaceBid, useJoinAuction } from "@/lib/query/hooks";
 import { useAuctionSocket } from "@/lib/query/use-auction-socket";
-import type { AuctionView, AuctionLotView, AuctionFranchiseView } from "@/lib/api/types";
+import { playerHref } from "@/lib/routes";
+import type { AuctionView, AuctionLotView, AuctionFranchiseView, AuctionPoolView } from "@/lib/api/types";
 
 const sectionTitle = {
   fontFamily: FONT.mono,
@@ -64,6 +66,11 @@ export function AuctionBidScreen() {
   const auction = boardQ.data ?? activeQ.data ?? null;
   const mine = mineQ.data ?? null;
 
+  // The standing pool — fetched only when there's no active auction, so we can show who registered even
+  // before the league schedules one. Costs nothing during a live auction (disabled → no poll).
+  const noActiveAuction = !activeQ.isLoading && !activeQ.data;
+  const poolQ = useAuctionPool(noActiveAuction);
+
   // Bidder eligibility (derived, no hooks) — computed up here so the live socket can mount before the
   // early returns. Owners/managers of a participating franchise + admins get the WebSocket feed; every
   // other viewer stays on the poll.
@@ -89,16 +96,13 @@ export function AuctionBidScreen() {
     );
   }
 
-  // No auction at all (a just-COMPLETED board still held in cache falls through to the war room's
-  // Results view — the active-auction poll drops it on the next reload).
+  // No auction yet — but the pool is NOT invisible: show everyone who registered and is waiting to be
+  // drafted. Only once the league actually creates an auction does the live board (below) take over.
   if (!auction) {
     return (
       <div>
         <Header />
-        <StateNote>
-          There&rsquo;s no live auction right now. When the league opens the player auction it&rsquo;ll
-          appear here for you to bid.
-        </StateNote>
+        <NoAuctionPool pool={poolQ.data ?? null} loading={poolQ.isLoading} />
       </div>
     );
   }
@@ -113,6 +117,133 @@ export function AuctionBidScreen() {
       canBid={canBid}
       spectator={spectator}
     />
+  );
+}
+
+// ---- pool preview (no auction scheduled yet) -------------------------------
+
+/** Highest-rated game the pooled player declared, for a compact scouting tag. */
+function topGame(lot: AuctionLotView): { game: string; rating: number } | null {
+  if (!lot.expertise || lot.expertise.length === 0) return null;
+  return [...lot.expertise].sort((a, b) => b.rating - a.rating)[0];
+}
+
+/**
+ * Shown on the auction page when no auction has been created yet: the standing pool of players who
+ * registered and are waiting to be drafted. This is the fix for "you can't see the pool until an
+ * auction is scheduled" — the pool is now always visible.
+ */
+function NoAuctionPool({ pool, loading }: { pool: AuctionPoolView | null; loading: boolean }) {
+  if (loading && !pool) {
+    return <StateNote>Loading the auction pool…</StateNote>;
+  }
+  const players = pool?.players ?? [];
+  if (players.length === 0) {
+    return (
+      <StateNote>
+        There&rsquo;s no live auction right now, and no players have entered the pool yet. When the league
+        opens auction registration, everyone who signs up will appear here.
+      </StateNote>
+    );
+  }
+  return (
+    <div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          gap: 12,
+          flexWrap: "wrap",
+          marginBottom: 6,
+        }}
+      >
+        <div style={{ fontFamily: FONT.display, fontSize: 22, color: SQ.ink }}>AUCTION POOL</div>
+        <div style={{ fontFamily: FONT.mono, fontSize: 12, letterSpacing: ".08em", color: SQ.mute }}>
+          {players.length} {players.length === 1 ? "PLAYER" : "PLAYERS"} WAITING
+        </div>
+      </div>
+      <div style={{ fontSize: 13, color: SQ.faint, lineHeight: 1.6, marginBottom: 18, maxWidth: 640 }}>
+        These players have registered for the player auction and are waiting to be drafted. The league
+        hasn&rsquo;t opened the auction yet — when it does, franchises will bid on them live right here.
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gap: 12,
+          gridTemplateColumns: "repeat(auto-fill,minmax(240px,1fr))",
+        }}
+      >
+        {players.map((p) => (
+          <PoolPlayerCard key={p.playerId} lot={p} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PoolPlayerCard({ lot }: { lot: AuctionLotView }) {
+  const top = topGame(lot);
+  return (
+    <Link
+      href={playerHref(lot.gamerTag)}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "13px 15px",
+        border: `1px solid ${SQ.hairline}`,
+        borderRadius: 9,
+        background: SQ.inset,
+        textDecoration: "none",
+        color: SQ.ink,
+      }}
+    >
+      <Avatar url={lot.avatarUrl} alt={lot.gamerTag} size={40} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          style={{
+            fontSize: 14,
+            fontWeight: 700,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {lot.gamerTag}
+        </div>
+        {lot.games.length > 0 ? (
+          <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 6 }}>
+            {lot.games.slice(0, 3).map((g) => (
+              <span
+                key={g}
+                style={{
+                  fontFamily: FONT.mono,
+                  fontSize: 9.5,
+                  letterSpacing: ".05em",
+                  color: SQ.faint,
+                  border: `1px solid ${SQ.inputBorder}`,
+                  padding: "2px 7px",
+                  borderRadius: 6,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {g}
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      {top ? (
+        <div style={{ textAlign: "right", flex: "0 0 auto" }}>
+          <div style={{ fontFamily: FONT.display, fontSize: 18, color: SQ.blue, lineHeight: 1 }}>
+            {top.rating}
+          </div>
+          <div style={{ fontFamily: FONT.mono, fontSize: 8.5, letterSpacing: ".08em", color: SQ.mute, marginTop: 3 }}>
+            {top.game.toUpperCase()}
+          </div>
+        </div>
+      ) : null}
+    </Link>
   );
 }
 

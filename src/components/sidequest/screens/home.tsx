@@ -692,29 +692,29 @@ function OffSeason({
         <div style={{ fontSize: 14, color: SQ.faint, marginTop: 8, lineHeight: 1.5, maxWidth: 620 }}>
           {hasAuction
             ? "The next season's player auction is underway — head to the room to follow the bidding as squads take shape."
-            : "A new season is forming. Rosters reset and fresh fixtures drop when it begins — watch this space."}
+            : "A new season is forming. Players are entering the auction pool now — see who's up for grabs, and follow the bidding live once the auction opens."}
         </div>
-        {hasAuction ? (
-          <Link
-            href="/auction"
-            style={{
-              display: "inline-block",
-              marginTop: 14,
-              fontFamily: FONT.mono,
-              fontSize: 11,
-              letterSpacing: ".12em",
-              textTransform: "uppercase",
-              fontWeight: 700,
-              color: SQ.league,
-              background: SQ.red,
-              padding: "10px 16px",
-              borderRadius: 6,
-              textDecoration: "none",
-            }}
-          >
-            Enter the auction room ▸
-          </Link>
-        ) : null}
+        {/* Always link to the auction: when one is live it's the bid room; otherwise it's the standing
+            pool of registered players (never a dead end — the page shows an empty-state if the pool is empty). */}
+        <Link
+          href="/auction"
+          style={{
+            display: "inline-block",
+            marginTop: 14,
+            fontFamily: FONT.mono,
+            fontSize: 11,
+            letterSpacing: ".12em",
+            textTransform: "uppercase",
+            fontWeight: 700,
+            color: SQ.league,
+            background: SQ.red,
+            padding: "10px 16px",
+            borderRadius: 6,
+            textDecoration: "none",
+          }}
+        >
+          {hasAuction ? "Enter the auction room ▸" : "View the auction pool ▸"}
+        </Link>
       </div>
 
       {feed.length > 0 ? (

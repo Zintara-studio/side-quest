@@ -215,40 +215,65 @@ const gis = () => (window as unknown as { google?: GoogleId }).google;
  * a token itself. The button only renders when NEXT_PUBLIC_GOOGLE_CLIENT_ID is configured, so dev without
  * Google credentials just hides it.
  */
+/** The multi-colour Google "G", inline so it renders on any themed background without an asset request. */
+function GoogleGlyph({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 18 18" aria-hidden style={{ flex: "0 0 auto" }}>
+      <path
+        fill="#4285F4"
+        d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"
+      />
+      <path
+        fill="#34A853"
+        d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"
+      />
+      <path
+        fill="#EA4335"
+        d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"
+      />
+    </svg>
+  );
+}
+
 export function SocialRow() {
   const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
   const { googleLogin } = useAuth();
   const router = useRouter();
-  const btnRef = useRef<HTMLDivElement | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null); // relative box holding both buttons
+  const gisRef = useRef<HTMLDivElement | null>(null); // where Google's real (transparent) button mounts
 
   useEffect(() => {
     if (!clientId) return;
     const SRC = "https://accounts.google.com/gsi/client";
     let cancelled = false;
 
-    // (Re)draw the button for the CURRENT site theme. GIS renders inside a locked shadow DOM we
-    // can't token-theme, so the closest we can do is pick its dark/light variant so it doesn't sit
-    // as a bright white block on the espresso theme. We read data-theme live (set pre-paint by the
-    // root-layout script, so it's correct on first render) and clear the container first — GIS
-    // *appends*, so re-rendering on a theme flip would otherwise stack a second button.
+    // We render Google's OWN button but keep it fully transparent and stretched over our custom,
+    // theme-token-styled button below. Google Identity Services renders inside a locked shadow DOM whose
+    // chrome we can't restyle — even `filled_black` still paints the "G" on a bright white tile that
+    // clashes with the espresso theme. So we hide Google's button and show our own, while its invisible
+    // hit-area still runs the exact same secure id_token flow — no backend/contract change. We size the
+    // transparent button to our container so the whole visible button is clickable.
     const drawButton = () => {
       const g = gis();
-      if (cancelled || !g?.accounts?.id || !btnRef.current) return;
-      const dark = document.documentElement.dataset.theme === "dark";
-      btnRef.current.innerHTML = "";
-      g.accounts.id.renderButton(btnRef.current, {
+      if (cancelled || !g?.accounts?.id || !gisRef.current || !wrapRef.current) return;
+      const width = Math.min(400, Math.max(200, Math.round(wrapRef.current.offsetWidth)));
+      gisRef.current.innerHTML = ""; // GIS appends — clear before re-rendering so buttons don't stack
+      g.accounts.id.renderButton(gisRef.current, {
         type: "standard",
-        theme: dark ? "filled_black" : "outline",
-        shape: "pill",
+        theme: "outline",
         size: "large",
         text: "continue_with",
-        width: 300,
+        width,
       });
     };
 
     const init = () => {
       const g = gis();
-      if (cancelled || !g?.accounts?.id || !btnRef.current) return;
+      if (cancelled || !g?.accounts?.id) return;
       g.accounts.id.initialize({
         client_id: clientId,
         callback: async (resp) => {
@@ -270,13 +295,9 @@ export function SocialRow() {
       drawButton();
     };
 
-    // useTheme() is isolated per-hook (local state, no shared store), so a toggle in the nav can't
-    // notify us through React. Watch the shared source of truth instead — the data-theme attribute
-    // on <html> — and redraw the button in the matching variant whenever it flips.
-    const observer = new MutationObserver((records) => {
-      if (records.some((r) => r.attributeName === "data-theme")) drawButton();
-    });
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    // Keep the invisible hit-area matched to our button's width as the layout resizes.
+    const ro = new ResizeObserver(() => drawButton());
+    if (wrapRef.current) ro.observe(wrapRef.current);
 
     const existing = document.querySelector<HTMLScriptElement>(`script[src="${SRC}"]`);
     if (existing && gis()?.accounts?.id) {
@@ -293,7 +314,7 @@ export function SocialRow() {
     }
     return () => {
       cancelled = true;
-      observer.disconnect();
+      ro.disconnect();
     };
   }, [clientId, googleLogin, router]);
 
@@ -303,8 +324,45 @@ export function SocialRow() {
   if (!clientId) return null;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10, alignItems: "center" }}>
-      <div ref={btnRef} style={{ minHeight: 44 }} />
+    <div ref={wrapRef} style={{ position: "relative", width: "100%", height: 44 }}>
+      {/* Our themed button — presentational only; the transparent Google button on top takes the click. */}
+      <div
+        aria-hidden
+        style={{
+          position: "absolute",
+          inset: 0,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 11,
+          borderRadius: 8,
+          border: `1px solid ${SQ.inputBorder}`,
+          background: SQ.inset,
+          color: SQ.ink,
+          fontFamily: FONT.sans,
+          fontSize: 14,
+          fontWeight: 600,
+          pointerEvents: "none",
+        }}
+      >
+        <GoogleGlyph />
+        Continue with Google
+      </div>
+      {/* Google's real button: same box, fully transparent, still receives the click and runs the flow. */}
+      <div
+        ref={gisRef}
+        aria-label="Continue with Google"
+        style={{
+          position: "absolute",
+          inset: 0,
+          opacity: 0,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          overflow: "hidden",
+          cursor: "pointer",
+        }}
+      />
     </div>
   );
 }

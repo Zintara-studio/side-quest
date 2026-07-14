@@ -91,8 +91,9 @@ export function LeagueShell({
   const season = useCurrentSeason().data ?? null;
   const seasonCode = season?.code ?? "—";
 
-  // The auction has NO nav tab — it's surfaced as a contextual link on the home page (all players) and
-  // the franchise page (owners/managers) only while one is live. Notifications route to the bell.
+  // The auction has NO nav tab (intentionally removed — it only clutters the bar). It's reached from the
+  // home page (all players) and the My Franchise page (owners/managers). The /auction page itself shows
+  // the standing pool when no auction is live, so those contextual links are never a dead end.
   const links = navLinks;
   const seasonTagline = season
     ? `${season.name.toUpperCase()} · BUILT FOR THE FRANCHISES`

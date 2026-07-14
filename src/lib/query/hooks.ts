@@ -51,6 +51,7 @@ import type {
   UpdateProfileRequest,
   UpdateSettingsRequest,
   OnboardRequest,
+  SaveVotesRequest,
 } from "@/lib/api/types";
 
 // Per-domain cache freshness. The global default (providers.tsx) is 30s; these lengthen it for data
@@ -115,6 +116,24 @@ export const useSeedStaticConfig = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => adminApi.seed(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["games"] }),
+  });
+};
+
+/** The signed-in user's game upvotes (to pre-select the vote panel). Enabled only when logged in. */
+export const useMyGameVotes = (enabled: boolean) =>
+  useQuery({
+    queryKey: ["games", "my-votes"],
+    queryFn: () => gamesApi.myVotes(),
+    enabled,
+    staleTime: STALE_STATIC,
+  });
+
+/** Save the caller's game upvotes; the server recomputes popularity → refresh the games grid + votes. */
+export const useSaveGameVotes = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: SaveVotesRequest) => gamesApi.saveVotes(body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["games"] }),
   });
 };
@@ -943,6 +962,20 @@ export const useActiveAuction = (enabled = true) =>
       if (!s || s === "COMPLETED") return 60_000;
       return s === "LIVE" ? 5_000 : 15_000;
     },
+    refetchOnWindowFocus: true,
+  });
+
+/**
+ * The standing auction pool — players registered and waiting, shown even when no auction exists yet.
+ * Enabled only when there is NO active auction (the board is the source of truth once one exists), so
+ * it costs nothing during a live auction. Slow 30s poll so a new registrant appears without a reload.
+ */
+export const useAuctionPool = (enabled = true) =>
+  useQuery({
+    queryKey: ["auctions", "pool"],
+    queryFn: () => auctionsApi.pool(),
+    enabled,
+    refetchInterval: enabled ? 30_000 : false,
     refetchOnWindowFocus: true,
   });
 

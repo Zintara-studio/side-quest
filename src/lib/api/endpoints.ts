@@ -7,6 +7,7 @@ import type {
   ApplyRequest,
   AssignRequest,
   AuctionView,
+  AuctionPoolView,
   AuthResponse,
   CreateAuctionRequest,
   PlaceBidRequest,
@@ -25,6 +26,8 @@ import type {
   FranchiseSummary,
   CreateGameRequest,
   GameDetail,
+  GameVotesView,
+  SaveVotesRequest,
   SeedResult,
   GameSummary,
   EnterRoundsRequest,
@@ -114,6 +117,11 @@ export const gamesApi = {
   create: (body: CreateGameRequest) => api.post<GameDetail>("/games", body).then((r) => r.data),
   update: (id: string, body: UpdateGameRequest) =>
     api.patch<GameDetail>(`/games/${id}`, body).then((r) => r.data),
+  // Community popularity voting: the caller's current upvotes + a full-set replace that returns the
+  // refreshed catalogue (popularity recomputed).
+  myVotes: () => api.get<GameVotesView>("/games/my-votes").then((r) => r.data),
+  saveVotes: (body: SaveVotesRequest) =>
+    api.put<GameSummary[]>("/games/votes", body).then((r) => r.data),
 };
 
 // ---- players ---------------------------------------------------------------
@@ -405,6 +413,8 @@ export const auctionsApi = {
   // The backend returns an EMPTY body (→ "") when there is no active auction; coerce that to null the
   // same way seasonsApi.current does, so `?? null` consumers don't receive a truthy empty string.
   active: () => api.get<AuctionView | "">("/auctions/active").then((r) => r.data || null),
+  // The standing pool — visible even when no auction exists yet (the "see the pool" feature).
+  pool: () => api.get<AuctionPoolView>("/auctions/pool").then((r) => r.data),
   get: (id: string) => api.get<AuctionView>(`/auctions/${id}`).then((r) => r.data),
   create: (body: CreateAuctionRequest) =>
     api.post<AuctionView>("/auctions", body).then((r) => r.data),

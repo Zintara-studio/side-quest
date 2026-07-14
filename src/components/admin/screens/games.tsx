@@ -505,7 +505,6 @@ function AddGameModal({ open, onClose }: { open: boolean; onClose: () => void })
   const [name, setName] = useState("");
   const [format, setFormat] = useState("");
   const [gameType, setGameType] = useState<GameType>("TACTICAL");
-  const [popularity, setPopularity] = useState("50");
   const [err, setErr] = useState<string | null>(null);
 
   const field = {
@@ -539,12 +538,10 @@ function AddGameModal({ open, onClose }: { open: boolean; onClose: () => void })
         name: name.trim(),
         format: format.trim(),
         gameType,
-        popularity: Math.max(0, Math.min(100, Number(popularity) || 0)),
       });
       setName("");
       setFormat("");
       setGameType("TACTICAL");
-      setPopularity("50");
       onClose();
     } catch (e) {
       setErr(apiErrorMessage(e, "Couldn't add that game."));
@@ -566,9 +563,8 @@ function AddGameModal({ open, onClose }: { open: boolean; onClose: () => void })
             </option>
           ))}
         </select>
-        <label style={label}>Popularity (0–100)</label>
-        <input className="sq-field" style={field} type="number" min={0} max={100} value={popularity} onChange={(e) => setPopularity(e.target.value)} />
-        <div style={{ fontFamily: FONT.mono, fontSize: 10.5, color: SQ.mute, marginTop: 10 }}>
+        <div style={{ fontFamily: FONT.mono, fontSize: 10.5, color: SQ.mute, marginTop: 14 }}>
+          Popularity is community-vote-driven — a new title starts at 0 and rises as players upvote it.
           Scoring defaults from the genre — tune it afterwards on the game card (weight is main-admin-only).
         </div>
         {err ? <div style={{ fontFamily: FONT.mono, fontSize: 12, color: SQ.ember, marginTop: 12 }}>{err}</div> : null}

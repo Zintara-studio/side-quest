@@ -124,10 +124,10 @@ export interface GameDetail extends GameSummary {
   matches: GameMatchView[];
 }
 
+/** Popularity is community-vote-driven (see GameVotesView) and is NOT admin-editable. */
 export interface UpdateGameRequest {
   enabled?: boolean;
   format?: string;
-  popularity?: number;
   gameType?: GameType;
   pointsPerKill?: number;
   placementPoints?: string;
@@ -139,8 +139,17 @@ export interface CreateGameRequest {
   name: string;
   format: string;
   gameType: GameType;
-  popularity?: number;
   iconUrl?: string;
+}
+
+/** The signed-in user's current game upvotes (GET /games/my-votes) — pre-selects the vote UI. */
+export interface GameVotesView {
+  votedGameIds: string[];
+}
+
+/** Body for PUT /games/votes — the caller's full upvote set (idempotent replace). */
+export interface SaveVotesRequest {
+  gameIds: string[];
 }
 
 /** Result of POST /admin/seed (static-config seed). */
@@ -954,6 +963,18 @@ export interface AuctionView {
   franchises: AuctionFranchiseView[];
   lots: AuctionLotView[];
   recentBids: AuctionBidView[];
+}
+
+/**
+ * The standing auction pool (players registered and waiting to be drafted), served even when no auction
+ * has been created — so the pool is never invisible. Each player is a QUEUED-status AuctionLotView with
+ * bid fields zeroed, so the existing lot rendering can be reused.
+ */
+export interface AuctionPoolView {
+  count: number;
+  /** Whether a live/scheduled auction already exists (the board takes over then). */
+  auctionActive: boolean;
+  players: AuctionLotView[];
 }
 
 export interface CreateAuctionRequest {

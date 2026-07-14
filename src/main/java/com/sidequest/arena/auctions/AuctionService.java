@@ -5,6 +5,7 @@ import com.sidequest.arena.auctions.dto.AssignRequest;
 import com.sidequest.arena.auctions.dto.AuctionBidView;
 import com.sidequest.arena.auctions.dto.AuctionFranchiseView;
 import com.sidequest.arena.auctions.dto.AuctionLotView;
+import com.sidequest.arena.auctions.dto.AuctionPoolView;
 import com.sidequest.arena.auctions.dto.AuctionView;
 import com.sidequest.arena.auctions.dto.CreateAuctionRequest;
 import com.sidequest.arena.auctions.dto.NominateRequest;
@@ -217,6 +218,73 @@ public class AuctionService {
                 List.of(AuctionStatus.DRAFT, AuctionStatus.LOBBY, AuctionStatus.LIVE, AuctionStatus.PAUSED))
                 .orElse(null);
         return auction == null ? null : viewOf(auction);
+    }
+
+    /**
+     * The standing auction pool, viewable even when NO auction has been created yet — the fix for "you
+     * can't see who registered until an auction is scheduled." Projects each pooled player into the same
+     * QUEUED-lot shape the live board uses so the client reuses its lot card. Private scouting fields
+     * (real name, contact, in-game handles) are included only for admins; everyone else gets the public
+     * board (gamerTag, avatar, games, ratings/ranks) — the pool preview has no per-auction "participant"
+     * concept, so it can't grant the bidder-level detail the live board does. When an auction already
+     * exists, {@code auctionActive} is true so the client can defer to the board as the source of truth.
+     */
+    @Transactional(readOnly = true)
+    public AuctionPoolView poolPreview() {
+        boolean auctionActive = auctionRepository.findFirstByStatusInOrderByCreatedAtDesc(
+                List.of(AuctionStatus.DRAFT, AuctionStatus.LOBBY, AuctionStatus.LIVE, AuctionStatus.PAUSED))
+                .isPresent();
+        List<Player> players = standingPoolPlayers();
+        Map<UUID, ScoutData> scoutMap = buildScoutMapForPlayers(players);
+        boolean includePrivate = SecurityUtils.isAdmin();
+        List<AuctionLotView> views = new ArrayList<>();
+        int order = 0;
+        for (Player p : players) {
+            views.add(poolPlayerView(p, order++, includePrivate, scoutMap));
+        }
+        return new AuctionPoolView(views.size(), auctionActive, views);
+    }
+
+    /**
+     * Project a pooled player into the {@link AuctionLotView} shape when there is no real lot yet:
+     * QUEUED status, bid fields zeroed, synthetic id = the player id (a stable client key). Mirrors
+     * {@link #lotView}'s private-field stripping so spectators never see contact / handle / real name.
+     */
+    private AuctionLotView poolPlayerView(Player player, int order, boolean includePrivate,
+                                          Map<UUID, ScoutData> scoutMap) {
+        List<AuctionLotView.Expertise> expertise = new ArrayList<>();
+        List<String> games = new ArrayList<>();
+        String contact = null;
+        String realName = null;
+        ScoutData scout = scoutMap.get(player.getId());
+        if (scout != null) {
+            for (AuctionLotView.Expertise e : scout.expertise()) {
+                expertise.add(includePrivate ? e : new AuctionLotView.Expertise(
+                        e.game(), e.rating(), null, e.rankTier(), e.kd(), e.accountLevel()));
+            }
+            games.addAll(scout.games());
+            if (includePrivate) {
+                contact = scout.contact();
+                realName = scout.realName();
+            }
+        }
+        return new AuctionLotView(
+                player.getId().toString(),   // synthetic id — no real lot yet; stable client key
+                player.getId().toString(),
+                player.getGamerTag(),
+                player.getAvatarUrl(),
+                realName,
+                AuctionLotStatus.QUEUED.name(),
+                0L,                          // currentBid
+                0L,                          // minNextBid
+                null, null,                  // current bidder franchise id / tag
+                null, null,                  // sold-to franchise id / tag
+                0L,                          // soldPrice
+                null, null,                  // bidOpensAt, bidDeadline
+                order,
+                games,
+                expertise,
+                contact);
     }
 
     // ==== lifecycle (admin) ================================================
@@ -1037,12 +1105,19 @@ public class AuctionService {
             }
             return players;
         }
+        return standingPoolPlayers();
+    }
+
+    /**
+     * The standing auction pool: distinct, un-rostered players who hold an ACTIVE, unconsumed AUCTION
+     * registration, newest first. Single source of truth for the pool predicate — used both to seed a
+     * new auction ({@link #resolvePool}) and to render the standalone pool preview ({@link #poolPreview}).
+     */
+    private List<Player> standingPoolPlayers() {
         Map<UUID, Player> distinct = new LinkedHashMap<>();
         for (Registration reg : registrationRepository
-                .findByTypeOrderByCreatedAtDesc(RegistrationType.AUCTION)) {
-            if (reg.getStatus() != RegistrationStatus.ACTIVE || reg.isConsumed()) {
-                continue;
-            }
+                .findByTypeAndStatusAndConsumedFalseOrderByCreatedAtDesc(
+                        RegistrationType.AUCTION, RegistrationStatus.ACTIVE)) {
             Player player = reg.getPlayer();
             if (player != null && player.getFranchise() == null) {
                 distinct.putIfAbsent(player.getId(), player);
@@ -1261,10 +1336,20 @@ public class AuctionService {
      * proficiencies, in-game handles, latest AUCTION registration) instead of a per-lot fan-out.
      */
     private Map<UUID, ScoutData> buildScoutMap(UUID auctionId) {
-        List<AuctionLot> lots = auctionLotRepository.findByAuctionIdOrderByLotOrderAsc(auctionId);
-        List<UUID> playerIds = lots.stream()
+        List<Player> players = auctionLotRepository.findByAuctionIdOrderByLotOrderAsc(auctionId).stream()
                 .map(AuctionLot::getPlayer)
                 .filter(p -> p != null)
+                .toList();
+        return buildScoutMapForPlayers(players);
+    }
+
+    /**
+     * Build the static scouting map for an explicit set of players — same three IN-queries as the
+     * auction path, but sourced from a player list rather than an auction's lots. Shared by the live
+     * board ({@link #buildScoutMap(UUID)}) and the standalone pool preview ({@link #poolPreview()}).
+     */
+    private Map<UUID, ScoutData> buildScoutMapForPlayers(List<Player> players) {
+        List<UUID> playerIds = players.stream()
                 .map(Player::getId)
                 .distinct()
                 .toList();
@@ -1272,13 +1357,10 @@ public class AuctionService {
             return Map.of();
         }
 
-        // Real name is captured at registration onto the Player — read it straight off the lot's player.
+        // Real name is captured at registration onto the Player — read it straight off the player.
         Map<UUID, String> realNameByPlayer = new HashMap<>();
-        for (AuctionLot lot : lots) {
-            Player p = lot.getPlayer();
-            if (p != null) {
-                realNameByPlayer.put(p.getId(), p.getRealName());
-            }
+        for (Player p : players) {
+            realNameByPlayer.put(p.getId(), p.getRealName());
         }
 
         Map<UUID, Map<UUID, String>> handlesByPlayer = new HashMap<>();

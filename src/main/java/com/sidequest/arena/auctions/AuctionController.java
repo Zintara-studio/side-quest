@@ -2,6 +2,7 @@ package com.sidequest.arena.auctions;
 
 import com.sidequest.arena.auctions.dto.AddFundsRequest;
 import com.sidequest.arena.auctions.dto.AssignRequest;
+import com.sidequest.arena.auctions.dto.AuctionPoolView;
 import com.sidequest.arena.auctions.dto.AuctionView;
 import com.sidequest.arena.auctions.dto.CreateAuctionRequest;
 import com.sidequest.arena.auctions.dto.NominateRequest;
@@ -41,6 +42,16 @@ public class AuctionController {
     @GetMapping("/active")
     public AuctionView active() {
         return auctionService.activeAuction();
+    }
+
+    /**
+     * The standing auction pool — the players who registered and are waiting to be drafted — served even
+     * when no auction has been created yet, so the pool is never invisible. Literal path, matched ahead
+     * of {@code /{id}}. Public read like {@code /active}; private scouting fields are admin-only.
+     */
+    @GetMapping("/pool")
+    public AuctionPoolView pool() {
+        return auctionService.poolPreview();
     }
 
     /** Full snapshot of one auction. */

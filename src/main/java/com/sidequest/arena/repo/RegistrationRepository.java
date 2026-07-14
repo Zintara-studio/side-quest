@@ -21,6 +21,15 @@ public interface RegistrationRepository extends JpaRepository<Registration, UUID
 
     List<Registration> findByTypeAndStatus(RegistrationType type, RegistrationStatus status);
 
+    /**
+     * The standing auction pool source: AUCTION registrations that are ACTIVE and not yet consumed by a
+     * prior auction, newest first. The caller still filters out already-rostered players and dedups by
+     * player (a player may have re-registered across auction calls). Powers the pool preview shown even
+     * when no auction has been created yet.
+     */
+    List<Registration> findByTypeAndStatusAndConsumedFalseOrderByCreatedAtDesc(
+            RegistrationType type, RegistrationStatus status);
+
     List<Registration> findByPlayerId(UUID playerId);
 
     /** Batch variant for the auction scout map — all AUCTION regs for a set of players, newest first. */

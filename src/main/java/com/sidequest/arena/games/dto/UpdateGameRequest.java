@@ -6,10 +6,12 @@ import jakarta.validation.constraints.Min;
 
 /**
  * Admin patch for a game. All fields are optional; only non-null fields are applied. {@code enabled}
- * toggles visibility, {@code popularity} drives the popularity bars, {@code format}/{@code iconUrl}
- * update presentation, {@code gameType} reclassifies the genre, and {@code pointsPerKill} /
- * {@code placementPoints} / {@code standingsWeight} configure this title's system-wide scoring.
- * (Registration windows are opened per announcement, not per game.)
+ * toggles visibility, {@code format}/{@code iconUrl} update presentation, {@code gameType} reclassifies
+ * the genre, and {@code pointsPerKill} / {@code placementPoints} / {@code standingsWeight} configure this
+ * title's system-wide scoring. (Registration windows are opened per announcement, not per game.)
+ *
+ * <p>Popularity is intentionally absent — it is community-vote-driven (see {@code GameVoteService}) and
+ * can no longer be set by an admin.
  *
  * <p>The scoring fields carry upper bounds so an out-of-range value is a clean 400 rather than silent
  * arithmetic overflow when the standings engine weights and sums result rows.
@@ -20,7 +22,6 @@ import jakarta.validation.constraints.Min;
  */
 public record UpdateGameRequest(
         Boolean enabled,
-        Integer popularity,
         String format,
         String iconUrl,
         GameType gameType,

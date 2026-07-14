@@ -110,6 +110,11 @@ class SideQuestApiIntegrationTest {
                 new HttpEntity<>(body, headers(token)), String.class);
     }
 
+    private ResponseEntity<String> put(String path, Object body, String token) {
+        return rest.exchange(BASE + path, HttpMethod.PUT,
+                new HttpEntity<>(body, headers(token)), String.class);
+    }
+
     private HttpHeaders headers(String token) {
         HttpHeaders h = new HttpHeaders();
         h.setContentType(MediaType.APPLICATION_JSON);
@@ -1295,16 +1300,17 @@ class SideQuestApiIntegrationTest {
         dupFranchise.put("tag", "ZZ" + suffix.substring(0, 3));
         assertThat(post("/franchises", dupFranchise, admin).getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
 
-        // (c) admin can add a game; a duplicate name is rejected.
+        // (c) admin can add a game; a duplicate name is rejected. Popularity is vote-driven, so a new
+        // title starts at 0 (admins can't set it anymore).
         String gname = "Deadlock " + suffix;
         ObjectNode game = mapper.createObjectNode();
         game.put("name", gname);
         game.put("format", "6v6 Hero Shooter");
         game.put("gameType", "TACTICAL");
-        game.put("popularity", 55);
         ResponseEntity<String> created = post("/games", game, admin);
         assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         assertThat(parse(created).get("name").asText()).isEqualTo(gname);
+        assertThat(parse(created).get("popularity").asInt()).isZero();
         assertThat(post("/games", game, admin).getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
 
         // (d) the static-config seed is idempotent and reports the catalogue total.
@@ -1357,5 +1363,107 @@ class SideQuestApiIntegrationTest {
         spaced.put("email", "spaced-" + UUID.randomUUID().toString().substring(0, 6) + "@sidequest.gg");
         spaced.put("password", "password123");
         assertThat(post("/auth/register", spaced, null).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    /**
+     * The standing auction pool is visible even without creating/scheduling an auction: {@code
+     * GET /auctions/pool} lists the seeded free agents (ghost/pulse/volt), strips private scouting fields
+     * (contact/handle/realName) for spectators, and reveals them to admins. Runs at @Order(19), before
+     * blitz enters the pool (@Order 25) and before the pool is locked (@Order 46).
+     */
+    @Test
+    @Order(19)
+    void auctionPoolVisibleWithoutScheduledAuction() {
+        // Spectator (no token): the pool is returned with private fields stripped.
+        JsonNode asSpectator = get("/auctions/pool", null);
+        int count = asSpectator.get("count").asInt();
+        assertThat(count).isGreaterThanOrEqualTo(3); // ghost, pulse, volt at minimum
+        JsonNode specPlayers = asSpectator.get("players");
+        assertThat(specPlayers.isArray()).isTrue();
+        assertThat(specPlayers.size()).isEqualTo(count);
+        for (JsonNode p : specPlayers) {
+            assertThat(p.get("status").asText()).isEqualTo("QUEUED");
+            assertThat(p.get("gamerTag").asText()).isNotBlank(); // public field present
+            assertThat(hidden(p, "contact")).isTrue();           // private field stripped
+            assertThat(hidden(p, "realName")).isTrue();
+            for (JsonNode e : p.get("expertise")) {
+                assertThat(hidden(e, "handle")).isTrue();        // handle is private too
+            }
+        }
+
+        // Admin: same pool, but private scouting detail (contact) is now present on at least one player.
+        String admin = login("admin@sidequest.gg", "password");
+        JsonNode asAdmin = get("/auctions/pool", admin);
+        assertThat(asAdmin.get("count").asInt()).isEqualTo(count);
+        boolean anyContact = false;
+        for (JsonNode p : asAdmin.get("players")) {
+            if (p.hasNonNull("contact") && !p.get("contact").asText().isBlank()) {
+                anyContact = true;
+            }
+        }
+        assertThat(anyContact).as("admin sees at least one player's private contact").isTrue();
+    }
+
+    /**
+     * Game-popularity voting: my-votes needs a session; a save (PUT full-set replace) raises the game's
+     * vote-derived popularity and records the vote; re-saving the same set is idempotent; clearing the
+     * vote lowers popularity again; anonymous saves are rejected.
+     */
+    @Test
+    @Order(50)
+    void gamePopularityVoting() {
+        String blitz = login("blitz@sidequest.gg", "password");
+
+        // Brawlhalla — a lower-popularity demo title to move.
+        String gameId = null;
+        for (JsonNode g : get("/games", null)) {
+            if ("Brawlhalla".equals(g.get("name").asText())) {
+                gameId = g.get("id").asText();
+            }
+        }
+        assertThat(gameId).isNotNull();
+
+        // my-votes requires a session.
+        assertThat(getResp("/games/my-votes", null).getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+
+        // Save blitz's votes = just this game; popularity > 0 afterwards and the vote is recorded.
+        ObjectNode save = mapper.createObjectNode();
+        save.putArray("gameIds").add(gameId);
+        ResponseEntity<String> saved = put("/games/votes", save, blitz);
+        assertThat(saved.getStatusCode()).isEqualTo(HttpStatus.OK);
+        int popAfter = popularityOf(parse(saved), gameId);
+        assertThat(popAfter).isGreaterThan(0);
+        assertThat(votedIds(get("/games/my-votes", blitz))).contains(gameId);
+
+        // Idempotent: saving the exact same set again yields the same popularity.
+        assertThat(popularityOf(parse(put("/games/votes", save, blitz)), gameId)).isEqualTo(popAfter);
+
+        // Clearing blitz's votes drops this game's popularity below what it was with his vote.
+        ObjectNode clear = mapper.createObjectNode();
+        clear.putArray("gameIds"); // empty set
+        int popCleared = popularityOf(parse(put("/games/votes", clear, blitz)), gameId);
+        assertThat(popCleared).isLessThan(popAfter);
+        assertThat(votedIds(get("/games/my-votes", blitz))).doesNotContain(gameId);
+
+        // Anonymous save is rejected.
+        assertThat(put("/games/votes", save, null).getStatusCode())
+                .isIn(HttpStatus.UNAUTHORIZED, HttpStatus.FORBIDDEN);
+    }
+
+    private int popularityOf(JsonNode gamesArray, String gameId) {
+        for (JsonNode g : gamesArray) {
+            if (gameId.equals(g.get("id").asText())) {
+                return g.get("popularity").asInt();
+            }
+        }
+        return -1;
+    }
+
+    private List<String> votedIds(JsonNode myVotes) {
+        List<String> ids = new java.util.ArrayList<>();
+        for (JsonNode id : myVotes.get("votedGameIds")) {
+            ids.add(id.asText());
+        }
+        return ids;
     }
 }

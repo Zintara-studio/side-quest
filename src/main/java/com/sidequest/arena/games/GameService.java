@@ -78,8 +78,8 @@ public class GameService {
         if (gameRepository.existsByNameIgnoreCase(name)) {
             throw ApiException.conflict("A game named \"" + name + "\" already exists.");
         }
-        Game game = GameCatalogSeeder.buildGame(name, req.format().trim(), req.gameType(),
-                req.popularity() != null ? req.popularity() : 0, true);
+        // New titles start at 0 popularity — it's community-vote-driven now, never admin-set.
+        Game game = GameCatalogSeeder.buildGame(name, req.format().trim(), req.gameType(), 0, true);
         if (req.iconUrl() != null && !req.iconUrl().isBlank()) {
             game.setIconUrl(req.iconUrl().trim());
         }
@@ -103,10 +103,7 @@ public class GameService {
             game.setEnabled(request.enabled());
             changes.add("enabled=" + request.enabled());
         }
-        if (request.popularity() != null) {
-            game.setPopularity(request.popularity());
-            changes.add("popularity=" + request.popularity());
-        }
+        // Popularity is community-vote-driven (see GameVoteService) — no longer an admin-editable field.
         if (request.format() != null) {
             game.setFormat(request.format());
             changes.add("format=" + request.format());
@@ -180,7 +177,8 @@ public class GameService {
 
     // ---- mappers ----
 
-    private static GameSummary toSummary(Game game) {
+    /** Package-visible so {@link GameVoteService} can return the refreshed catalogue after a vote. */
+    static GameSummary toSummary(Game game) {
         return new GameSummary(
                 game.getId().toString(),
                 game.getName(),

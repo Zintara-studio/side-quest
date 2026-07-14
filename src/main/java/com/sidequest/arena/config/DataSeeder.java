@@ -51,6 +51,8 @@ import com.sidequest.arena.repo.DisputeRepository;
 import com.sidequest.arena.repo.FranchiseInviteRepository;
 import com.sidequest.arena.repo.FranchiseRepository;
 import com.sidequest.arena.repo.GameRepository;
+import com.sidequest.arena.repo.GameVoteRepository;
+import com.sidequest.arena.model.GameVote;
 import com.sidequest.arena.repo.LeagueSettingsRepository;
 import com.sidequest.arena.repo.MatchLineupRepository;
 import com.sidequest.arena.repo.MatchParticipantRepository;
@@ -131,6 +133,7 @@ public class DataSeeder {
                                SeasonRepository seasons,
                                SeasonStandingRepository seasonStandings,
                                PlayerFranchiseHistoryRepository franchiseHistory,
+                               GameVoteRepository gameVotes,
                                ScoringService scoring,
                                PasswordEncoder encoder) {
         return args -> {
@@ -164,11 +167,11 @@ public class DataSeeder {
             r6.setEnabled(false);
             games.save(r6);
             // Additional college titles.
-            games.save(game("FIFA", "1v1 · Sports", GameType.SPORTS, 62));
-            games.save(game("Free Fire", "Battle Royale · Squads", GameType.BATTLE_ROYALE, 78));
-            games.save(game("Marvel Rivals", "6v6 Hero Shooter", GameType.TACTICAL, 70));
-            games.save(game("COD", "Battle Royale · Mobile", GameType.BATTLE_ROYALE, 74));
-            games.save(game("Brawlhalla", "Platform Fighter", GameType.FIGHTING, 45));
+            Game fifa = games.save(game("FIFA", "1v1 · Sports", GameType.SPORTS, 62));
+            Game freeFire = games.save(game("Free Fire", "Battle Royale · Squads", GameType.BATTLE_ROYALE, 78));
+            Game marvel = games.save(game("Marvel Rivals", "6v6 Hero Shooter", GameType.TACTICAL, 70));
+            Game cod = games.save(game("COD", "Battle Royale · Mobile", GameType.BATTLE_ROYALE, 74));
+            Game brawl = games.save(game("Brawlhalla", "Platform Fighter", GameType.FIGHTING, 45));
 
             // ---- admin + manager ----
             User adminUser = user("League Admin", "admin@sidequest.gg", "+919800000001", Role.ADMIN, pw);
@@ -589,6 +592,55 @@ public class DataSeeder {
             appeal.setCategory(DisputeCategory.APPEAL);
             appeal.setStatus(DisputeStatus.OPEN);
             disputes.save(appeal);
+
+            // ---- community game-popularity votes (drive the popularity bars) ----
+            // Each demo user upvotes a handful of games; popularity is then derived as
+            // round(100 * distinct voters for a game / distinct voters overall). Spread chosen so the
+            // grid shows a realistic range rather than everything at 0.
+            record V(Player p, Game[] gs) {}
+            List<V> demoVotes = List.of(
+                    new V(raghavan, new Game[] {valorant, cs2, marvel}),
+                    new V(vortex, new Game[] {valorant, cs2, bgmi}),
+                    new V(blaze, new Game[] {bgmi, freeFire, cod}),
+                    new V(specter, new Game[] {valorant, marvel, brawl}),
+                    new V(nova, new Game[] {bgmi, cod, fifa}),
+                    new V(ace, new Game[] {valorant, cs2}),
+                    new V(kiran, new Game[] {valorant, marvel, smash}),
+                    new V(echo, new Game[] {bgmi, freeFire}),
+                    new V(riot, new Game[] {cs2, valorant, cod}),
+                    new V(frost, new Game[] {valorant, bgmi, marvel}),
+                    new V(zen, new Game[] {bgmi, cod, freeFire}),
+                    new V(kai, new Game[] {valorant, cs2, fifa}),
+                    new V(onyx, new Game[] {bgmi, brawl}),
+                    new V(sable, new Game[] {valorant, marvel, smash}),
+                    new V(blitz, new Game[] {cs2, valorant, cod}),
+                    new V(ghost, new Game[] {valorant, cs2, bgmi}),
+                    new V(pulse, new Game[] {bgmi, freeFire, cod}),
+                    new V(volt, new Game[] {cs2, valorant, marvel}),
+                    new V(rex, new Game[] {bgmi, fifa}),
+                    new V(hex, new Game[] {valorant, smash, brawl}));
+            for (V v : demoVotes) {
+                for (Game g : v.gs()) {
+                    gameVotes.save(new GameVote(v.p().getUser(), g));
+                }
+            }
+            // The admin also weighs in, so an account-without-a-player can vote too.
+            gameVotes.save(new GameVote(adminUser, valorant));
+            gameVotes.save(new GameVote(adminUser, cs2));
+            // Derive every game's popularity from the votes just seeded, overwriting the seed placeholders.
+            // Done inline on the managed Game entities (not via GameVoteService's own transaction) so the
+            // computed values survive the seeder's end-of-run flush instead of being clobbered by it.
+            long totalVoters = gameVotes.findAll().stream()
+                    .map(gv -> gv.getUser().getId()).distinct().count();
+            java.util.Map<java.util.UUID, Long> votesByGame = new java.util.HashMap<>();
+            for (GameVote gv : gameVotes.findAll()) {
+                votesByGame.merge(gv.getGame().getId(), 1L, Long::sum);
+            }
+            for (Game g : games.findAll()) {
+                long v = votesByGame.getOrDefault(g.getId(), 0L);
+                g.setPopularity(totalVoters == 0 ? 0 : (int) Math.round(100.0 * v / totalVoters));
+                games.save(g);
+            }
 
             // ---- compute standings from seeded results ----
             scoring.recomputeStandings();

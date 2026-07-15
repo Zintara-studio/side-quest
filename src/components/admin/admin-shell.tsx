@@ -11,6 +11,7 @@ import { playerHref } from "@/lib/routes";
 import { useActiveAuction, useAdminOverview, useCurrentSeason, useRegistrations } from "@/lib/query/hooks";
 import { ConfirmModal } from "@/components/sidequest/confirm-modal";
 import { NotificationBell } from "@/components/sidequest/notification-bell";
+import { Avatar } from "@/components/sidequest/avatar";
 import { SQ, FONT } from "./tokens";
 
 interface NavItem {
@@ -89,7 +90,7 @@ function FullScreen({ children }: { children: ReactNode }) {
 export function AdminShell({ children, fontClass }: { children: ReactNode; fontClass: string }) {
   const pathname = usePathname() ?? "/admin";
   const router = useRouter();
-  const { user, playerId, gamerTag, isAdmin, isSuperAdmin, hydrated, logout } = useAuth();
+  const { user, playerId, gamerTag, avatarUrl, isAdmin, isSuperAdmin, hydrated, logout } = useAuth();
 
   // Protect every /admin route: non-admins are bounced to sign-in.
   useEffect(() => {
@@ -363,15 +364,7 @@ export function AdminShell({ children, fontClass }: { children: ReactNode; fontC
               color: SQ.ink,
             }}
           >
-            <div
-              style={{
-                width: 30,
-                height: 30,
-                borderRadius: "50%",
-                background: SQ.avatarGrad,
-                border: `1px solid ${SQ.inputBorder}`,
-              }}
-            />
+            <Avatar url={avatarUrl} alt={user?.name ?? "Admin"} size={30} />
             <div style={{ lineHeight: 1.2, flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 {user?.name ?? "Admin"}

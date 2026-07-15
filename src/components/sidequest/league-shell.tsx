@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth/context";
 import { playerHref } from "@/lib/routes";
+import { Avatar } from "./avatar";
 import { useCurrentSeason, useNotifications } from "@/lib/query/hooks";
 import { ThemeToggle } from "@/lib/theme";
 import { NotificationBell } from "./notification-bell";
@@ -84,7 +85,7 @@ export function LeagueShell({
   const pathname = usePathname() ?? "/";
   const cur = activeKey(pathname);
   const router = useRouter();
-  const { user, playerId, gamerTag, isAuthenticated, isAdmin, logout } = useAuth();
+  const { user, playerId, gamerTag, avatarUrl, isAuthenticated, isAdmin, logout } = useAuth();
 
   // Real current season drives the nav badge + footer tagline; falls back to a
   // neutral off-season label when no season is active (or while it loads).
@@ -299,15 +300,7 @@ export function LeagueShell({
                   color: SQ.ink,
                 }}
               >
-                <div
-                  style={{
-                    width: 30,
-                    height: 30,
-                    borderRadius: "50%",
-                    background: SQ.avatarGrad,
-                    border: `1px solid ${SQ.inputBorder}`,
-                  }}
-                />
+                <Avatar url={avatarUrl} alt={user.name} size={30} />
                 <div style={{ lineHeight: 1.2 }}>
                   <div style={{ fontSize: 13, fontWeight: 600 }}>{user.name}</div>
                   <div

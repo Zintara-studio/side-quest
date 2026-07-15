@@ -74,6 +74,8 @@ export interface MeUserView {
   phone?: string;
   role: string;
   adminLevel: AdminLevel;
+  /** Account-level avatar (fallback for accounts with no player, e.g. the league admin). */
+  avatarUrl?: string;
 }
 
 export interface MePlayerView {

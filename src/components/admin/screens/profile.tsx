@@ -1,11 +1,15 @@
 "use client";
 
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { SQ, FONT } from "../tokens";
 import { ScreenHeader } from "../screen-header";
 import { StateNote } from "@/components/sidequest/state-note";
-import { useAuth } from "@/lib/auth/context";
-import { useAdminOverview, useCurrentSeason } from "@/lib/query/hooks";
+import { Avatar } from "@/components/sidequest/avatar";
+import { useAuth, apiErrorMessage } from "@/lib/auth/context";
+import { useAdminOverview, useCurrentSeason, useUploadMedia } from "@/lib/query/hooks";
+import { adminApi } from "@/lib/api/endpoints";
+import { compressImage, IMAGE_PRESETS } from "@/lib/image";
 
 const tile = {
   padding: "18px 22px",
@@ -48,15 +52,7 @@ export function AdminProfileScreen() {
           borderBottom: `1px solid ${SQ.hairline}`,
         }}
       >
-        <div
-          style={{
-            width: 84,
-            height: 84,
-            borderRadius: "50%",
-            background: SQ.avatarGrad,
-            border: `1px solid ${SQ.inputBorder}`,
-          }}
-        />
+        <AdminAvatar />
         <div style={{ flex: 1, minWidth: 220 }}>
           <div style={{ fontFamily: FONT.mono, fontSize: 11, letterSpacing: ".16em", color: SQ.red }}>
             {user?.role ?? "ADMIN"}
@@ -136,6 +132,116 @@ export function AdminProfileScreen() {
         <Link href="/admin/settings" style={linkBtn}>League settings ▸</Link>
         <Link href="/admin" style={linkBtn}>Control room ▸</Link>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The admin's profile picture + upload control. An admin with a player profile (an appointed admin)
+ * manages their photo on their player page — their player avatar wins on display — so for them this
+ * links there instead of offering a second, ineffective uploader. An admin WITHOUT a player (the league
+ * admin) uploads their account-level avatar here.
+ */
+function AdminAvatar() {
+  const { avatarUrl, playerId, gamerTag, refreshUser } = useAuth();
+  const uploadMedia = useUploadMedia();
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async (mediaUrl: string) => {
+    setError(null);
+    try {
+      await adminApi.updateAvatar(mediaUrl);
+      await refreshUser();
+    } catch (e) {
+      setError(apiErrorMessage(e, "Couldn't update your photo."));
+    }
+  };
+
+  const onPick = async (file: File) => {
+    setError(null);
+    setBusy(true);
+    try {
+      const dataUrl = await compressImage(file, IMAGE_PRESETS.avatar);
+      const res = await uploadMedia.mutateAsync({ data: dataUrl, kind: "avatar" });
+      await save(res.url);
+    } catch (e) {
+      setError(apiErrorMessage(e, "Couldn't process that image."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+      <Avatar url={avatarUrl} alt="Your avatar" size={84} />
+      {playerId ? (
+        // Appointed admin: their player avatar is authoritative — send them there.
+        <Link
+          href={gamerTag ? `/player/${encodeURIComponent(gamerTag)}` : "/player"}
+          style={{ fontFamily: FONT.mono, fontSize: 10, letterSpacing: ".08em", color: SQ.ember, textDecoration: "none" }}
+        >
+          Edit on profile ▸
+        </Link>
+      ) : (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center" }}>
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            disabled={busy || uploadMedia.isPending}
+            style={{
+              fontFamily: FONT.mono,
+              fontSize: 10,
+              letterSpacing: ".08em",
+              color: SQ.faint,
+              background: "transparent",
+              border: `1px solid ${SQ.inputBorder}`,
+              borderRadius: 5,
+              padding: "6px 10px",
+              cursor: "pointer",
+            }}
+          >
+            {busy || uploadMedia.isPending ? "…" : avatarUrl ? "Change" : "Upload"}
+          </button>
+          {avatarUrl ? (
+            <button
+              type="button"
+              onClick={() => save("")}
+              disabled={busy}
+              style={{
+                fontFamily: FONT.mono,
+                fontSize: 10,
+                letterSpacing: ".08em",
+                color: SQ.mute,
+                background: "transparent",
+                border: `1px solid ${SQ.inputBorder}`,
+                borderRadius: 5,
+                padding: "6px 10px",
+                cursor: "pointer",
+              }}
+            >
+              Remove
+            </button>
+          ) : null}
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) onPick(f);
+              e.target.value = "";
+            }}
+          />
+        </div>
+      )}
+      {error ? (
+        <div style={{ fontFamily: FONT.mono, fontSize: 9.5, color: SQ.ember, maxWidth: 120, textAlign: "center" }}>
+          {error}
+        </div>
+      ) : null}
     </div>
   );
 }

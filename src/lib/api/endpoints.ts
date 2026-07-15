@@ -360,6 +360,9 @@ export const registrationsApi = {
 
 export const adminApi = {
   overview: () => api.get<OverviewResponse>("/admin/overview").then((r) => r.data),
+  // Set the calling admin's own account-level avatar (a /media/{id} ref, or "" to clear).
+  updateAvatar: (avatarUrl: string) =>
+    api.patch<void>("/admin/profile/avatar", { avatarUrl }).then((r) => r.data),
   settings: () => api.get<SettingsView>("/settings").then((r) => r.data),
   updateSettings: (body: UpdateSettingsRequest) =>
     api.patch<SettingsView>("/settings", body).then((r) => r.data),

@@ -22,6 +22,8 @@ interface AuthState {
   playerId: string | null;
   /** The signed-in user's gamerTag (from /auth/me) — used for pretty /player/<tag> links. */
   gamerTag: string | null;
+  /** The signed-in user's avatar (from /auth/me) — drives the nav-bar avatar. null → gradient fallback. */
+  avatarUrl: string | null;
   /** True while a fresh SSO account still must complete onboarding (pick a username). Gates the app. */
   onboardingRequired: boolean;
   /** Whether the initial refresh-on-load has resolved (success or failure). */
@@ -49,6 +51,7 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       playerId: null,
       gamerTag: null,
+      avatarUrl: null,
       onboardingRequired: false,
       hydrated: false,
 
@@ -71,6 +74,9 @@ export const useAuthStore = create<AuthState>()(
           },
           playerId: me.player?.id ?? null,
           gamerTag: me.player?.gamerTag ?? null,
+          // Prefer the player's avatar; fall back to the account-level avatar (the league admin has no
+          // player, so their avatar lives on the user).
+          avatarUrl: me.player?.avatarUrl ?? me.user?.avatarUrl ?? null,
           // Fall back to the last-known flag when a session has no player yet (shouldn't happen post-signup).
           onboardingRequired: me.player?.onboardingRequired ?? false,
         }),
@@ -84,6 +90,7 @@ export const useAuthStore = create<AuthState>()(
           user: null,
           playerId: null,
           gamerTag: null,
+          avatarUrl: null,
           onboardingRequired: false,
         }),
     }),

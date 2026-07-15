@@ -14,6 +14,8 @@ interface AuthContextValue {
   playerId: string | null;
   /** The signed-in user's gamerTag, for pretty /player/<tag> links (null if no player profile). */
   gamerTag: string | null;
+  /** The signed-in user's avatar url (null → gradient fallback) — drives the nav-bar avatar. */
+  avatarUrl: string | null;
   /** True while a fresh SSO account still must complete onboarding (pick a username). */
   onboardingRequired: boolean;
   isAuthenticated: boolean;
@@ -38,7 +40,7 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const { user, playerId, gamerTag, onboardingRequired, accessToken, refreshToken, hydrated, setSession, setUser, setHydrated, clear } =
+  const { user, playerId, gamerTag, avatarUrl, onboardingRequired, accessToken, refreshToken, hydrated, setSession, setUser, setHydrated, clear } =
     useAuthStore();
   // Avoid a hydration mismatch: render the server/initial state until mounted on the client.
   const [mounted, setMounted] = useState(false);
@@ -133,6 +135,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user,
     playerId,
     gamerTag,
+    avatarUrl,
     onboardingRequired,
     isAuthenticated: Boolean(accessToken || refreshToken || user),
     isAdmin: (user?.adminLevel ?? "NONE") !== "NONE",

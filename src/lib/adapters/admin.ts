@@ -42,6 +42,7 @@ const ACTION_LABELS: Record<string, string> = {
   "dispute.resolve": "Dispute resolved",
   "admin.appoint": "Admin appointed",
   "admin.revoke": "Admin access revoked",
+  "admin.avatar": "Admin photo updated",
   "game.create": "Game added",
   "game.update": "Game settings updated",
   "franchise.create": "Franchise created",

@@ -4,9 +4,11 @@ import com.sidequest.arena.admin.dto.DisputeView;
 import com.sidequest.arena.admin.dto.OverviewResponse;
 import com.sidequest.arena.admin.dto.ResolveDisputeRequest;
 import com.sidequest.arena.admin.dto.TeamMember;
+import com.sidequest.arena.admin.dto.UpdateAvatarRequest;
 import com.sidequest.arena.audit.AuditService;
 import com.sidequest.arena.common.ApiException;
 import com.sidequest.arena.games.GameCatalogSeeder;
+import com.sidequest.arena.media.MediaRefs;
 import com.sidequest.arena.model.AdminLevel;
 import com.sidequest.arena.model.AuditLog;
 import com.sidequest.arena.model.Dispute;
@@ -117,6 +119,23 @@ public class AdminService {
 
         return new OverviewResponse(pendingRegistrations, resultsToEnter, openDisputes,
                 totals, recentActivity);
+    }
+
+    /**
+     * Set the calling admin's own account-level avatar. Self-scoped (operates on the current user only);
+     * the value is validated to a server-issued {@code /media/{id}} reference (or blank to clear) exactly
+     * like a player's avatar, so an arbitrary external URL can't be injected.
+     */
+    @Transactional
+    public void updateOwnAvatar(UpdateAvatarRequest request) {
+        UUID userId = SecurityUtils.currentUserId();
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> ApiException.notFound("User", userId));
+        String avatar = MediaRefs.normalize(request.avatarUrl(), "avatarUrl");
+        user.setAvatarUrl(avatar.isEmpty() ? null : avatar);
+        userRepository.save(user);
+        auditService.record("admin.avatar", "User", userId.toString(),
+                avatar.isEmpty() ? "cleared their avatar" : "updated their avatar");
     }
 
     /** Open disputes, newest first. */

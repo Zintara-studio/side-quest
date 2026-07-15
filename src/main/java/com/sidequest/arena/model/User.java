@@ -33,6 +33,14 @@ public class User extends BaseEntity {
     @Column
     private String phone;
 
+    /**
+     * Account-level avatar (a server-issued {@code /media/{id}} reference). Players normally carry their
+     * avatar on their {@link Player}; this is the fallback for accounts that have no player — chiefly the
+     * league admin — so they can still set a profile picture. Nullable; ADD COLUMN-safe.
+     */
+    @Column(name = "avatar_url")
+    private String avatarUrl;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 32)
     private Role role = Role.PLAYER;

@@ -297,7 +297,8 @@ public class AuthService {
                 user.getEmail(),
                 user.getPhone(),
                 user.getRole().name(),
-                user.getAdminLevel().name());
+                user.getAdminLevel().name(),
+                user.getAvatarUrl());
 
         MeResponse.PlayerView playerView = playerRepository.findByUserId(userId)
                 .map(player -> new MeResponse.PlayerView(

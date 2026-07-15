@@ -1466,4 +1466,46 @@ class SideQuestApiIntegrationTest {
         }
         return ids;
     }
+
+    /**
+     * The league admin (a User with no Player) can set an account-level avatar: upload → PATCH → it shows
+     * in /auth/me's user view. Non-admins are blocked; a non-media URL is rejected; blank clears it.
+     */
+    @Test
+    @Order(51)
+    void adminAccountAvatar() {
+        String admin = login("admin@sidequest.gg", "password");
+        String raghavan = login("raghavan@sidequest.gg", "password");
+
+        // A non-admin cannot use the admin avatar endpoint.
+        ObjectNode anyBody = mapper.createObjectNode();
+        anyBody.put("avatarUrl", "/media/whatever");
+        assertThat(patch("/admin/profile/avatar", anyBody, raghavan).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN);
+
+        // Upload a real PNG → get a /media/{id} ref, then set it as the admin's avatar.
+        ObjectNode img = mapper.createObjectNode();
+        img.put("data", PNG_1x1);
+        img.put("kind", "avatar");
+        String mediaUrl = parse(post("/media", img, admin)).get("url").asText();
+        assertThat(mediaUrl).startsWith("/media/");
+        ObjectNode set = mapper.createObjectNode();
+        set.put("avatarUrl", mediaUrl);
+        assertThat(patch("/admin/profile/avatar", set, admin).getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+
+        // It now appears on the admin's /auth/me user view (the admin has no player, so it lives on user).
+        JsonNode me = get("/auth/me", admin);
+        assertThat(me.get("user").get("avatarUrl").asText()).isEqualTo(mediaUrl);
+
+        // A non-/media URL is rejected (no arbitrary external URLs).
+        ObjectNode bad = mapper.createObjectNode();
+        bad.put("avatarUrl", "https://evil.example.com/x.png");
+        assertThat(patch("/admin/profile/avatar", bad, admin).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+
+        // Blank clears it.
+        ObjectNode clear = mapper.createObjectNode();
+        clear.put("avatarUrl", "");
+        assertThat(patch("/admin/profile/avatar", clear, admin).getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        assertThat(get("/auth/me", admin).get("user").hasNonNull("avatarUrl")).isFalse();
+    }
 }

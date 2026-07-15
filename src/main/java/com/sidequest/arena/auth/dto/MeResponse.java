@@ -16,7 +16,9 @@ public record MeResponse(
             String email,
             String phone,
             String role,
-            String adminLevel
+            String adminLevel,
+            /** Account-level avatar (fallback for accounts with no player, e.g. the league admin). */
+            String avatarUrl
     ) {
     }
 

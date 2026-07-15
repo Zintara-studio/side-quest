@@ -5,11 +5,13 @@ import com.sidequest.arena.admin.dto.OverviewResponse;
 import com.sidequest.arena.admin.dto.ResolveDisputeRequest;
 import com.sidequest.arena.admin.dto.SeedResult;
 import com.sidequest.arena.admin.dto.TeamMember;
+import com.sidequest.arena.admin.dto.UpdateAvatarRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -36,6 +38,17 @@ public class AdminController {
     @GetMapping("/overview")
     public OverviewResponse overview() {
         return adminService.overview();
+    }
+
+    /**
+     * Set the calling admin's own account-level avatar (for admins with no player profile — chiefly the
+     * league admin — so they can still have a profile picture). Self-scoped: only the caller's own
+     * account is touched. 204 on success; the client re-fetches {@code /auth/me} for the new value.
+     */
+    @PatchMapping("/profile/avatar")
+    public ResponseEntity<Void> updateOwnAvatar(@Valid @RequestBody UpdateAvatarRequest request) {
+        adminService.updateOwnAvatar(request);
+        return ResponseEntity.noContent().build();
     }
 
     /** Open disputes awaiting triage. */

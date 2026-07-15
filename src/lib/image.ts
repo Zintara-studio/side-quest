@@ -23,6 +23,25 @@ export const IMAGE_PRESETS: Record<"avatar" | "logo" | "banner", CompressPreset>
   banner: { maxBytes: 240_000, maxDim: 1600 },
 };
 
+export type ImageKind = "avatar" | "logo" | "banner";
+
+/**
+ * The fixed output size each kind is CROPPED to, so the stored image already matches the box it's shown
+ * in (no further object-fit cutting). Avatars/logos are square (1:1); the banner is a 4:1 hero strip.
+ */
+export const CROP_DIMS: Record<ImageKind, { w: number; h: number }> = {
+  avatar: { w: 256, h: 256 },
+  logo: { w: 320, h: 320 },
+  banner: { w: 1600, h: 400 },
+};
+
+/** The display aspect ratio (width / height) each kind is cropped + shown at. */
+export const ASPECT: Record<ImageKind, number> = {
+  avatar: 1,
+  logo: 1,
+  banner: 4,
+};
+
 /** Reject absurdly large inputs before decoding, purely to avoid choking the browser. */
 const MAX_INPUT_BYTES = 25 * 1024 * 1024;
 
@@ -35,7 +54,14 @@ function supportsWebp(): boolean {
   return webpSupport;
 }
 
-function loadImage(file: File): Promise<HTMLImageElement> {
+/** Load a picked File into a decoded HTMLImageElement (exported so the cropper can display it). */
+export function loadImageFile(file: File): Promise<HTMLImageElement> {
+  if (!file.type.startsWith("image/")) {
+    return Promise.reject(new Error("Please choose an image file (PNG, JPG, WEBP or GIF)."));
+  }
+  if (file.size > MAX_INPUT_BYTES) {
+    return Promise.reject(new Error("That image is enormous — pick one under 25MB."));
+  }
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
@@ -90,7 +116,7 @@ export async function compressImage(file: File, preset: CompressPreset): Promise
   if (file.size > MAX_INPUT_BYTES) {
     throw new Error("That image is enormous — pick one under 25MB.");
   }
-  const img = await loadImage(file);
+  const img = await loadImageFile(file);
   const mime = supportsWebp() ? "image/webp" : "image/jpeg";
 
   let longest = Math.min(preset.maxDim, Math.max(img.width, img.height));
@@ -104,6 +130,67 @@ export async function compressImage(file: File, preset: CompressPreset): Promise
       quality = 0.8;
     }
     out = encode(img, longest, mime, quality);
+  }
+  return out;
+}
+
+/** A source rectangle (in the loaded image's natural pixels) selected by the cropper. */
+export interface CropRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** Draw one source-rect crop of `img` into a `w×h` canvas and return the encoded data URL. */
+function drawCrop(
+  img: HTMLImageElement,
+  src: CropRect,
+  w: number,
+  h: number,
+  mime: string,
+  quality: number,
+): string {
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Image processing isn't supported in this browser.");
+  if (mime === "image/jpeg") {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, w, h);
+  }
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(img, src.x, src.y, src.w, src.h, 0, 0, w, h);
+  return canvas.toDataURL(mime, quality);
+}
+
+/**
+ * Render the chosen crop region to a fixed output size and step quality/scale down until it fits under
+ * {@code maxBytes}. Aspect is preserved (both dims scale together), so the result always matches the
+ * kind's target ratio. Returns a base64 data URL ready to POST to /media.
+ */
+export function cropToDataUrl(
+  img: HTMLImageElement,
+  src: CropRect,
+  outW: number,
+  outH: number,
+  maxBytes: number,
+): string {
+  const mime = supportsWebp() ? "image/webp" : "image/jpeg";
+  let w = outW;
+  let h = outH;
+  let quality = 0.85;
+  let out = drawCrop(img, src, w, h, mime, quality);
+  for (let i = 0; i < 12 && dataUrlByteLength(out) > maxBytes; i++) {
+    if (quality > 0.42) {
+      quality -= 0.12;
+    } else {
+      w = Math.max(48, Math.round(w * 0.82));
+      h = Math.max(48, Math.round(h * 0.82));
+      quality = 0.8;
+    }
+    out = drawCrop(img, src, w, h, mime, quality);
   }
   return out;
 }

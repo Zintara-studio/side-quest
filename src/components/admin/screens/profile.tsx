@@ -9,7 +9,7 @@ import { Avatar } from "@/components/sidequest/avatar";
 import { useAuth, apiErrorMessage } from "@/lib/auth/context";
 import { useAdminOverview, useCurrentSeason, useUploadMedia } from "@/lib/query/hooks";
 import { adminApi } from "@/lib/api/endpoints";
-import { compressImage, IMAGE_PRESETS } from "@/lib/image";
+import { ImageCropper } from "@/components/sidequest/image-cropper";
 
 const tile = {
   padding: "18px 22px",
@@ -148,6 +148,7 @@ function AdminAvatar() {
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [cropFile, setCropFile] = useState<File | null>(null);
 
   const save = async (mediaUrl: string) => {
     setError(null);
@@ -159,11 +160,11 @@ function AdminAvatar() {
     }
   };
 
-  const onPick = async (file: File) => {
+  const onCropped = async (dataUrl: string) => {
+    setCropFile(null);
     setError(null);
     setBusy(true);
     try {
-      const dataUrl = await compressImage(file, IMAGE_PRESETS.avatar);
       const res = await uploadMedia.mutateAsync({ data: dataUrl, kind: "avatar" });
       await save(res.url);
     } catch (e) {
@@ -231,7 +232,7 @@ function AdminAvatar() {
             hidden
             onChange={(e) => {
               const f = e.target.files?.[0];
-              if (f) onPick(f);
+              if (f) setCropFile(f);
               e.target.value = "";
             }}
           />
@@ -241,6 +242,14 @@ function AdminAvatar() {
         <div style={{ fontFamily: FONT.mono, fontSize: 9.5, color: SQ.ember, maxWidth: 120, textAlign: "center" }}>
           {error}
         </div>
+      ) : null}
+      {cropFile ? (
+        <ImageCropper
+          file={cropFile}
+          kind="avatar"
+          onCancel={() => setCropFile(null)}
+          onCropped={onCropped}
+        />
       ) : null}
     </div>
   );

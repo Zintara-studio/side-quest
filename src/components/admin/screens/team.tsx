@@ -259,8 +259,9 @@ export function TeamScreen() {
         message={
           <>
             <strong>{pendingAppoint?.gamerTag}</strong> will gain admin access — they can manage
-            matches, auctions, registrations, franchises and announcements. They will not be able to
-            appoint other admins (only you, the main admin, can). You can revoke this at any time.
+            matches, registrations, disputes, players, games and announcements. They will{" "}
+            <strong>not</strong> be able to run the player auction, manage franchises, or appoint other
+            admins — those stay with you, the main admin. You can revoke this at any time.
           </>
         }
         confirmLabel="Make admin"

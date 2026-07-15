@@ -27,7 +27,7 @@ import {
   useSetRosterTags,
 } from "@/lib/query/hooks";
 import { mediaSrc } from "@/lib/api/client";
-import { compressImage, IMAGE_PRESETS } from "@/lib/image";
+import { ImageCropper } from "../image-cropper";
 import { shortDate } from "@/lib/adapters/league";
 import type {
   FranchiseInviteView,
@@ -359,11 +359,12 @@ function FranchisePanel({ mine }: { mine: FranchiseMineView }) {
         </Link>
       ) : null}
 
-      {/* franchise banner (hero image) */}
+      {/* franchise banner (hero image) — 4:1 to match the crop, so it shows in full without cutting */}
       {bannerSrc ? (
         <div
           style={{
-            height: 140,
+            aspectRatio: "4 / 1",
+            width: "100%",
             borderRadius: 10,
             marginBottom: 18,
             backgroundImage: `url(${bannerSrc})`,
@@ -1150,6 +1151,8 @@ function BrandingModal({
   const [bannerUrl, setBannerUrl] = useState<string | undefined>(currentBanner);
   const [err, setErr] = useState<string | null>(null);
   const [imgBusy, setImgBusy] = useState(false);
+  // The image being positioned in the cropper, plus which slot it fills (logo = 1:1, banner = 4:1).
+  const [crop, setCrop] = useState<{ file: File; kind: "logo" | "banner" } | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -1159,12 +1162,13 @@ function BrandingModal({
     }
   }, [open, currentLogo, currentBanner]);
 
-  const pick = async (file: File, kind: "logo" | "banner") => {
+  const onCropped = async (dataUrl: string) => {
+    const kind = crop?.kind;
+    setCrop(null);
+    if (!kind) return;
     setErr(null);
     setImgBusy(true);
     try {
-      // Compress client-side to fit the per-kind cap instead of rejecting large files.
-      const dataUrl = await compressImage(file, IMAGE_PRESETS[kind]);
       const res = await upload.mutateAsync({ data: dataUrl, kind });
       if (kind === "logo") setLogoUrl(res.url);
       else setBannerUrl(res.url);
@@ -1188,13 +1192,14 @@ function BrandingModal({
   const bannerPreview = mediaSrc(bannerUrl);
 
   return (
+    <>
     <Modal open={open} title="Franchise branding" onClose={save.isPending ? () => {} : onClose}>
       <div style={{ display: "flex", flexDirection: "column", gap: 18, maxWidth: 520 }}>
         {/* logo */}
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           <Avatar url={logoUrl} size={64} radius={10} />
           <div style={{ flex: 1 }}>
-            <div style={subLabel}>LOGO · auto-compressed</div>
+            <div style={subLabel}>LOGO · square · position after upload</div>
             <div style={{ display: "flex", gap: 8 }}>
               <label style={uploadBtn}>
                 {imgBusy || upload.isPending ? "Processing…" : logoUrl ? "Change logo" : "Upload logo"}
@@ -1205,7 +1210,7 @@ function BrandingModal({
                   disabled={imgBusy || upload.isPending}
                   onChange={(e) => {
                     const f = e.target.files?.[0];
-                    if (f) pick(f, "logo");
+                    if (f) setCrop({ file: f, kind: "logo" });
                     e.target.value = "";
                   }}
                 />
@@ -1221,13 +1226,16 @@ function BrandingModal({
 
         {/* banner */}
         <div>
-          <div style={subLabel}>BANNER · auto-compressed</div>
+          <div style={subLabel}>BANNER · 4:1 · position after upload</div>
           <div
             style={{
-              height: 96,
+              // 4:1 to match how it's shown on the franchise page — this preview is exactly what saves.
+              aspectRatio: "4 / 1",
+              width: "100%",
               borderRadius: 8,
               border: `1px solid ${SQ.hairline}`,
-              background: bannerPreview ? undefined : SQ.avatarGrad,
+              // backgroundColor (not the `background` shorthand) so it never conflicts with backgroundImage.
+              backgroundColor: SQ.avatarGrad,
               backgroundImage: bannerPreview ? `url(${bannerPreview})` : undefined,
               backgroundSize: "cover",
               backgroundPosition: "center",
@@ -1244,7 +1252,7 @@ function BrandingModal({
                 disabled={imgBusy || upload.isPending}
                 onChange={(e) => {
                   const f = e.target.files?.[0];
-                  if (f) pick(f, "banner");
+                  if (f) setCrop({ file: f, kind: "banner" });
                   e.target.value = "";
                 }}
               />
@@ -1271,6 +1279,15 @@ function BrandingModal({
         </div>
       </div>
     </Modal>
+    {crop ? (
+      <ImageCropper
+        file={crop.file}
+        kind={crop.kind}
+        onCancel={() => setCrop(null)}
+        onCropped={onCropped}
+      />
+    ) : null}
+    </>
   );
 }
 

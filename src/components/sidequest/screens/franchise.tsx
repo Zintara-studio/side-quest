@@ -57,7 +57,9 @@ export function FranchiseScreen({ id, base = "" }: { id?: string; base?: string 
           {mediaSrc(f.bannerUrl) ? (
             <div
               style={{
-                height: 150,
+                // 4:1 — matches the crop, so the whole uploaded banner shows without vertical cutting.
+                aspectRatio: "4 / 1",
+                width: "100%",
                 borderRadius: 10,
                 marginTop: 16,
                 backgroundImage: `url(${mediaSrc(f.bannerUrl)})`,

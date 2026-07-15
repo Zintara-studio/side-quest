@@ -9,7 +9,7 @@ import { StateNote } from "../state-note";
 import { useAuth } from "@/lib/auth/context";
 import { usePlayer, useOnboard, useUsernameAvailability, useUploadMedia } from "@/lib/query/hooks";
 import { apiErrorMessage } from "@/lib/api/client";
-import { compressImage, IMAGE_PRESETS } from "@/lib/image";
+import { ImageCropper } from "../image-cropper";
 import { validateUsername, USERNAME_MIN } from "@/lib/username";
 
 const label = {
@@ -62,6 +62,7 @@ export function OnboardingScreen() {
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>(undefined);
   const [imgBusy, setImgBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [cropFile, setCropFile] = useState<File | null>(null);
   const seeded = useRef(false);
 
   // Seed the pre-fillable fields from what Google gave us (stored on the player at signup) — once.
@@ -92,11 +93,11 @@ export function OnboardingScreen() {
 
   const canSubmit = !formatError && available && !onboard.isPending;
 
-  const onPickAvatar = async (file: File) => {
+  const onCropped = async (dataUrl: string) => {
+    setCropFile(null);
     setError(null);
     setImgBusy(true);
     try {
-      const dataUrl = await compressImage(file, IMAGE_PRESETS.avatar);
       const res = await uploadMedia.mutateAsync({ data: dataUrl, kind: "avatar" });
       setAvatarUrl(res.url);
     } catch (e) {
@@ -136,6 +137,7 @@ export function OnboardingScreen() {
   const usernameBorder = formatError || takenReason ? SQ.ember : available ? SQ.green : SQ.field;
 
   return (
+    <>
     <div style={{ minHeight: "100vh", background: SQ.bg, color: SQ.ink, fontFamily: FONT.sans }}>
       <div style={{ maxWidth: 560, margin: "0 auto", padding: "clamp(28px,6vh,64px) clamp(16px,5vw,28px) 80px" }}>
         <div style={{ display: "flex", justifyContent: "center", marginBottom: 26 }}>
@@ -209,7 +211,7 @@ export function OnboardingScreen() {
                 hidden
                 onChange={(e) => {
                   const f = e.target.files?.[0];
-                  if (f) onPickAvatar(f);
+                  if (f) setCropFile(f);
                   e.target.value = "";
                 }}
               />
@@ -316,5 +318,14 @@ export function OnboardingScreen() {
         </div>
       </div>
     </div>
+    {cropFile ? (
+      <ImageCropper
+        file={cropFile}
+        kind="avatar"
+        onCancel={() => setCropFile(null)}
+        onCropped={onCropped}
+      />
+    ) : null}
+    </>
   );
 }

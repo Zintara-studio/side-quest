@@ -7,7 +7,7 @@ import { Avatar } from "../avatar";
 import { useGames, usePlayerUsernames, useUpdateProfile, useUploadMedia } from "@/lib/query/hooks";
 import { apiErrorMessage } from "@/lib/api/client";
 import { useAuth } from "@/lib/auth/context";
-import { compressImage, IMAGE_PRESETS } from "@/lib/image";
+import { ImageCropper } from "../image-cropper";
 import { ranksFor } from "@/lib/ranks";
 import type { PlayerDetail, ProfileGameEntry } from "@/lib/api/types";
 
@@ -118,6 +118,7 @@ export function ProfileEditor({ player, onClose }: { player: PlayerDetail; onClo
   const [error, setError] = useState<string | null>(null);
   const [avatarError, setAvatarError] = useState<string | null>(null);
   const [imgBusy, setImgBusy] = useState(false);
+  const [cropFile, setCropFile] = useState<File | null>(null);
 
   // Seed the per-game rows once from the profile's proficiencies + handles (handles carry privacy).
   useEffect(() => {
@@ -167,12 +168,12 @@ export function ProfileEditor({ player, onClose }: { player: PlayerDetail; onClo
     setAddGameId("");
   };
 
-  const onPickAvatar = async (file: File) => {
+  // The cropper returns an already-cropped-and-encoded data URL (1:1 for an avatar) — just upload it.
+  const onCropped = async (dataUrl: string) => {
+    setCropFile(null);
     setAvatarError(null);
     setImgBusy(true);
     try {
-      // Compress the chosen image client-side to fit the avatar cap, rather than rejecting large files.
-      const dataUrl = await compressImage(file, IMAGE_PRESETS.avatar);
       const res = await uploadMedia.mutateAsync({ data: dataUrl, kind: "avatar" });
       setAvatarUrl(res.url);
     } catch (e) {
@@ -222,6 +223,7 @@ export function ProfileEditor({ player, onClose }: { player: PlayerDetail; onClo
   const busy = updateProfile.isPending;
 
   return (
+    <>
     <Modal open title="Edit profile" onClose={busy ? () => {} : onClose}>
       <div style={{ display: "flex", flexDirection: "column", gap: 18, maxWidth: 720 }}>
         {/* avatar */}
@@ -279,7 +281,7 @@ export function ProfileEditor({ player, onClose }: { player: PlayerDetail; onClo
               style={{ display: "none" }}
               onChange={(e) => {
                 const f = e.target.files?.[0];
-                if (f) onPickAvatar(f);
+                if (f) setCropFile(f);
                 e.target.value = "";
               }}
             />
@@ -550,6 +552,15 @@ export function ProfileEditor({ player, onClose }: { player: PlayerDetail; onClo
         </div>
       </div>
     </Modal>
+    {cropFile ? (
+      <ImageCropper
+        file={cropFile}
+        kind="avatar"
+        onCancel={() => setCropFile(null)}
+        onCropped={onCropped}
+      />
+    ) : null}
+    </>
   );
 }
 

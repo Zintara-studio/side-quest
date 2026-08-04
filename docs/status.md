@@ -13,14 +13,13 @@ An honest, quantified inventory of the Side Quest backend: what is built and wor
 | Language / runtime | Java 21 | `pom.xml` (`java.version` = 21) |
 | Framework | Spring Boot 3.3.4 | `spring-boot-starter-parent` |
 | Build | Maven via `./mvnw` wrapper | `mvnw`, `.mvn/` |
-| Main source files | 238 `.java` | `src/main/java` |
-| Main source LOC | ~16,820 | `src/main/java` |
+| Main source files | 253 `.java` | `src/main/java` |
 | REST controllers | 15 (`*Controller`) | + 1 `@RestControllerAdvice` global handler |
-| REST endpoints | 118 | `@{Get,Post,Put,Patch,Delete}Mapping` count |
-| JPA entities | 33 `@Entity` + 1 `@MappedSuperclass` (`BaseEntity`) | `model/` |
-| Enums | 17 | `model/` |
-| Spring Data repositories | 33 | `repo/` |
-| Integration tests | 26 ordered end-to-end (`SideQuestApiIntegrationTest`, ~1,100 LOC) | `src/test` |
+| REST endpoints | 129 | `@{Get,Post,Put,Patch,Delete}Mapping` count |
+| JPA entities | 34 `@Entity` + 1 `@MappedSuperclass` (`BaseEntity`) | `model/` |
+| Enums | 18 | `model/` |
+| Spring Data repositories | 34 | `repo/` |
+| Integration tests | 34 ordered end-to-end (`SideQuestApiIntegrationTest`, ~1,360 LOC) | `src/test` |
 
 All controller routes sit under the `/v1` context path (`server.servlet.context-path: /v1`).
 
@@ -69,11 +68,19 @@ Package-by-feature under `com.sidequest.arena`; each feature owns its `Controlle
 **Auth** (`AuthController`, 10 endpoints)
 - [x] Register / verify email (OTP) / login / refresh (rotating refresh tokens) / logout
 - [x] Google Sign-In (`id_token` verified server-side; button hidden when `client-id` unset)
+- [x] **First-time SSO onboarding:** a fresh Google account is parked with a placeholder gamerTag +
+      `Player.onboardingRequired=true` and must claim a real username via `POST /players/onboard` before
+      it is usable — it never silently adopts the Google display name as the immutable handle
 - [x] OTP flows and forgot / reset password
-- [x] JWT Bearer (jjwt), BCrypt hashing, roles `PLAYER` / `FRANCHISE_MANAGER` / `ADMIN` via `@EnableMethodSecurity` + `@PreAuthorize`
+- [x] JWT Bearer (jjwt), BCrypt hashing, roles `PLAYER` / `FRANCHISE_MANAGER` / `ADMIN` via `@EnableMethodSecurity` + `@PreAuthorize`; `AdminLevel` (NONE/ADMIN/SUPER_ADMIN) orthogonal to role
 
-**Players** (`PlayerController`, 6 endpoints)
-- [x] Profiles with **per-field privacy** controls
+**Players** (`PlayerController`, 8 endpoints)
+- [x] Profiles with **per-field privacy** controls; the account (login) email is surfaced only to a
+      privileged viewer (owner / admin / the player's franchise owner-manager)
+- [x] **Profile edit is owner-only** — admins and franchise leaders may *view* every field but may not
+      edit another player's profile (only admin-scoped account actions like status changes are theirs)
+- [x] **Username rules** (`players/UsernameRules`): no spaces, 3–20 chars, case-insensitive uniqueness
+      (`sammy` == `Sammy`); live availability check at `GET /players/username-available`
 - [x] Per-game proficiency and per-game usernames (`PlayerGameProficiency`, `PlayerGameUsername`)
 - [x] Avatar / media on the profile (DB-blob, see Media)
 
@@ -83,8 +90,11 @@ Package-by-feature under `com.sidequest.arena`; each feature owns its `Controlle
 - [x] Ownership/manager invites (`FranchiseInvite`) with accept/reject/re-open handshake
 - [x] Franchise history (`PlayerFranchiseHistory`)
 
-**Games & scoring** (`GameController`, 3 endpoints; `scoring/`)
+**Games & scoring** (`GameController`, 6 endpoints; `scoring/`)
 - [x] Game catalog with per-game **scoring configuration** (`GameType`, per-game rules)
+- [x] **Community-driven popularity** (`GameVote`, `GameVoteService`): any signed-in user upvotes games
+      (`PUT /games/votes`, `GET /games/my-votes`); a game's `popularity` is derived as
+      `round(100 × distinct voters for it / distinct voters overall)` — no longer admin-set
 
 **Matches** (`MatchController`, 18 endpoints)
 - [x] Schedule, match room, lineups, rounds, per-round + per-player results
@@ -96,10 +106,12 @@ Package-by-feature under `com.sidequest.arena`; each feature owns its `Controlle
 - [x] Squad invites (`TeamInvite`) with captain re-invite
 - [x] Self-service withdrawal (`WITHDRAWN` status)
 
-**Auctions** (`AuctionController`, 20 endpoints)
+**Auctions** (`AuctionController`, 21 endpoints)
 - [x] Draft → lobby → live bidding → assign → re-auction → complete
 - [x] Franchise funds/budgets, cancel, and **restart recovery**
 - [x] Live bid updates over WebSocket (`/ws/live/auctions/{id}`)
+- [x] **Standing pool visible without an auction** (`GET /auctions/pool`): the AUCTION-registration
+      entrants (ACTIVE, un-consumed, un-rostered) can be scouted even before an auction is created
 
 **Seasons & standings** (`SeasonController` 6, `StandingsController` 3 endpoints)
 - [x] Season finish / start / **freeze** (prior seasons are frozen; the franchise table only recomputes while a season is `ACTIVE`) and all-time views
@@ -109,8 +121,8 @@ Package-by-feature under `com.sidequest.arena`; each feature owns its `Controlle
 - [x] Announcements + registration calls (`AnnouncementController`, 6 endpoints)
 - [x] Disputes (`DisputeController`, 2 endpoints; `DisputeCategory`/`DisputeStatus`)
 - [x] Notifications (`NotificationController`, 4 endpoints; `NotificationType`)
-- [x] Admin control room (`AdminController`, 4 endpoints) + settings (`SettingsController`, 2 endpoints; `LeagueSettings`)
-- [x] Audit trail (`AuditLog`, `audit/` package)
+- [x] Admin control room (`AdminController`, 6 endpoints) + settings (`SettingsController`, 2 endpoints; `LeagueSettings`); the main admin can appoint/revoke appointed admins, seed static config, and set their own account avatar (`PATCH /admin/profile/avatar` — the league admin has no player, so the avatar lives on `User.avatarUrl`)
+- [x] Audit trail (`AuditLog`, `audit/` package): append-only who/what/when; a daily `@Scheduled` sweep purges entries older than the retention window (currently **7 days**)
 
 **Media** (`MediaController`, 2 endpoints)
 - [x] Uploads stored as **DB blobs** (`MediaAsset` `byte[]`) — deliberately **not** S3
@@ -119,9 +131,10 @@ Package-by-feature under `com.sidequest.arena`; each feature owns its `Controlle
 
 ## Cross-cutting hardening done
 
-- **Race conditions closed.** Concurrency-sensitive paths (bidding, registration, assignment) use **pessimistic DB locks + unique constraints** rather than optimistic retries, so the database is the arbiter of correctness under contention.
+- **Race conditions closed.** Concurrency-sensitive paths (bidding, registration, assignment) use **pessimistic DB locks + unique constraints** rather than optimistic retries, so the database is the arbiter of correctness under contention. Game-vote popularity recompute is serialized with a `ReentrantLock` held **across the commit** (via `TransactionTemplate`) so two simultaneous voters can't clobber each other with stale counts — popularity is a pure function of the committed vote rows, so it always converges.
+- **Pretty-URL slug resolution.** `Player` (gamerTag), `Franchise` (tag), `Match` (`slug`, `@PrePersist` `game-date-hex`) and `Announcement` (`shortCode`, base64url) resolve by **slug OR uuid** at every read seam — the UI emits clean URLs while old notification links (stored as `/match/{uuid}`) still resolve.
 - **Scale-conscious queries.** Aggregate recompute instead of per-row walks, **bounded background sweeps** (`@EnableScheduling`), JPA entity graphs to avoid N+1, and explicit indexes on hot lookup columns.
-- **AWS/prod readiness.** The `postgres` profile has been validated end-to-end; `server.forward-headers-strategy: native` for correct scheme/host/client-IP behind an ALB; fail-fast startup when required secrets are missing; multi-stage `Dockerfile` + `docker-compose.yml`.
+- **AWS/prod readiness.** The `postgres` profile has been validated end-to-end; `server.forward-headers-strategy: native` for correct scheme/host/client-IP behind an ALB; fail-fast startup when required secrets are missing; multi-stage `Dockerfile` + `docker-compose.yml`. Prod runs a single **EC2 `t3.small` (2 GB) + RDS**; the full deploy + the memory-safe update flow (add swap, then stop-first + sequential image builds so a build can't OOM-freeze the box) live in the root **`DEPLOYMENT.md`** / `setup-swap.sh` / `update-prod.sh`. The compose caps the running JVM (`mem_limit` + `MaxRAMPercentage=65`).
 - **Caching.** Read-heavy browse pages are served from Caffeine with `@CacheEvict` on writes (~45s TTL) — full rationale in [caching-hld.md](./caching-hld.md).
 - **Error contract.** One `@RestControllerAdvice` (`common/GlobalExceptionHandler`) maps everything to a `{code, message, details}` envelope.
 
@@ -150,7 +163,7 @@ The mail health indicator is disabled (`management.health.mail.enabled: false`) 
 
 ## API & realtime surface
 
-- **REST:** 118 endpoints across 15 controllers, all under `/v1`. Browsable via Swagger UI at `/v1/docs` on the `dev` profile.
+- **REST:** 129 endpoints across 15 controllers, all under `/v1`. Browsable via Swagger UI at `/v1/docs` on the `dev` profile.
 - **WebSocket** (raw handlers under `realtime/`, in-process topic pub/sub via `RealtimeService`):
 
 ```
@@ -166,8 +179,9 @@ Auth on WS is via a `?token=<jwt>` query param (browsers can't set Authorization
 
 ## Test coverage
 
-- **26 ordered end-to-end integration tests** in a single `SideQuestApiIntegrationTest` (~1,100 LOC), `@SpringBootTest(RANDOM_PORT)` + `@TestMethodOrder(OrderAnnotation.class)`, driving the real HTTP surface against an H2-backed app.
+- **34 ordered end-to-end integration tests** in a single `SideQuestApiIntegrationTest` (~1,360 LOC), `@SpringBootTest(RANDOM_PORT)` + `@TestMethodOrder(OrderAnnotation.class)`, driving the real HTTP surface against an H2-backed app.
 - Coverage is **flow-oriented** (register → verify → login → register for a season → auction → match → standings), not per-unit. There are no isolated unit tests for individual services.
+- Newer scenarios cover the batches-11–15 surface: uniqueness + add-game + static seed, per-field privacy matrix, **owner-only profile edit + account-email visibility**, **username rules + availability + onboarding guard**, the **auction standing pool** (spectator-stripped vs admin), **game-popularity voting** (idempotent, popularity math), and the **admin account avatar**.
 
 ---
 

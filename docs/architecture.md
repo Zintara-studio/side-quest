@@ -20,11 +20,11 @@ from the current tree, `src/main/java/com/sidequest/arena`):
 |---|---|
 | Language / runtime | Java 21, Spring Boot 3.3.4 (`spring-boot-starter-parent`) |
 | Build | Maven via `./mvnw` wrapper |
-| Main source | 238 `.java` files, ~16,800 LOC |
-| REST endpoints | 118 across 16 `*Controller` classes |
-| Entities (`model/`) | ~35 `@Entity` classes (33 under `model/`), 17 enums |
+| Main source | 253 `.java` files |
+| REST endpoints | 129 across 15 `*Controller` classes |
+| Entities (`model/`) | 34 `@Entity` classes (+ `BaseEntity`), 18 enums |
 | Repositories (`repo/`) | 33 Spring Data JPA interfaces |
-| Tests | 1 integration file, `SideQuestApiIntegrationTest` — 26 `@Order`-ed end-to-end tests (~1,100 LOC) |
+| Tests | 1 integration file, `SideQuestApiIntegrationTest` — 34 `@Order`-ed end-to-end tests (~1,360 LOC) |
 
 **Key libraries:** `starter-web`, `-data-jpa`, `-security`, `-validation`, `-websocket`, `-actuator`,
 `-mail`, `-cache` + Caffeine; **jjwt 0.12.6** (api/impl/jackson) for JWT; **springdoc-openapi 2.6.0**
@@ -88,17 +88,17 @@ across a `controllers/`, `services/`, `dtos/` split.
 
 | Package | Files | Owns |
 |---|---:|---|
-| `model/` | 51 | ~35 entities + 17 enums (the shared domain) |
-| `repo/` | 33 | Spring Data JPA repositories |
+| `model/` | 52 | 34 entities + 18 enums (the shared domain) |
+| `repo/` | 34 | Spring Data JPA repositories |
 | `matches/` | 21 | fixtures, lineups, rounds, result entry/publish |
 | `auth/` | 16 | register / login / OTP / Google / refresh rotation |
 | `auctions/` | 15 | auction lobby, lots, bids, pool lock/reset |
 | `franchises/` | 15 | franchise CRUD, roster, invites, player tags |
 | `admin/` | 10 | admin ops + `SettingsController` (league settings) |
-| `players/` | 9 | player profiles, status, game proficiency |
+| `players/` | 12 | player profiles, status, game proficiency, username rules, onboarding |
 | `registrations/` | 8 | match/pool registration + exclusivity rules |
 | `common/` | 7 | error envelope, paging cursors, hashing |
-| `games/` | 6 | game catalog + per-game scoring weights |
+| `games/` | 9 | game catalog + per-game scoring weights + community-vote popularity |
 | `standings/` | 6 | league table + leaderboards (read side) |
 | `seasons/` | 5 | season lifecycle + frozen snapshots |
 | `announcements/` | 5 | announcements with auto-void lifecycle |
@@ -151,9 +151,21 @@ else needs a valid token. Fine-grained admin/owner gating is per-route `@PreAuth
   reuses the same OTP machinery (`OtpPurpose.RESET_PASSWORD`) and revokes all refresh tokens.
 - **Google sign-in.** `/auth/google` verifies the id_token server-side (`GoogleTokenVerifier`,
   google-api-client) — signature/audience/issuer/exp — then finds-or-creates the user. Empty client-id
-  in dev → clean "not configured" error, frontend hides the button.
-- **Roles.** `Role` = `PLAYER`, `FRANCHISE_MANAGER`, `FRANCHISE_OWNER`, `ADMIN` → Spring authorities
-  `ROLE_<name>`. `AuthRateLimiter` throttles login/OTP endpoints (`RATE_LIMITED`).
+  in dev → clean "not configured" error, frontend hides the button. A **first-time** Google account is
+  created with a throwaway placeholder gamerTag + `Player.onboardingRequired=true` (the Google display
+  name is *never* silently adopted as the immutable handle); it must claim a real username via
+  `POST /players/onboard` — the one path allowed to set a gamerTag after creation, and only while the
+  flag is set. Both `register()` and `onboard()` validate the handle via `players/UsernameRules`
+  (no spaces, 3–20 chars, case-insensitive uniqueness), with a live check at `GET /players/username-available`.
+- **Roles + admin tier.** `Role` = `PLAYER`, `FRANCHISE_MANAGER`, `FRANCHISE_OWNER`, `ADMIN` → Spring
+  authorities `ROLE_<name>`. `AdminLevel` (`NONE`/`ADMIN`/`SUPER_ADMIN`) is **orthogonal to role**: the
+  principal emits `ROLE_ADMIN` at level ≥ ADMIN and `ROLE_SUPER_ADMIN` for the single main admin, so
+  sensitive areas (auction, franchise management, admin appointment) gate on `hasRole('SUPER_ADMIN')`.
+  `AuthRateLimiter` throttles login/OTP endpoints (`RATE_LIMITED`).
+- **Profile edits are owner-only.** `PlayerService.update` forbids editing another player's profile even
+  for admins — admins and franchise leaders may *view* every field (the account email is surfaced only
+  to such privileged viewers), but only the owner mutates it; admin-only account actions (status changes)
+  are separate endpoints.
 
 ---
 
@@ -219,9 +231,16 @@ normal 409 guard.
 | Result publish | `MatchRepository.findByIdForUpdate` | the delete-then-insert result rewrite is only idempotent one-at-a-time; interleaved publishes would both see no committed rows and double every total |
 | Registration exclusivity | `PlayerRepository.lockById` | one-team-per-match / one-pool-entry guards serialize per player |
 | OTP consume | `OtpCodeRepository` (PESSIMISTIC_WRITE) | single-use codes can't be redeemed twice |
+| Game-popularity recompute | app-level `ReentrantLock` + `TransactionTemplate` (held **across** the commit) | popularity is a pure function of committed vote rows; the lock spans commit so the next voter's recompute always reads the previous voter's votes and converges (single-node; a multi-node deploy would swap for a DB advisory lock) |
 
 Unique constraints back-stop the locks at the schema level (e.g. `MatchParticipant`, `MatchLineup`,
-`AuctionLot`, `AuctionFranchise`, `PlayerGameProficiency`, `Player`, `User`, `Season`, `RefreshToken`).
+`AuctionLot`, `AuctionFranchise`, `PlayerGameProficiency`, `GameVote` (`user`,`game`), `Player`, `User`, `Season`, `RefreshToken`).
+
+**Pretty-URL slugs.** `Player` (gamerTag), `Franchise` (tag), `Match` (`slug`, `@PrePersist`
+`game-date-hex`), `Announcement` (`shortCode`) resolve by **slug OR uuid** at every read seam
+(`resolveMatchId`, `PlayerService.resolve`, `findByShortCode(...).or(uuid)`, …). The UI emits clean URLs
+while old stored links (e.g. a dispute notification's `/match/{uuid}`) still resolve — the dual resolver
+is kept deliberately for that backward compatibility.
 
 ---
 
@@ -252,8 +271,13 @@ via `JwtService`. The **auction channel is bidders-only**: it validates the toke
 Caffeine, in-process, **evict-on-write**. Six caches (`games`, `standings`, `leaderboard-players`,
 `game-rankings`, `franchises`, `players`), 45s write-TTL, max 500 entries — only the hottest **public
 read** paths; per-user / mutating endpoints are never cached. Writes that change the data (result
-publish → standings recompute, game edits) fire `@CacheEvict(allEntries=true)`. Rationale and the
-staleness argument live in **[./caching-hld.md](./caching-hld.md)** — not duplicated here.
+publish → standings recompute, game edits, **a game-popularity vote** — which recomputes every game's
+derived popularity) fire `@CacheEvict(allEntries=true)`. Rationale and the staleness argument live in
+**[./caching-hld.md](./caching-hld.md)** — not duplicated here.
+
+**Bounded background sweeps** (`@EnableScheduling`): expired refresh tokens, old notifications, old
+non-pinned announcements, and — newest — the **append-only `AuditLog`** (a daily `AuditService.purgeOld`
+deletes entries past the retention window, currently 7 days) are all reaped so no table grows unbounded.
 
 ## 11. Media as DB blobs
 
@@ -293,7 +317,7 @@ db + backend + frontend (+ optional MailHog).
   in server access logs — acceptable for short-lived access tokens, not ideal.
 - **Schema migrations are `ddl-auto: update` in prod** — additive only. Anything non-additive (renames,
   drops, backfills) needs Flyway first; this is called out in `application.yml`, not yet wired.
-- **Test coverage is one end-to-end suite** (26 ordered tests) — high on integration confidence for the
+- **Test coverage is one end-to-end suite** (34 ordered tests) — high on integration confidence for the
   golden paths, thin on isolated unit tests for edge branches.
 - **Media in-DB** doesn't scale to large/high-volume assets (§11).
 - **No distributed locking** — the pessimistic-lock races (§8) are correct within one DB but assume a
@@ -305,7 +329,7 @@ db + backend + frontend (+ optional MailHog).
 
 ```bash
 ./mvnw spring-boot:run              # dev profile: H2 + seeded Season 04, Swagger at /v1/docs
-./mvnw test                         # SideQuestApiIntegrationTest (26 ordered e2e tests)
+./mvnw test                         # SideQuestApiIntegrationTest (34 ordered e2e tests)
 ./mvnw -DskipTests clean package    # → target/sidequest-backend.jar
 SPRING_PROFILES_ACTIVE=postgres ... # prod-ish: needs SIDEQUEST_JWT_SECRET + Postgres + SMTP
 ```

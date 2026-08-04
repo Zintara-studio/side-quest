@@ -71,14 +71,15 @@ with shared `model/` (entities + enums), `repo/` (Spring Data), `common/` (error
 
 | Area | What it does |
 |------|--------------|
-| **Auth** | Email+password with OTP email verification, Google sign-in, JWT access (1h) + rotating refresh (30d), BCrypt, roles `PLAYER` / `FRANCHISE_MANAGER` / `ADMIN` |
-| **Franchises / Players** | Rosters, leadership invites, per-player privacy, DB-blob media (avatars/logos/banners), designation tags |
-| **Games / Scoring** | Per-game system-wide scoring config (points-per-kill, placement ladder, standings weight); an idempotent recompute engine |
+| **Auth** | Email+password with OTP email verification, Google sign-in (with a first-login **onboarding** step to claim a username), JWT access (1h) + rotating refresh (30d), BCrypt, roles `PLAYER` / `FRANCHISE_MANAGER` / `ADMIN`. Username rules (no spaces, case-insensitive-unique, immutable) + a live availability check |
+| **Franchises / Players** | Rosters, leadership invites, per-player privacy, DB-blob media (avatars/logos/banners), designation tags. Profile edit is **owner-only** (admins/franchise-leads may view every field, incl. account email, but not edit). Franchise management is super-admin-only |
+| **Games / Scoring** | Per-game system-wide scoring config (points-per-kill, placement ladder, standings weight) + an idempotent recompute engine. Popularity is **community-vote-driven** — `round(100 × distinct game voters / distinct total voters)`, recomputed from `GameVote`s (concurrency-safe), not admin-set |
 | **Matches** | Schedule → live room (polled messages) → lineups → per-round results → standings; admin void/delete/reschedule with frozen-season guards |
 | **Registrations** | Solo / squad (with invites) / FFA / franchise-proposal / auction-pool entries; self-service withdrawal |
-| **Auctions** | Pre-season player auction: draft → lobby → live bidding (1s sweep, anti-snipe) → assign / re-auction / add-funds → complete, with restart recovery |
+| **Auctions** | Pre-season player auction: draft → lobby → live bidding (1s sweep, anti-snipe) → assign / re-auction / add-funds → complete, with restart recovery. The standing **pool** is viewable (`GET /auctions/pool`) even before an auction exists |
 | **Seasons** | Finish snapshots a frozen `SeasonStanding`; start resets franchise points (season-scoped); an all-time table |
-| **Comms** | Announcements + registration calls, disputes, in-app notifications, an admin audit trail |
+| **Comms** | Announcements + registration calls, disputes, in-app notifications, an admin audit trail (append-only, scheduled retention purge) |
+| **URLs / media** | Human-readable slugs everywhere (`/players/<gamerTag>`, `/franchises/<tag>`, `/matches/<slug>`, `/announcements/<shortCode>`) — every read seam resolves slug-or-UUID. Media (avatars/logos/banners) are cropped client-side to a fixed ratio before upload |
 | **Realtime** | Raw WebSocket hub `/ws/live/{standings,matches/{id},auctions/{id},me}` — the auction channel is bidders-only |
 
 ## Documentation

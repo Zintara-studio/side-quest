@@ -16,7 +16,7 @@ safety net, plus an adversarial-review + browser-E2E practice around every chang
 ```
 
 Boots the whole Spring context on a random port against a seeded in-memory H2 database and drives
-the **real** `/v1` HTTP API. One test class, **26 ordered end-to-end tests**, ~16–17 s wall time.
+the **real** `/v1` HTTP API. One test class, **34 ordered end-to-end tests**, ~18–22 s wall time.
 The report lands at:
 
 ```
@@ -24,7 +24,7 @@ target/surefire-reports/com.sidequest.arena.SideQuestApiIntegrationTest.txt
 target/surefire-reports/TEST-com.sidequest.arena.SideQuestApiIntegrationTest.xml
 ```
 
-Last green run: `Tests run: 26, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 16.75 s`.
+Last green run: `Tests run: 34, Failures: 0, Errors: 0, Skipped: 0`.
 
 There are **no fine-grained unit tests** — this suite is the correctness net. See
 [Limitations](#limitations) for why that is a deliberate (and bounded) choice, not an oversight.
@@ -35,7 +35,7 @@ There are **no fine-grained unit tests** — this suite is the correctness net. 
 
 The single test file is
 [`src/test/java/com/sidequest/arena/SideQuestApiIntegrationTest.java`](../src/test/java/com/sidequest/arena/SideQuestApiIntegrationTest.java)
-(~1,100 LOC). It is deliberately **black-box**: it never imports a service or repository and never
+(~1,360 LOC). It is deliberately **black-box**: it never imports a service or repository and never
 touches the domain model. It logs in, gets a JWT, and calls HTTP endpoints exactly as the Next.js
 frontend does. Rationale:
 
@@ -56,7 +56,7 @@ Key setup details (all in the test class):
 
 ---
 
-## What the 26 tests cover
+## What the 34 tests cover
 
 Tests are `@Order`-annotated (`@TestMethodOrder(OrderAnnotation.class)`) because several share and
 mutate the one seeded database — a few transitions are **one-way** (finishing a season, locking an
@@ -75,6 +75,9 @@ auction pool), so their tests must run last. The order numbers are sparse and gr
 | 9 | `scoringEngineRecomputesOnResultPublish` | Publishing results recomputes the leaderboard (35 > 9 total → rank 1) and flips the match to `COMPLETED`. |
 | 10 | `refreshTokenRotationInvalidatesOldToken` | `/auth/refresh` rotates; reusing the old refresh token → 401. |
 | 11 | `adminOverviewReportsKpis` | `/admin/overview` KPIs (player totals, pending registrations, open disputes). |
+| 12 | `mainAdminGovernsAppointmentAndSensitiveActions` | The `SUPER_ADMIN` tier: appointed admins are blocked from franchise mgmt / seed / appointment (403); the main admin governs them. |
+| 14 | `uniquenessAddGameAndSeed` | gamerTag + franchise name uniqueness (case-insensitive, 409); admin add-game starts at popularity 0 (vote-driven); idempotent static `POST /admin/seed`. |
+| 19 | `auctionPoolVisibleWithoutScheduledAuction` | `GET /auctions/pool` lists the standing entrants even with no auction; private scouting fields stripped for spectators, shown to admins. |
 | 20 | `profileContactPrivacyMatrix` | Per-field privacy: private contact fields visible to owner / admin / same-franchise leader, **null** to spectators and other-franchise leaders. |
 | 21 | `selfProfileEditTogglesHandlePrivacyAndRating` | Self-edit flips a game handle to private and updates rating; spectators lose the handle, owner keeps it; editing someone else → 403. |
 | 22 | `rosterPrivateFieldsAreLeaderScoped` | Roster contact fields populated only for that franchise's leadership; stripped for spectators and cross-franchise leaders. |
@@ -89,6 +92,10 @@ auction pool), so their tests must run last. The order numbers are sparse and gr
 | 43 | `perGameScoringConfigAndWeight` | Public scoring config; changing a game's `standingsWeight` re-weights its live contribution (heavier → up, zeroed → gone); malformed ladder / out-of-range weight rejected. |
 | 44 | `rosterPlayerTagsLeaderScoped` | Franchise-private roster tags: set by leadership only, de-duped, hidden from everyone else; list cap 20 / per-tag 40 chars enforced. |
 | 46 | `lockPoolClosesAuctionRegistrationCall` | Locking the auction pool has the same public effect as closing the registration call (`registrationOpen=false`) and rejects new applies. **One-way** for the seeded auction. |
+| 48 | `auctionUnsoldFlagsLastResolvedAndLeavesPlayerUnacquired` | An unsold lot is flagged on `lastResolvedLot` and the player stays un-acquired (regression guard for the unsold→SOLD card bug). |
+| 49 | `profileEditOwnerOnlyUsernameRulesAndOnboardGuard` | Admin sees another player's account email but **can't edit** their profile (403); username availability (case-insensitive); onboarding closed once set (409); a spaced username is rejected at register (400). |
+| 50 | `gamePopularityVoting` | `PUT /games/votes` raises the game's vote-derived popularity; re-saving the same set is idempotent; clearing lowers it; my-votes / save need a session. |
+| 51 | `adminAccountAvatar` | The league admin (no player) sets an account-level avatar via `PATCH /admin/profile/avatar` → shows on `/auth/me`; non-admin 403; non-media URL 400; blank clears. |
 | 90 | `finishedSeasonMatchCannotBeVoided` | Finishing the active season (one-way) freezes its matches: cancel and delete are both refused, because the recompute engine never rewrites finished-season standings. |
 
 The theme across the suite: **RBAC** (401 anon / 403 wrong role / 200 right role), **privacy**
@@ -100,7 +107,7 @@ allow), and **scoring recompute** as the source of truth for standings.
 ## Running it
 
 ```bash
-# Full suite (compiles + boots the context once, runs all 26 tests):
+# Full suite (compiles + boots the context once, runs all 34 tests):
 ./mvnw test
 
 # A single test class (there is only one today):
@@ -164,15 +171,14 @@ Grounding numbers, from the current tree (`find`/`grep` over
 
 | Metric | Count |
 |---|---:|
-| Main `.java` files | 238 |
-| Main LOC | ~16,820 |
-| Spring Data repositories (`repo/`) | 33 |
-| `@Entity` classes | 38 |
-| Enums (`model/`) | 17 |
+| Main `.java` files | 253 |
+| Spring Data repositories (`repo/`) | 34 |
+| `@Entity` classes | 34 |
+| Enums (`model/`) | 18 |
 | `*Controller` classes | 15 |
-| REST endpoints (`@{Get,Post,Put,Patch,Delete}Mapping`) | 118 |
+| REST endpoints (`@{Get,Post,Put,Patch,Delete}Mapping`) | 129 |
 | Integration test files | 1 |
-| Integration tests (`@Test` methods) | 26 |
+| Integration tests (`@Test` methods) | 34 |
 
 Stack under test: **Java 21 / Spring Boot 3.3.4**, JPA (Hibernate), Spring Security with
 `@EnableMethodSecurity` + `@PreAuthorize`, **jjwt 0.12.6** Bearer tokens + BCrypt (roles
@@ -190,7 +196,7 @@ Honest about what this does **not** cover — budget accordingly before shipping
 - **No unit tests.** Nothing exercises a service or repository in isolation, so a regression is only
   caught if it changes observable HTTP behaviour that a test happens to assert. Pure-logic edge cases
   (e.g. every branch of the placement-ladder parser) are under-covered.
-- **Single shared-state suite.** All 26 tests run against one mutating H2 instance in a fixed order;
+- **Single shared-state suite.** All 34 tests run against one mutating H2 instance in a fixed order;
   the one-way transitions (season finish `@Order(90)`, pool lock `@Order(46)`) mean you can't
   freely reorder or run an arbitrary subset without understanding the dependencies. It is not
   parallel-safe as written.

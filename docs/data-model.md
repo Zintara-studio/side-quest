@@ -1,6 +1,6 @@
 # Data model
 
-The persistent shape of Side Quest: 33 JPA `@Entity` classes and 17 enums under
+The persistent shape of Side Quest: 34 JPA `@Entity` classes and 17 enums under
 `com.sidequest.arena.model`, their relationships, and the invariants that keep history immutable and
 standings correct.
 
@@ -13,7 +13,7 @@ invariants this repo enforces).
 
 ## Conventions
 
-- **All entities live in `model/`**; Spring Data repositories in `repo/` (33 of them). DTO records at
+- **All entities live in `model/`**; Spring Data repositories in `repo/` (34 of them). DTO records at
   the API boundary — entities are never serialized to clients directly.
 - **`BaseEntity`** (`@MappedSuperclass`) gives most entities a `UUID` primary key
   (`GenerationType.UUID`) plus `created_at` / `updated_at` `Instant`s maintained by `@PrePersist` /
@@ -36,7 +36,7 @@ invariants this repo enforces).
 |--------|----------|
 | Identity | `User`, `Player`, `RefreshToken`, `OtpCode` |
 | Franchises | `Franchise`, `FranchiseInvite`, `FranchisePlayerTag`, `PlayerFranchiseHistory` |
-| Games | `Game`, `PlayerGameProficiency`, `PlayerGameUsername` |
+| Games | `Game`, `PlayerGameProficiency`, `PlayerGameUsername`, `GameVote` |
 | Matches | `Match`, `MatchParticipant`, `MatchLineup`, `MatchRound`, `MatchRoundResult`, `MatchRoundPlayerResult`, `MatchMessage`, `ResultRow` |
 | Registrations | `Registration`, `TeamInvite` |
 | Auctions | `Auction`, `AuctionFranchise`, `AuctionLot`, `AuctionBid` |
@@ -49,16 +49,20 @@ invariants this repo enforces).
 ## Identity
 
 **`User`** (`users`) — an account. `email` unique + required, `phone` optional, `role` (`Role`, default
-`PLAYER`), `passwordHash` (BCrypt), and `emailVerified`. `emailVerified` gates **login** (an unverified
-account cannot sign in) and is distinct from `Player.status == VERIFIED`; verifying the email promotes
-the player too. Indexes: `idx_users_email` (unique), `idx_users_phone`.
+`PLAYER`), `passwordHash` (BCrypt), and `emailVerified`. `avatarUrl` is an **account-level** avatar
+(a `/media/{id}` ref) — the fallback for accounts that have no `Player`, chiefly the league admin, so
+they can still set a profile picture. `emailVerified` gates **login** (an unverified account cannot sign
+in) and is distinct from `Player.status == VERIFIED`; verifying the email promotes the player too.
+Indexes: `idx_users_email` (unique), `idx_users_phone`.
 
 **`Player`** (`players`) — a competitor profile, **1:1 with `User`** (`user_id` unique, not-null).
-Optional `@ManyToOne` to `Franchise` (assigned via the auction). Public `gamerTag` (defaults to the
-user's name), `avatarUrl`, `region`, `bio`. Per-field private contact info — `realName`, `phone`,
+Optional `@ManyToOne` to `Franchise` (assigned via the auction). Public `gamerTag` (**unique** — see
+invariants), `avatarUrl`, `region`, `bio`. Per-field private contact info — `realName`, `phone`,
 `contactEmail`, each with its own `*Public` boolean (private by default). `status` (`PlayerStatus`,
-default `PENDING`) and `points` (career total — **not** season-scoped, see invariants). Indexes:
-`idx_players_franchise`, `idx_players_points`.
+default `PENDING`), `points` (career total — **not** season-scoped, see invariants), and
+`onboardingRequired` (true only for a fresh SSO account that hasn't picked its username yet; the
+`OnboardingGuard` on the client forces it to complete onboarding). Indexes: `idx_players_franchise`,
+`idx_players_points`, unique `idx_players_gamer_tag` on `gamer_tag`.
 
 **`RefreshToken`** (`refresh_tokens`) — a rotating refresh token. Stores only the **SHA-256 hash**
 (`token_hash`, unique) of the secret, plus `expiresAt` and `revoked`. Rotated on every `/auth/refresh`
@@ -70,11 +74,13 @@ flag, and an `attempts` cap. Index: `idx_otp_email_purpose` on `(email, purpose)
 
 ## Franchises
 
-**`Franchise`** (`franchises`) — a team. `name`, `tag` (≤16 chars), optional `ownerPlayer` and
-`managerPlayer` (`@ManyToOne` to `Player`; owner holds owner+manager permissions, ≤1 manager),
-`seasonId` (the season `code` it belongs to), `logoUrl` / `bannerUrl`, `points` + `rank` (season-scoped,
-recomputed by the scoring engine), and `active` (season ongoing vs finished). Roster is the inverse of
-`Player.franchise` (Franchise 1—N Player).
+**`Franchise`** (`franchises`) — a team. `name` and `tag` (≤16 chars) are each **unique league-wide**
+(`uk_franchises_name` / `uk_franchises_tag` — reserved even after a franchise is discarded), optional
+`ownerPlayer` and `managerPlayer` (`@ManyToOne` to `Player`; owner holds owner+manager permissions, ≤1
+manager), `seasonId` (the season `code` it belongs to), `logoUrl` / `bannerUrl` (each a `/media/{id}`
+ref — the logo is 1:1, the banner 4:1, cropped client-side before upload), `points` + `rank`
+(season-scoped, recomputed by the scoring engine), and `active` (season ongoing vs finished). Roster is
+the inverse of `Player.franchise` (Franchise 1—N Player).
 
 **`FranchiseInvite`** (`franchise_invites`) — an ownership/management handshake. Owner (or admin) invites
 a `Player` into the `OWNER` or `MANAGER` slot (`FranchiseRole`); invitee accepts/rejects (`InviteStatus`,
@@ -92,10 +98,18 @@ FKs, so it survives roster resets. Indexes on `season_code`, `player_id`, `franc
 ## Games
 
 **`Game`** (`games`) — a supported title. `name` (unique), `format`, `gameType` (`GameType`, default
-`TACTICAL`), `iconUrl`, `enabled`, `popularity` (0–100). Per-title scoring "meta": `pointsPerKill`,
+`TACTICAL`), `iconUrl`, `enabled`, `popularity` (0–100). **`popularity` is community-vote-derived, not
+admin-set** — `round(100 × distinct voters for this game / distinct total voters)`, recomputed and
+persisted on every vote save (see `GameVote` + invariants). Per-title scoring "meta": `pointsPerKill`,
 `placementPoints` (CSV ladder, highest-first, empty = kills only), and `standingsWeight` (basis points,
 100 = 1.00×) toward overall standings. These seed each new fixture's snapshot at creation; `GameType`
 supplies the default ladder (`usesPlacement()` → `"15,12,10,8,6,4,2,1"`).
+
+**`GameVote`** (`game_votes`) — one upvote: a `User` likes a `Game`. Two `@ManyToOne`s, unique
+**`uk_user_game_vote`** on `(user_id, game_id)` (a user either upvotes a game or not — never twice, so a
+vote is idempotent) + index on `game_id` (per-game tallies). These rows are the sole source of each
+`Game.popularity`; the recompute is serialised by an app lock held across its commit so concurrent voters
+converge (single-node). See [./api.md](./api.md) `PUT /games/votes`.
 
 **`PlayerGameProficiency`** (`player_game_proficiencies`) — Player N—N Game skill. `rating` (0–100),
 optional `rankTier` (free-form), `kd`, `accountLevel`. Unique `uk_player_game` on `(player_id, game_id)`.
@@ -108,9 +122,10 @@ visibility flag. Index `idx_pgu_player`.
 **`Match`** (`matches`) — a scheduled fixture for a `Game`. `scheduledAt`, `status` (`MatchStatus`),
 `matchType` (`MatchType` — `FRANCHISE` pulls players from franchise rosters, `FFA` from approved
 registrations), `seasonId`, `arena`, `format`, a live `roomId` (set when started, cleared on end), a
-per-match scoring snapshot (`pointsPerKill` + `placementPoints`, defaulted from settings/game), and
-`resultsPublishedAt` (makes the scoring job idempotent). Indexes: `idx_matches_status_scheduled`,
-`idx_matches_game`, `idx_matches_season`.
+per-match scoring snapshot (`pointsPerKill` + `placementPoints`, defaulted from settings/game),
+`resultsPublishedAt` (makes the scoring job idempotent), and a unique **`slug`** (`<game>-<date>-<hex>`,
+assigned on first persist via `@PrePersist`) that backs the pretty `/match/<slug>` URL. Indexes:
+`idx_matches_status_scheduled`, `idx_matches_game`, `idx_matches_season`; unique on `slug`.
 
 The result graph splits by depth and by match type:
 
@@ -130,10 +145,13 @@ The result graph splits by depth and by match type:
 `player` (applicant / squad captain), `squadName` / `franchiseTag`, optional `match` + `game` links,
 an `@ElementCollection` `games` list (side table `registration_games`), `contact`, `teamSize`,
 `status` (`RegistrationStatus`, default `PENDING`), a `consumed` flag (an `AUCTION` entry drawn into a
-completed auction is excluded from later pools), plus `reviewedBy` / `reason`. Indexes on player, match,
-and `(type, status)`. Note: match (`PLAYER`/`SQUAD`) registrations no longer pass through an admin
-approval queue — they are live from creation and auto-lock before the match; `PENDING`/`APPROVED` now
-apply only to `FRANCHISE`-creation proposals.
+completed auction is excluded from later pools), a `hidden` flag (a *soft-hide* so a player can remove a
+terminal registration from their own "My Team" history without breaking squad-invite FKs), plus
+`reviewedBy` / `reason`. Indexes on player, match, and `(type, status)`. Note: match (`PLAYER`/`SQUAD`)
+registrations no longer pass through an admin approval queue — they are live from creation and auto-lock
+before the match; `PENDING`/`APPROVED` now apply only to `FRANCHISE`-creation proposals. The **standing
+auction pool** is exactly the `type=AUCTION, status=ACTIVE, consumed=false, franchise=null` set — it
+exists before any `Auction` is created and is what `GET /auctions/pool` surfaces.
 
 **`TeamInvite`** (`team_invites`) — a squad invitation. Captain invites a `Player` onto a SQUAD
 registration; invitee accepts/declines (`InviteStatus`). One row per `(registration, invited player)`,
@@ -174,9 +192,11 @@ plain columns, no live FK). Unique **`uk_season_standing`** on `(season_code, fr
 ## Comms
 
 **`Announcement`** (`announcements`) — a league-feed post. `category` (`AnnouncementCategory`), `title`,
-`body`, optional `match`, `author`, `publishedAt`. Doubles as a **registration call**: when
-`registrationOpen` is true it opens sign-ups with a `registrationType` (`PLAYER`/`SQUAD`), optional
-`game`, and squad `teamSize`. (Registration windows are per-announcement, not a per-game switch.)
+`body`, optional `match`, `author`, `publishedAt`, and a unique **`shortCode`** (8-char base64url,
+assigned on first persist via `@PrePersist`) that backs the `/announcements/<shortCode>` read page.
+Doubles as a **registration call**: when `registrationOpen` is true it opens sign-ups with a
+`registrationType` (`PLAYER`/`SQUAD`), optional `game`, and squad `teamSize`. (Registration windows are
+per-announcement, not a per-game switch.) Non-pinned posts older than 30 days are purged by a daily job.
 
 **`Notification`** (`notifications`) — an in-app notification to one `User`. `type` (`NotificationType`),
 `title`, `body`, optional `linkUrl`, `read` flag. Indexes `idx_notifications_user` and
@@ -197,9 +217,11 @@ choice to keep hosting cheap; the trade-off is DB size and no CDN.
 and `registrationLockHours` (hours before a match its registration locks). Scoring lives per-`Game`, not
 here.
 
-**`AuditLog`** (`audit_logs`) — append-only trail of admin actions: `actorId`, `actorEmail`, `action`,
-`entityType` + `entityId`, `detail`. Indexes `idx_audit_actor` and `idx_audit_entity` on
-`(entity_type, entity_id)`.
+**`AuditLog`** (`audit_logs`) — append-only trail of admin actions: `actorId`, `actorEmail`, `action`
+(a stable code like `game.update` / `admin.appoint` that the admin "recent activity" UI maps to a
+readable label), `entityType` + `entityId`, `detail`. A daily job purges entries older than **7 days**
+(a deliberately short window — the trail only feeds the recent-activity panel). Indexes `idx_audit_actor`
+and `idx_audit_entity` on `(entity_type, entity_id)`.
 
 ---
 
@@ -255,6 +277,18 @@ here.
 5. **A `TeamInvite` is unique per `(registration, invited_player)`** via `uk_team_invite_target`, so a
    racing/double-clicked invite can't create two rows for the same invitee.
 
+6. **`Game.popularity` is derived from `GameVote`s, never written by an admin.** It is
+   `round(100 × distinct game voters / distinct total voters)`, recomputed and persisted on every vote
+   save; the recompute is idempotent and serialised by an app lock held **across its commit** so two
+   simultaneous voters converge. It is intentionally absent from the create/update-game request DTOs.
+
+7. **Identity uniqueness + immutability.** `gamerTag` is unique **case-insensitively** and, once claimed,
+   **immutable** — the only path that ever sets it after signup is the one-time SSO onboarding claim
+   (guarded by `Player.onboardingRequired`). `Franchise` `name` and `tag` are each unique league-wide
+   (reserved even after discard). A profile is **owner-editable only**: admins and the player's franchise
+   owner/manager may *view* every private field (and, for admins, the account email), but only the owner
+   can edit — the check keys off the resolved player, not the URL slug.
+
 ---
 
 ## Constraints and notable indexes
@@ -270,9 +304,12 @@ here.
 | `uk_player_game` | `player_game_proficiencies` | `(player_id, game_id)` | duplicate proficiency |
 | `uk_auction_franchise` | `auction_franchises` | `(auction_id, franchise_id)` | franchise joined twice |
 | `uk_auction_player` | `auction_lots` | `(auction_id, player_id)` | same player lotted twice |
+| `uk_user_game_vote` | `game_votes` | `(user_id, game_id)` | a user upvoting a game twice (idempotent votes) |
+| `uk_franchises_name` · `uk_franchises_tag` | `franchises` | `name` · `tag` | duplicate franchise name/tag (each reserved league-wide) |
 
-Plus column-level uniques: `users.email`, `players.user_id`, `games.name`, `seasons.code`,
-`refresh_tokens.token_hash`.
+Plus column-level uniques: `users.email`, `players.user_id`, **`players.gamer_tag`**
+(`idx_players_gamer_tag`, unique — case-insensitive uniqueness enforced in the service), `games.name`,
+**`matches.slug`**, **`announcements.short_code`**, `seasons.code`, `refresh_tokens.token_hash`.
 
 **Notable indexes** — `idx_matches_status_scheduled` `(status, scheduled_at)` (the fixture list),
 `idx_players_points` (leaderboard), `idx_notifications_user_read` `(user_id, is_read)` (unread badge),
@@ -303,5 +340,3 @@ The codebase splits concurrency deliberately:
   revisit if asset volume grows.
 - **Some entity javadoc predates the current flow** (e.g. `Registration`'s "approval queue" comment) —
   the enum-level docs and this page reflect the current behaviour.
-</content>
-</invoke>

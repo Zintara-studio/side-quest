@@ -19,12 +19,12 @@ the right file before touching anything.
 |--------|-------|
 | Language / runtime | Java 21, Spring Boot 3.3.4 (via `spring-boot-starter-parent`) |
 | Build | Maven (`./mvnw` wrapper); single module `sidequest-backend:1.0.0` |
-| Main source files | 238 `.java` files, ~16,820 LOC under `com.sidequest.arena` |
+| Main source files | 253 `.java` files under `com.sidequest.arena` |
 | Feature packages | 14 domains, each `Controller + Service + dto/` |
-| REST controllers | 15 `*Controller` classes → **118** endpoints, all under context path `/v1` |
-| Persistence | ~33 `@Entity` classes (+ a `BaseEntity` mapped-superclass), 17 enums, 33 Spring Data repositories |
+| REST controllers | 15 `*Controller` classes → **129** endpoints, all under context path `/v1` |
+| Persistence | 34 `@Entity` classes (+ a `BaseEntity` mapped-superclass), 18 enums, 34 Spring Data repositories |
 | Realtime | raw WebSocket hub at `/ws/live/**`, in-process pub/sub |
-| Tests | 1 integration file (`SideQuestApiIntegrationTest`), 26 `@Order`-ed end-to-end tests (~1,100 LOC) |
+| Tests | 1 integration file (`SideQuestApiIntegrationTest`), 34 `@Order`-ed end-to-end tests (~1,360 LOC) |
 
 Everything hangs off one entry point, `SideQuestApplication` (`@SpringBootApplication`,
 `@EnableAsync`, `@EnableScheduling`), which also logs a loud banner when the `dev` profile boots so a
@@ -68,9 +68,9 @@ com.sidequest.arena
 │
 │  ── FEATURE PACKAGES (Controller + Service + dto/) ──
 ├── auth/            (16)  Register/login, email-OTP verify, Google Sign-In, JWT refresh/logout
-├── players/          (9)  Player profiles, per-game usernames, status, privacy
+├── players/         (12)  Profiles, per-game usernames, status, privacy; UsernameRules, onboarding
 ├── franchises/      (15)  Teams: branding, roster, roles, invites, franchise match views
-├── games/            (6)  Game catalog + per-game config
+├── games/            (9)  Game catalog + per-game config; GameVoteService (community popularity)
 ├── matches/         (21)  Matches, lineups, rounds, per-round results, live match room + chat
 ├── registrations/    (8)  Season registration (apply / invite / review), withdrawal, locks
 ├── auctions/        (15)  Pre-season player auction: lots, bids, funds, nomination, sweep
@@ -83,8 +83,8 @@ com.sidequest.arena
 ├── admin/           (10)  Admin control room (AdminController) + league SettingsController
 │
 │  ── CROSS-CUTTING PACKAGES ──
-├── model/           (51)  JPA entities (~33) + enums (17) + BaseEntity mapped-superclass
-├── repo/            (33)  Spring Data JPA repository interfaces (one per aggregate)
+├── model/           (52)  JPA entities (34) + enums (18) + BaseEntity mapped-superclass
+├── repo/            (34)  Spring Data JPA repository interfaces (one per aggregate)
 ├── common/           (7)  Error envelope, ApiException, pagination cursors, hashing helpers
 ├── security/         (9)  JWT filter, SecurityConfig, method security, SecurityUtils, size-limit filter
 ├── config/           (3)  DataSeeder, CacheConfig (Caffeine), OpenApiConfig
@@ -94,8 +94,7 @@ com.sidequest.arena
 └── scoring/          (1)  ScoringService — recompute-from-history standings engine
 ```
 
-Sums to 238 files: 127 across the 14 feature packages, 110 across the cross-cutting packages, plus the
-top-level `SideQuestApplication`.
+Sums to 253 files across the feature + cross-cutting packages plus the top-level `SideQuestApplication`.
 
 ---
 
@@ -132,7 +131,8 @@ package so the mechanism stays local to the feature that owns it:
 | `auth/` | `OtpService`, `GoogleTokenVerifier`, `AuthRateLimiter` | Email-OTP issuance, Google id_token verification, per-IP auth throttling |
 | `auctions/` | `AuctionSweepService` | Scheduled sweep of expired/idle lots |
 | `registrations/` | `RegistrationLockService` | Pessimistic row locking for registration exclusivity |
-| `players/` | `PlayerProfileWriter` | Isolates the profile-write path (media refs, privacy) |
+| `players/` | `PlayerProfileWriter`, `UsernameRules` | Isolates the profile-write path (media refs, privacy); shared username-shape validation (signup + onboarding) |
+| `games/` | `GameVoteService` | Community popularity: replace-set votes (idempotent) + across-commit-locked popularity recompute |
 | `media/` | `MediaRefs` | Validates/normalizes image-reference fields against `/media/{uuid}` |
 | `admin/` | second controller `SettingsController` + `SettingsService` | League-wide `LeagueSettings` administration |
 
@@ -146,17 +146,18 @@ REST surface per controller (all mounted under context path `/v1`):
 | RegistrationController | `/registrations` | 11 |
 | AuthController | `/auth` | 10 |
 | SeasonController | `/seasons` | 6 |
-| PlayerController | `/players` | 6 |
+| PlayerController | `/players` | 8 (+ `username-available`, `onboard`) |
+| AdminController | `/admin` | 8 (+ `profile/avatar`, appoint/revoke, seed) |
 | AnnouncementController | `/announcements` | 6 |
+| GameController | `/games` | 6 (+ `my-votes`, `votes`) |
 | NotificationController | `/notifications` | 4 |
-| AdminController | `/admin` | 4 |
 | StandingsController | (per-method paths) | 3 |
-| GameController | `/games` | 3 |
 | SettingsController | `/settings` | 2 |
 | MediaController | `/media` | 2 |
 | DisputeController | `/disputes` | 2 |
 
-Total: 118 endpoints across 15 controllers.
+Total: 129 endpoints across 15 controllers. (AuctionController's 21 include `GET /auctions/pool` — the
+standing registration pool, visible even before an auction exists.)
 
 ---
 
@@ -165,22 +166,27 @@ Total: 118 endpoints across 15 controllers.
 ### `model/` — entities + enums (51 files)
 
 JPA aggregates plus the shared `BaseEntity` (`@MappedSuperclass`: UUID `@Id`, `created_at` / `updated_at`
-maintained by JPA lifecycle callbacks). ~33 `@Entity` classes:
+maintained by JPA lifecycle callbacks). 34 `@Entity` classes:
 
 `User`, `Player`, `Franchise`, `Game`, `Match`, `MatchParticipant`, `MatchLineup`, `MatchRound`,
 `MatchRoundResult`, `MatchRoundPlayerResult`, `MatchMessage`, `ResultRow`, `Registration`, `TeamInvite`,
 `FranchiseInvite`, `Announcement`, `Auction`, `AuctionFranchise`, `AuctionLot`, `AuctionBid`, `Season`,
 `SeasonStanding`, `PlayerFranchiseHistory`, `FranchisePlayerTag`, `PlayerGameProficiency`,
-`PlayerGameUsername`, `Notification`, `Dispute`, `MediaAsset`, `LeagueSettings`, `RefreshToken`,
-`OtpCode`, `AuditLog`.
+`PlayerGameUsername`, `GameVote` (a user's upvote of a game — unique `(user, game)`), `Notification`,
+`Dispute`, `MediaAsset`, `LeagueSettings`, `RefreshToken`, `OtpCode`, `AuditLog`.
 
-17 enums keep status/type values type-safe: `Role`, `PlayerStatus`, `GameType`, `MatchStatus`,
-`MatchType`, `RegistrationType`, `RegistrationStatus`, `AuctionStatus`, `AuctionLotStatus`,
-`SeasonStatus`, `DisputeStatus`, `DisputeCategory`, `NotificationType`, `AnnouncementCategory`,
-`InviteStatus`, `FranchiseRole`, `OtpPurpose`. (Full relationships + invariants in
-[./data-model.md](./data-model.md).)
+Recent field additions on existing entities: `User.avatarUrl` (account-level avatar for the league admin,
+who has no `Player`), `Player.onboardingRequired` (gates the SSO onboarding step), `Match.slug` +
+`Announcement.shortCode` (pretty-URL keys, `@PrePersist`-generated), `Registration.hidden` (soft-hide
+from "My Team"). Popularity on `Game` is now derived from `GameVote` rows, not admin-set.
 
-### `repo/` — persistence (33 files)
+18 enums keep status/type values type-safe: `Role`, `AdminLevel` (admin tier, orthogonal to role),
+`PlayerStatus`, `GameType`, `MatchStatus`, `MatchType`, `RegistrationType`, `RegistrationStatus`,
+`AuctionStatus`, `AuctionLotStatus`, `SeasonStatus`, `DisputeStatus`, `DisputeCategory`,
+`NotificationType`, `AnnouncementCategory`, `InviteStatus`, `FranchiseRole`, `OtpPurpose`. (Full
+relationships + invariants in [./data-model.md](./data-model.md).)
+
+### `repo/` — persistence (34 files)
 
 One Spring Data JPA repository per aggregate (e.g. `PlayerRepository`, `MatchRepository`,
 `AuctionBidRepository`, `SeasonStandingRepository`, `RefreshTokenRepository`, `AuditLogRepository`).
@@ -235,7 +241,8 @@ subscribed sessions. Single-instance only (see Limitations).
 
 - `email/` (2) — `EmailSender` + `EmailService`; SMTP is env-driven, and unset SMTP in `dev` falls back
   to logging OTPs to the console. Outside `dev` the app fails fast without SMTP config.
-- `audit/` (1) — `AuditService` writes `AuditLog` rows for sensitive / admin actions.
+- `audit/` (1) — `AuditService` writes `AuditLog` rows for sensitive / admin actions (append-only);
+  a daily `@Scheduled purgeOld()` deletes entries past the retention window (currently 7 days).
 - `scoring/` (1) — `ScoringService`, the idempotent recompute-from-history standings engine
   (re-derives everything from retained `ResultRow`s; never accumulates deltas).
 
@@ -266,7 +273,7 @@ is unset — no fallback to the committed dev secret. The full env-var reference
 3. Errors via `ApiException` + an `ErrorCode` (add one if needed) — the global handler does the rest.
 4. Secure mutations with `@PreAuthorize`; read the current user through `SecurityUtils`.
 5. Public read-heavy paths: consider a Caffeine cache + `@CacheEvict` on the writes that change it.
-6. Extend the 26-test integration suite; keep `./mvnw test` green.
+6. Extend the 34-test integration suite; keep `./mvnw test` green.
 
 (Full conventions + checklist in [../CLAUDE.md](../CLAUDE.md).)
 
@@ -280,5 +287,5 @@ is unset — no fallback to the committed dev secret. The full env-var reference
   at league scale, not for large media volumes.
 - **Schema evolution is additive.** `postgres` runs `ddl-auto: update`; anything non-additive should move
   to a migration tool (Flyway is the noted next step). No migration scripts exist yet.
-- **One integration test file.** Coverage is end-to-end and ordered (26 tests) rather than broad unit
+- **One integration test file.** Coverage is end-to-end and ordered (34 tests) rather than broad unit
   coverage; individual services lack isolated unit tests.

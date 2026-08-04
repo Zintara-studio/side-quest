@@ -18,13 +18,13 @@ Size, as measured in-tree:
 
 | Metric | Value |
 |--------|-------|
-| `.ts` / `.tsx` files | 109 |
-| Lines of code | ~24,790 |
-| `src/app` | 45 files (routes + layouts) |
-| `src/components` | 50 files (screens + shared UI) |
-| `src/lib` | 14 files (data, auth, query, theme) |
-| Public screens | 15 (`components/sidequest/screens`) |
-| Admin screens | 13 (`components/admin/screens`) |
+| `.ts` / `.tsx` files | 120 |
+| Lines of code | ~27,720 |
+| `src/app` | 50 files (routes + layouts) |
+| `src/components` | 55 files (screens + shared UI) |
+| `src/lib` | 17 files (data, auth, query, theme) |
+| Public screens | 17 (`components/sidequest/screens`) |
+| Admin screens | 14 (`components/admin/screens`) |
 
 The centre of gravity is the **shell + screen** split (below) and the **data layer** (`lib/`), not the
 routes themselves — route files are intentionally thin.
@@ -62,7 +62,7 @@ owners/managers) only while one is live.
 
 ### `AdminShell` — `components/admin/admin-shell.tsx`
 
-A `"use client"` component with a fixed 244px sidebar (nav grouped LEAGUE / ENTITIES / COMMS / SYSTEM), a
+A `"use client"` component with a 244px sidebar (nav grouped LEAGUE / ENTITIES / COMMS / SYSTEM), a
 sticky top bar, and the main content region. It:
 
 - **protects every `/admin` route**: on hydration, a non-admin is redirected to
@@ -70,7 +70,11 @@ sticky top bar, and the main content region. It:
   rather than flashing admin chrome;
 - drives live sidebar badges from real queries — pending **FRANCHISE** proposals
   (`useRegistrations({ status: "PENDING" })`), `openDisputes` and `resultsToEnter`
-  (`useAdminOverview`), and a pulsing **LIVE** pill when `useActiveAuction().data.status === "LIVE"`.
+  (`useAdminOverview`), and a pulsing **LIVE** pill when `useActiveAuction().data.status === "LIVE"`;
+- **collapses responsively**: below `860px` (via `useMediaQuery`, the app's first breakpoint hook,
+  `lib/use-media-query.ts`) the sidebar becomes a fixed off-canvas **drawer** toggled by a hamburger in
+  the top bar, with a dimmed backdrop; it closes on nav-tap and on route change. Nav items marked
+  `superOnly` (Auction, Admins) are hidden from appointed (non-super) admins.
 
 Both shells re-use the same `SQ.*` / `FONT.*` tokens, the shared `NotificationBell`, `ThemeToggle`, and
 `ConfirmModal` — the admin surface is a different layout over the **same** design system, not a fork.
@@ -178,12 +182,26 @@ Auth is a **zustand store** (`lib/auth/store.ts`) with a thin React context on t
   cleared. A separate interceptor-free `refreshClient` performs the refresh call to avoid recursion.
 - **Non-React accessors.** `authTokens.getAccess/getRefresh/setSession/clear` let the axios interceptor
   read and rotate tokens outside React.
+- **Session fields.** Beyond the tokens, the store carries `playerId`, `gamerTag`, and **`avatarUrl`**
+  (from `/auth/me`), plus an **`onboardingRequired`** flag. `avatarUrl` uses a **player→user fallback**
+  (`me.player?.avatarUrl ?? me.user?.avatarUrl`) so the league admin — who has no player — still shows an
+  avatar; the nav-bar identity in both shells renders `<Avatar url={avatarUrl}>`.
 - **Route protection** is client-side and lives in the shells: `AdminShell` redirects non-admins to
   `/login?next=…`; `LeagueShell` redirects admins to `/admin`. The `?next=` value is sanitised through
   `safeNextPath()` (`lib/nav.ts`) — same-origin only, rejecting backslash-smuggled off-site URLs.
-- **Flows** (`AuthContext`): `login`, `signup` (no session until email verified), `verifyEmail` (OTP →
-  session), `googleLogin` (Google id_token verified server-side), `logout` (best-effort server revoke,
-  always clears locally). Auth UIs live in `components/sidequest/auth/*`.
+- **Onboarding gate.** A first-time Google account is created without a real username; `onboardingRequired`
+  is true until it completes `/onboarding` (pick a username + optional profile). An `OnboardingGuard`
+  mounted in `providers.tsx` `router.replace`s any onboarding-required session to `/onboarding` from
+  anywhere else, so the app can't be used half-initialised.
+- **Flows** (`AuthContext`): `login`, `signup` (no session until email verified; enforces the shared
+  username rules with a live availability check), `verifyEmail` (OTP → session), `googleLogin` (Google
+  id_token verified server-side; returns `{ role, onboardingRequired }` so the caller can route a new user
+  to `/onboarding`), `refreshUser` (re-fetch `/auth/me`, e.g. after onboarding/avatar changes), `logout`.
+  Auth UIs live in `components/sidequest/auth/*`.
+- **Custom Google button.** GIS's own button can't be token-themed (the "G" always sits on a white tile in
+  its locked shadow DOM), so `SocialRow` renders our own theme-styled button and stretches Google's real
+  button **transparently on top** (`opacity:0`) to catch the click — same `id_token` flow, no backend
+  change, and it adapts to light/dark for free because it's styled with `SQ.*` CSS variables.
 
 ---
 
@@ -216,6 +234,42 @@ useAuctionSocket({ auctionId: activeQ.data?.id, enabled: (canBid || isAdmin) && 
 Spectators rely on `useAuction`'s adaptive `refetchInterval`: **1.5s while `LIVE`**, 4s otherwise, and
 `false` once `COMPLETED`; it doesn't poll a hidden tab (`refetchIntervalInBackground: false`) and snaps
 fresh on refocus. This gives bidders sub-second updates without every fan holding a socket open.
+
+When **no auction exists**, `AuctionBidScreen` no longer dead-ends — it fetches the standing pool
+(`useAuctionPool` → `GET /auctions/pool`) and renders `NoAuctionPool`, a grid of registered players, so
+fans can see who signed up before the league schedules the auction.
+
+---
+
+## Pretty URLs (slug resolution)
+
+Public entity links use human-readable slugs, built through `lib/routes.ts`: `playerHref(gamerTag)`,
+`franchiseHref(tag)`, `matchHref(slug)`, `announcementHref(shortCode)` (all `encodeURIComponent`). The
+backend resolves **either the slug or the raw UUID** at every seam, so pre-existing stored links (a
+notification pointing at `/match/{uuid}`, say) still work — the UI just never *builds* UUID URLs anymore.
+
+The one gotcha this creates: any "is this mine?" check must key off the **resolved entity's id**, not the
+route param, because a slug (`"Crazy8"`) never equals a UUID. `player.tsx` computes
+`isOwner = p.id === playerId` from the loaded DTO, not from the `[gamerTag]` param.
+
+---
+
+## Image uploads & cropping
+
+Avatar / franchise-logo / franchise-banner uploads run entirely client-side, then post a finished image
+to `POST /media`:
+
+- **`components/sidequest/image-cropper.tsx`** — an aspect-locked modal (avatar/logo `1:1`, banner `4:1`;
+  the avatar frame is a circle). The user **pans** (pointer drag, cover-constrained so the frame is always
+  filled) and **zooms** (slider + wheel, centre-preserving). It is WYSIWYG: the preview `<img>` uses the
+  same transform the crop reads.
+- **`lib/image.ts`** — on Apply, `cropToDataUrl(img, srcRect, outW, outH, maxBytes)` renders the chosen
+  region to a canvas at the kind's target size (`CROP_DIMS`) and steps quality/scale down to fit the media
+  byte cap, returning a data URL.
+- Every upload site (`profile-editor`, `onboarding`, admin `profile` avatar, `my-franchise` branding
+  modal) sets a `cropFile` on file-pick and renders `<ImageCropper onCropped={upload}>`. Because the stored
+  image already matches its display box, **no display re-crops** — banners show in full at a consistent
+  4:1 (`aspectRatio` + `cover`) on the franchise page, my-franchise hero, and the branding preview alike.
 
 ---
 

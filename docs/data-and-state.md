@@ -24,23 +24,28 @@ lib/api/client.ts         axios instance: Bearer injection, refresh rotation, ba
 Spring Boot API @ /v1
 ```
 
-Two side channels sit next to this spine:
+Side channels + small helper libs sit next to this spine:
 
 - **`lib/auth/`** — the zustand session store (`store.ts`) + the React context (`context.tsx`) that hydrates it.
 - **`lib/query/use-auction-socket.ts`** — a WebSocket that writes live frames straight into the Query cache.
 - **`lib/adapters/`** — pure DTO→display mappers so screens don't shape data inline.
+- **`lib/routes.ts`** — pretty-URL helpers (`playerHref`/`franchiseHref`/`matchHref`/`announcementHref`/`registerHref`, all URL-encoded). The UI builds links only through these.
+- **`lib/username.ts`** — a client mirror of the backend `UsernameRules` (no spaces, 3–20, `[A-Za-z0-9_.-]`) for instant signup/onboarding feedback (the server stays authoritative).
+- **`lib/image.ts`** — client-side image handling: `compressImage` (legacy downscale) plus the cropper primitives `loadImageFile` / `cropToDataUrl` / `CROP_DIMS` / `ASPECT` used by `ImageCropper`.
+- **`lib/use-media-query.ts`** — a tiny SSR-safe `matchMedia` hook that drives the responsive admin sidebar→drawer switch.
 
-The whole layer is four small files plus the store and socket:
+The core layer plus the store, socket, and helpers:
 
 | File | LOC | Role |
 |------|----:|------|
 | `lib/api/client.ts` | 151 | axios instance, interceptors, `wsUrl` / `mediaSrc` / `apiErrorMessage` |
-| `lib/api/endpoints.ts` | 411 | per-domain typed API functions (the single API-call surface) |
-| `lib/api/types.ts` | 930 | TS mirrors of backend DTOs (`com.sidequest.arena.*.dto`) |
-| `lib/query/hooks.ts` | 985 | all Query hooks + the `qk` key factory + per-domain stale times |
+| `lib/api/endpoints.ts` | 450 | per-domain typed API functions (the single API-call surface) |
+| `lib/api/types.ts` | 1022 | TS mirrors of backend DTOs (`com.sidequest.arena.*.dto`) |
+| `lib/query/hooks.ts` | 1097 | all Query hooks + the `qk` key factory + per-domain stale times |
 | `lib/query/use-auction-socket.ts` | 86 | realtime bid feed → `["auctions", id]` cache |
-| `lib/auth/store.ts` | 83 | zustand tokens/user, `authTokens.*` non-React accessors |
-| `lib/auth/context.tsx` | 137 | `AuthProvider` hydration + `login`/`signup`/`verifyEmail`/`logout` |
+| `lib/auth/store.ts` | 112 | zustand tokens/user/gamerTag/avatarUrl/onboardingRequired, `authTokens.*` non-React accessors |
+| `lib/auth/context.tsx` | 161 | `AuthProvider` hydration + `login`/`signup`/`verifyEmail`/`googleLogin`/`refreshUser`/`logout` |
+| `lib/routes.ts` · `lib/username.ts` · `lib/image.ts` · `lib/use-media-query.ts` | 18 / 17 / 196 / 20 | pretty-URL helpers · username-rule mirror · image compress+crop · responsive breakpoint hook |
 
 ---
 
@@ -130,6 +135,13 @@ active: () => api.get<AuctionView | "">("/auctions/active").then((r) => r.data |
 Cursor-paginated lists return `PageResponse<T> = { items, nextCursor, limit }` (`types.ts`); everything else
 returns the DTO (or `DTO[]`) directly. Types in `lib/api/types.ts` mirror the Spring DTOs one-to-one;
 `Instant` fields arrive as ISO-8601 strings (Jackson `write-dates-as-timestamps: false`).
+
+**Recently added calls** (their hooks are below): `playersApi.usernameAvailable` (`GET
+/players/username-available?username=`) + `playersApi.onboard` (`POST /players/onboard`); `auctionsApi.pool`
+(`GET /auctions/pool` — the standing auction pool, readable even with no live auction); `gamesApi.myVotes` +
+`gamesApi.saveVotes` (`GET /games/my-votes`, `PUT /games/votes` — community game-popularity voting);
+`adminApi.updateAvatar` (`PATCH /admin/profile/avatar` — the league admin's account-level avatar). Note
+`gamesApi.create`/`update` no longer send `popularity` — it's **vote-derived** server-side now.
 
 ---
 
@@ -236,7 +248,26 @@ refetchInterval: (q) => {                     // useActiveAuction
 
 Same idea in `useMatchRoom` (`4s` while `data.live`, else stop), `useAuction` (`1.5s` LIVE / `4s` other /
 stop at COMPLETED, with `refetchIntervalInBackground: false`), and `useUnreadCount` / `useMyMatchRooms`
-(`30s` + `refetchOnWindowFocus`). Query v5 auto-pauses intervals while the tab is hidden.
+(`30s` + `refetchOnWindowFocus`). Query v5 auto-pauses intervals while the tab is hidden. `useAuctionPool`
+(the standing pool) polls `30s` **only when there's no active auction** (`enabled` gates it), so it costs
+nothing during a live auction.
+
+### Feature hooks (username, onboarding, votes, pool, admin avatar)
+
+A handful of hooks back the newer flows:
+
+- **`useUsernameAvailability(debouncedValue)`** — live signup/onboarding username check. Feed it an
+  **already-debounced** value (the component debounces ~400ms); the query key is the value, `enabled` only at
+  ≥3 chars, `retry:false`. Backs the inline ✓/✗ on the signup form and the onboarding screen.
+- **`useOnboard()`** — `POST /players/onboard` (claim the immutable username + apply the optional profile);
+  the onboarding screen calls `refreshUser()` after so the guard releases.
+- **`useMyGameVotes(enabled)` / `useSaveGameVotes()`** — the "▲ Vote for your games" panel. Save (a full-set
+  PUT replace) invalidates `["games"]`, which also covers `["games","my-votes"]`, so the popularity bars and
+  the pre-selected chips both refresh.
+- **`useAuctionPool(enabled)`** — described above; shared key `["auctions","pool"]` so the public auction page
+  and the admin create-auction form dedupe one fetch.
+- The **admin avatar** save goes through `adminApi.updateAvatar` + `refreshUser()` (no dedicated query — it
+  mutates the session's `avatarUrl`).
 
 ### Mutations & cache invalidation
 
@@ -297,9 +328,13 @@ export const useAuthStore = create<AuthState>()(
 );
 ```
 
-State: `accessToken`, `refreshToken`, `user` (`{ id, name, email, role }`), `playerId` (from `/auth/me`, or
-null), and `hydrated` (whether the initial refresh-on-load has resolved). Actions: `setSession(AuthResponse)`,
-`setUser(MeResponse)`, `setHydrated`, `clear`.
+State: `accessToken`, `refreshToken`, `user` (`{ id, name, email, role, adminLevel }`), `playerId` (from
+`/auth/me`, or null), `gamerTag` (for building pretty `/player/<tag>` links), `avatarUrl` (drives the nav-bar
+avatar — falls back **player→user**: `me.player?.avatarUrl ?? me.user?.avatarUrl ?? null`, so the league admin,
+who has no player, can still have an account-level avatar), `onboardingRequired` (true while a fresh SSO
+account must still pick a username — gates the whole app via `OnboardingGuard`), and `hydrated`. Actions:
+`setSession(AuthResponse)`, `setUser(MeResponse)`, `setHydrated`, `clear` (which resets every field). Only the
+refresh token is persisted; the rest are re-derived from `/auth/me` on load.
 
 Because the axios interceptors run outside React, the store exposes **non-React accessors** so they can read
 and rotate tokens without a hook:
@@ -322,8 +357,13 @@ hydration mismatch — `hydrated` reads `false` until the client mount runs.
 
 `login` / `verifyEmail` / `googleLogin` each `setSession(...)` then best-effort `setUser(await me())`;
 `signup` issues **no** session (the account must verify its email first); `logout` best-effort revokes the
-refresh token server-side then `clear()`s locally regardless. The context also derives `isAuthenticated`,
-`isAdmin` (`role === "ADMIN"`), and re-exports `apiErrorMessage`.
+refresh token server-side then `clear()`s locally regardless. `googleLogin` now returns
+`{ role, onboardingRequired }` so the caller can route a brand-new SSO account to `/onboarding`. A
+**`refreshUser()`** action re-fetches `/auth/me` into the store on demand — used after onboarding completes and
+after the admin sets an avatar, so the session picks up the new `gamerTag`/`avatarUrl`/`onboardingRequired`
+without a reload. The context also derives `isAuthenticated`, `isAdmin` (`adminLevel !== "NONE"`),
+`isSuperAdmin` (`adminLevel === "SUPER_ADMIN"`), exposes `gamerTag`/`avatarUrl`/`onboardingRequired`, and
+re-exports `apiErrorMessage`.
 
 ---
 
@@ -368,9 +408,16 @@ opens — spectators fall back to `useAuction`'s poll.
 ## Adapters (`lib/adapters/`)
 
 Pure functions mapping backend DTOs onto the "Broadcast HUD" display shapes, so screens keep their exact
-prototype JSX and **display-shaping stays out of the screens**. `league.ts` (148 LOC) covers the public league
-(`adaptGames`, `adaptFranchises`, `adaptPlayers`, `adaptUpcoming`, plus `shortDate` / `shortTime`
-ISO formatters); `admin.ts` (122 LOC) maps the overview DTO onto control-room KPI/task/activity shapes.
+prototype JSX and **display-shaping stays out of the screens**. `league.ts` covers the public league
+(`adaptGames`, `adaptFranchises`, `adaptPlayers`, `adaptUpcoming` — which now also carries each match's `slug`
+for pretty links, plus `shortDate` / `shortTime` ISO formatters); `admin.ts` maps the overview DTO onto
+control-room KPI/task/activity shapes.
+
+`adaptActivity` (the admin "Recent Activity") now returns `{ time, title, meta }`: `title` is a **definitive,
+human-readable label** looked up from the audit `action` code via an `ACTION_LABELS` map (~55 codes →
+"Game settings updated", "Admin appointed", "Player status changed", …), and `meta` is the cleaned `detail` +
+actor on a muted second line (`cleanDetail` strips bare UUIDs and dangling "from proposal"). This replaced the
+old "raw detail · email" that rendered as cryptic strings when the detail was a scoring diff or a bare email.
 
 Where the backend doesn't expose a field the prototype showed (per-player K/D, games-played, "form" trend),
 the adapter falls back to a neutral placeholder (`—`) rather than inventing a number — see the honest comments

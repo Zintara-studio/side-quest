@@ -155,7 +155,7 @@ import { SQ, FONT } from "@/components/sidequest/tokens"; // or "../tokens" / ".
 </span>
 ```
 
-Conventions that recur across the 28 screens:
+Conventions that recur across the 31 screens:
 
 - **Eyebrows / tags / codes** use `FONT.mono` + positive `letterSpacing` (`.1em`–`.14em`) + small caps-ish sizing — the broadcast-HUD tell.
 - **The brand mark** is a 13×13 `SQ.red` square rotated 45° (a diamond), next to `FONT.display` "SIDE QUEST" — see `league-shell`, `admin-shell`, and the `(auth)` layout.
@@ -192,6 +192,35 @@ const [stColor, stBorder] = matchStatusColors(label as Parameters<typeof matchSt
 ```
 
 ---
+
+## Media idioms: avatars, banners, the cropper
+
+Images are token-styled like everything else, and share fixed aspect ratios so they never crop
+unpredictably:
+
+- **`Avatar` (`components/sidequest/avatar.tsx`)** — a square image (`size` → width+height, `objectFit:
+  "cover"`), default `radius` a circle; falls back to the `SQ.avatarGrad` gradient when there's no image.
+  Used for player/admin avatars **and** franchise logos (`radius: 10`). It resolves `/media/{id}` refs to
+  the API origin via `mediaSrc()`. The nav-bar identity in both shells renders `<Avatar url={avatarUrl}>`
+  off the session (see [./architecture.md](./architecture.md) → Auth).
+- **Banners are a fixed 4:1 strip.** Every banner render site — the franchise page, the my-franchise
+  hero, and the branding-editor preview — uses `aspectRatio: "4 / 1"; width: 100%` with `backgroundSize:
+  cover` (and `backgroundColor: SQ.avatarGrad` as the empty fallback, *not* the `background` shorthand,
+  which conflicts with `backgroundImage`). Because uploads are cropped to 4:1 first, cover shows the whole
+  banner — no vertical cutting.
+- **`ImageCropper` (`components/sidequest/image-cropper.tsx`)** — the aspect-locked crop modal. Its frame
+  is `aspectRatio: String(aspect)` with `overflow: hidden` and `borderRadius: "50%"` for an avatar (so the
+  circular avatar is cropped to a circle) or `10` for logo/banner. Buttons and the zoom slider are the
+  usual token-styled inline elements (`accentColor: SQ.red` on the range input).
+
+## The custom Google button — the token layer paying off
+
+`SocialRow` (`components/sidequest/auth/auth-ui.tsx`) is the clearest example of *why* tokens are CSS
+variables. Google's GIS button can't be themed to match the palette, so we render **our own** button —
+an inline Google-G SVG + label styled with `SQ.inset` / `SQ.ink` / `SQ.inputBorder` — and stretch
+Google's real button transparently on top to catch the click. Because those tokens are `var(--sq-*)`,
+the visible button **auto-adapts to light/dark with zero JS** — no theme listener, no re-render on toggle.
+A component that read literal hex would have needed a `data-theme` watcher; the token layer makes it free.
 
 ## `globals.css` — the non-token bits
 

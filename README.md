@@ -46,11 +46,15 @@ Server state flows through TanStack Query hooks (`lib/query/hooks.ts`) → an ax
 (`lib/api/client.ts`) → the backend `/v1`. Styling is **inline style objects using typed design tokens**
 (`SQ.*` / `FONT.*`) — a hand-rolled warm-paper light/dark theme, no UI kit.
 
+Every route uses a **human-readable slug** (`/player/<gamerTag>`, `/franchise/<tag>`, `/match/<slug>`,
+`/announcements/<shortCode>`). Media (avatars/logos/banners) go through an **interactive crop-on-upload**
+(pan/zoom, aspect-locked — 1:1 for avatars/logos, 4:1 for banners) so the stored image already fits its box.
+
 | Area | Screens |
 |------|---------|
-| **Public league** | Home, Games (with public scoring), Franchises + detail, Players + profiles (per-field privacy, profile editor), Matches archive + detail + **live room** + dispute-result, Announcements, **Auction** spectate + **bid room**, Rules, Register/withdraw, My Team + lineups, Notifications |
-| **Admin control room** | Overview, Matches (CRUD + result entry + lineups + void/delete), **Auction operator console**, Franchises, Players, Games + scoring, Announcements + edit, Disputes, Registrations, Settings, History (seasons), Notifications |
-| **Auth** | Login, Signup, Verify-email (OTP), Forgot-password, Google sign-in |
+| **Public league** | Home, Games (public scoring + **community popularity voting**), Franchises + detail, Players + profiles (per-field privacy, **owner-only** editor), Matches archive + detail + **live room** + dispute-result, Announcements + read page, **Auction** spectate + **bid room** + **standing-pool preview** (shown even with no live auction), Rules, Register/withdraw, My Team + lineups + franchise branding, Notifications |
+| **Admin control room** | Overview (definitive recent-activity feed), Matches (CRUD + result entry + lineups + void/delete), **Auction operator console** (with pool preview), Franchises, Players, Games + scoring, Announcements + edit, Disputes, Registrations, Settings, History (seasons), **Profile (settable avatar)**, Notifications — responsive down to a mobile drawer |
+| **Auth** | Login, Signup (live username availability), Verify-email (OTP), Forgot-password, Google sign-in + first-login **onboarding** (claim username / photo) |
 
 ## Documentation
 

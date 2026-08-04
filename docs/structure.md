@@ -12,8 +12,8 @@ Where every piece of the Side Quest frontend lives, and the conventions that kee
 |---|---|
 | Framework | Next.js 15 (App Router), React 19, TypeScript 5 |
 | package.json name | `esports-arena` (private, v0.1.0) |
-| Source files | 109 `.ts`/`.tsx` under `src/`, ~24,790 LOC |
-| Split | `src/app` (46 files) · `src/components` (50) · `src/lib` (14) |
+| Source files | 120 `.ts`/`.tsx` under `src/`, ~27,700 LOC |
+| Split | `src/app` (48 files) · `src/components` (55) · `src/lib` (17) |
 | Runtime deps | `@tanstack/react-query`, `axios`, `zustand`, `react-markdown` + `remark-gfm`, `lucide-react`, `clsx`, `tailwind-merge` |
 | Dev deps | `tailwindcss`, `postcss`, `autoprefixer`, `eslint` + `eslint-config-next`, `typescript` |
 | Build output | `output: "standalone"` (`.next/standalone/server.js`), `reactStrictMode` |
@@ -58,16 +58,17 @@ SideQuests arena frontend/
 
 ---
 
-## `src/app` — routing (46 files)
+## `src/app` — routing (48 files)
 
 The App Router. **Every route is a thin server `page.tsx`** that renders one client screen component; all the real logic lives in the screen. There are three route groups plus the admin subtree, each with its own layout that mounts a shell.
 
 ```
 app/
 ├── layout.tsx              # root: html/body, next/font vars, pre-paint theme script, <Providers>
-├── providers.tsx           # QueryClientProvider (staleTime 30s) + AuthProvider
+├── providers.tsx           # QueryClientProvider (staleTime 30s) + AuthProvider + OnboardingGuard
 ├── globals.css             # :root / [data-theme="dark"] token blocks, base styles, .sq-field, .admin-scope
 ├── not-found.tsx           # themed 404 ("OFF THE MAP")
+├── onboarding/page.tsx     # /onboarding → OnboardingScreen (standalone, no shell; SSO first-run)
 │
 ├── (auth)/                 # AuthLayout — centered card, no shell
 │   ├── layout.tsx
@@ -85,7 +86,7 @@ app/
 │   ├── players/page.tsx
 │   ├── player/page.tsx     · player/[id]/page.tsx
 │   ├── match/page.tsx      · match/[id]/page.tsx
-│   ├── announcements/page.tsx
+│   ├── announcements/page.tsx · announcements/[id]/page.tsx   # feed + read page
 │   ├── auction/page.tsx
 │   ├── rules/page.tsx
 │   ├── notifications/page.tsx
@@ -135,7 +136,7 @@ The non-`[id]` variants (`franchise/`, `player/`, `match/`) render the **same** 
 
 ---
 
-## `src/components` — UI (50 files)
+## `src/components` — UI (55 files)
 
 Two feature areas, each with its own shell, a `screens/` folder (one component per route), local shared bits, and a `tokens.ts`. **Admin re-exports the sidequest tokens** — there is one design system.
 
@@ -148,23 +149,28 @@ sidequest/
 ├── season-code.tsx         # live current-season code (e.g. "S05") from the API
 ├── tokens.ts               # SQ.* colors + FONT.* + status/tag helpers → CSS custom properties
 │
-├── modal.tsx               # focus-trapped, esc-to-close base dialog
+├── modal.tsx               # focus-trapped, esc-to-close base dialog (supports stacking)
 ├── confirm-modal.tsx       # themed confirm/cancel over Modal (replaces window.confirm)
-├── avatar.tsx              # image (via mediaSrc) or initials fallback
+├── avatar.tsx              # image (via mediaSrc) or gradient fallback — now used by BOTH nav shells
+├── image-cropper.tsx       # interactive pan/zoom aspect-locked cropper (WYSIWYG) used by every upload
+├── onboarding-guard.tsx    # app-wide gate: forces onboardingRequired accounts to /onboarding
 ├── state-note.tsx          # inline loading / empty / error placeholder (tone: muted | error)
 ├── notification-bell.tsx   # header bell w/ unread badge (authed only)
 ├── searchable-select.tsx   # typeahead single-select
 ├── lineup-editor.tsx       # match-lineup picker dialog
-├── markdown.tsx            # react-markdown + remark-gfm, themed renderers
+├── markdown.tsx            # react-markdown + remark-gfm, themed renderers (no rehype-raw → XSS-safe)
 │
-├── auth/                   # login-form, signup-form, verify-email-form, forgot-form, auth-ui
-└── screens/                # 15 route screens (below)
+├── auth/                   # login-form, signup-form, verify-email-form, forgot-form, auth-ui (custom Google button)
+└── screens/                # 17 route screens (below)
 ```
 
-**`sidequest/screens/` (15):**
-`home` · `games` · `franchises` · `franchise` · `players` · `player` · `match` · `announcements` · `auction-bid` · `rules` · `notifications` · `register` · `my-franchise` · `my-registrations` · `profile-editor`
+**`sidequest/screens/` (17):**
+`home` · `games` · `franchises` · `franchise` · `players` · `player` · `match` · `announcements` · `announcement-detail` · `auction-bid` · `rules` · `notifications` · `onboarding` · `register` · `my-franchise` · `my-registrations` · `profile-editor`
 
-`auction-bid.tsx` is the live bid room (WebSocket for participants, polling for spectators); `profile-editor.tsx` backs the account/profile flows.
+`auction-bid.tsx` is the live bid room (WebSocket for participants, polling for spectators) **and** the
+no-auction standing-pool view (`NoAuctionPool`); `onboarding.tsx` is the SSO first-run account setup;
+`announcement-detail.tsx` is the single-announcement read page; `profile-editor.tsx` backs the account/profile
+flows. `games.tsx` also hosts the "Vote for your games" `VotePanel`.
 
 ### `components/admin/` — the control room
 
@@ -175,11 +181,11 @@ admin/
 ├── table-scroll.tsx        # horizontally-scrollable bordered table frame w/ min-width track
 ├── toggle.tsx              # 38×22 on/off switch (button or static indicator)
 ├── tokens.ts               # `export * from "@/components/sidequest/tokens"` (re-export)
-└── screens/                # 13 route screens (below)
+└── screens/                # 14 route screens (below)
 ```
 
-**`admin/screens/` (13):**
-`overview` · `matches` · `result` · `disputes` · `franchises` · `games` · `history` · `players` · `profile` · `registrations` · `settings` · `announcements` · `auction`
+**`admin/screens/` (14):**
+`overview` · `matches` · `result` · `disputes` · `franchises` · `games` · `history` · `players` · `profile` · `registrations` · `settings` · `announcements` · `auction` · `team` (super-admin-only "Admins" — appoint/revoke)
 
 (`matches/result/page.tsx` → `result.tsx`; `admin/page.tsx` → `overview.tsx`.)
 
@@ -189,25 +195,28 @@ Reusable primitives live at the top of `components/sidequest/` (not in `screens/
 
 ---
 
-## `src/lib` — data, state & helpers (14 files)
+## `src/lib` — data, state & helpers (17 files)
 
 ```
 lib/
 ├── api/
 │   ├── client.ts           # axios instance + interceptors + wsUrl/mediaSrc + build-time URL guard
-│   ├── endpoints.ts        # per-domain API functions (411 LOC)
-│   └── types.ts            # shared TS types mirroring backend DTOs (930 LOC)
+│   ├── endpoints.ts        # per-domain API functions (450 LOC)
+│   └── types.ts            # shared TS types mirroring backend DTOs (1022 LOC)
 ├── query/
-│   ├── hooks.ts            # ~all TanStack Query hooks + `qk` key factory + per-domain staleTimes (985 LOC)
+│   ├── hooks.ts            # ~all TanStack Query hooks + `qk` key factory + per-domain staleTimes (1097 LOC)
 │   └── use-auction-socket.ts   # WS hook: writes auction.update frames into ['auctions', id] cache
 ├── auth/
-│   ├── store.ts            # zustand session store (+ non-React `authTokens` accessors)
-│   └── context.tsx         # React AuthProvider / useAuth over the store
+│   ├── store.ts            # zustand session store (tokens/user/gamerTag/avatarUrl/onboardingRequired)
+│   └── context.tsx         # React AuthProvider / useAuth over the store (+ refreshUser)
 ├── adapters/
-│   ├── league.ts           # backend DTO → public display shapes (148 LOC)
-│   └── admin.ts            # backend DTO → admin display shapes (122 LOC)
+│   ├── league.ts           # backend DTO → public display shapes (150 LOC)
+│   └── admin.ts            # backend DTO → admin display shapes incl. ACTION_LABELS (207 LOC)
 ├── theme.tsx               # useTheme() light/dark controller (data-theme)
-├── image.ts                # client-side image compression (avatar/logo/banner presets)
+├── image.ts                # client-side image compress + interactive-crop primitives (avatar/logo/banner)
+├── routes.ts               # pretty-URL helpers (player/franchise/match/announcement/register hrefs)
+├── username.ts             # client mirror of the backend UsernameRules (instant signup/onboarding feedback)
+├── use-media-query.ts      # SSR-safe matchMedia hook (drives the responsive admin drawer)
 ├── ranks.ts                # per-game competitive rank presets (valorant, bgmi, cs2, …)
 ├── nav.ts                  # safeNextPath() — same-origin ?next= redirect guard
 └── utils.ts                # cn() = twMerge(clsx(...))
@@ -234,7 +243,7 @@ All server reads/writes are `useQuery`/`useInfiniteQuery`/`useMutation` hooks he
 
 ### `auth/` — session
 
-`store.ts` is a `zustand` store with `persist`: the **access token stays in memory** (re-minted from the refresh token on reload), only the **refresh token** is persisted to `localStorage` (`partialize`), for XSS hardening. It exposes non-React `authTokens` accessors so the axios interceptor can read/rotate tokens outside React. `context.tsx` layers a React `AuthProvider`/`useAuth` on top (`user`, `playerId`, `isAuthenticated`, `isAdmin`, `hydrated`, `login`/`signup`/`verify`), silently restoring a session via `GET /auth/me` on mount.
+`store.ts` is a `zustand` store with `persist`: the **access token stays in memory** (re-minted from the refresh token on reload), only the **refresh token** is persisted to `localStorage` (`partialize`), for XSS hardening. Beyond tokens/`user` it also holds `playerId`, `gamerTag`, `avatarUrl` (player→user fallback), and `onboardingRequired`, all re-derived from `/auth/me`. It exposes non-React `authTokens` accessors so the axios interceptor can read/rotate tokens outside React. `context.tsx` layers a React `AuthProvider`/`useAuth` on top (`user`, `playerId`, `gamerTag`, `avatarUrl`, `onboardingRequired`, `isAuthenticated`, `isAdmin`, `isSuperAdmin`, `hydrated`, `login`/`signup`/`verify`/`googleLogin`/`refreshUser`/`logout`), silently restoring a session via `GET /auth/me` on mount.
 
 ### `adapters/`
 
@@ -257,4 +266,4 @@ Pure mapping functions from backend DTOs to the display shapes screens render, k
 ## Limitations
 
 - **No automated unit/component test suite.** The quality gate is `tsc --noEmit` (`npm run typecheck`) + `next build` + ad-hoc **Playwright** browser E2E during development. Treat typecheck + a real browser pass as the definition of "verified" — see [./testing.md](./testing.md).
-- `hooks.ts` (~985 LOC) and `types.ts` (~930 LOC) are large single files by design (one place each for server state and DTO types); grep by `qk.*`/domain name rather than scrolling.
+- `hooks.ts` (~1100 LOC) and `types.ts` (~1020 LOC) are large single files by design (one place each for server state and DTO types); grep by `qk.*`/domain name rather than scrolling.

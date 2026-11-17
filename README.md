@@ -31,4 +31,4 @@ is preserved here.
 
 ## Licence
 
-Not chosen yet. Until a licence is added, all rights are reserved by the contributors.
+MIT, see [LICENSE](LICENSE). Published with the agreement of all three contributors.

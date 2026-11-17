@@ -1,0 +1,130 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /v1
+  compression:
+    enabled: true
+    mime-types: application/json,application/xml,text/html,text/css,application/javascript
+    min-response-size: 1024
+
+spring:
+  application:
+    name: sidequest-backend
+  profiles:
+    active: dev
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+  # Gmail SMTP — entirely env-driven. Spring only auto-configures a JavaMailSender when SMTP_HOST is set,
+  # so leaving it unset in dev means EmailService falls back to logging the OTP to the console.
+  mail:
+    host: ${SMTP_HOST:}
+    port: ${SMTP_PORT:587}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
+# JWT + app config (overridable via env)
+sidequest:
+  jwt:
+    secret: ${SIDEQUEST_JWT_SECRET:change-me-in-prod-this-is-a-very-long-dev-only-secret-key-0123456789}
+    access-token-ttl-seconds: ${SIDEQUEST_ACCESS_TTL:3600}       # 1 hour
+    refresh-token-ttl-seconds: ${SIDEQUEST_REFRESH_TTL:2592000}  # 30 days (rotated on every refresh)
+    issuer: sidequest.gg
+  cors:
+    allowed-origins: ${SIDEQUEST_CORS_ORIGINS:http://localhost:3000,http://localhost:5173}
+  mail:
+    from: ${SIDEQUEST_MAIL_FROM:no-reply@sidequest.gg}
+  google:
+    # Web OAuth client id used to verify Google Sign-In id_tokens. Empty in dev → /auth/google returns
+    # a clean "not configured" error and the frontend hides the Google button.
+    client-id: ${SIDEQUEST_GOOGLE_CLIENT_ID:}
+
+springdoc:
+  swagger-ui:
+    path: /docs
+    operations-sorter: method
+  api-docs:
+    path: /api-docs
+
+# Don't let the SMTP health probe gate the app's liveness — mail is best-effort (and unconfigured in dev),
+# so a mail outage must not flip /actuator/health to DOWN and fail the load-balancer check.
+management:
+  health:
+    mail:
+      enabled: false
+
+---
+# Default dev profile: in-memory H2, schema auto-created, demo data seeded.
+spring:
+  config:
+    activate:
+      on-profile: dev
+  datasource:
+    url: jdbc:h2:mem:sidequest;DB_CLOSE_DELAY=-1;MODE=PostgreSQL
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    properties:
+      hibernate:
+        format_sql: false
+    open-in-view: false
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+sidequest:
+  seed:
+    enabled: true
+
+---
+# Production-ish profile: PostgreSQL, additive schema updates (ddl-auto: update — adds missing
+# tables/columns/indexes, never drops), no seeding. A dedicated migration tool (Flyway) is the
+# recommended next step once the schema needs anything non-additive.
+spring:
+  config:
+    activate:
+      on-profile: postgres
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/sidequest}
+    username: ${SPRING_DATASOURCE_USERNAME:sidequest}
+    password: ${SPRING_DATASOURCE_PASSWORD:sidequest}
+    hikari:
+      # Size (tasks × pool) well under the RDS instance's max_connections.
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+      connection-timeout: 5000
+      leak-detection-threshold: 30000
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+
+# Behind an ALB/reverse proxy: honour X-Forwarded-* (Tomcat RemoteIpValve) so scheme/host/client-IP
+# resolve to the original request, not the load balancer.
+server:
+  forward-headers-strategy: native
+
+sidequest:
+  seed:
+    enabled: ${SIDEQUEST_SEED_ENABLED:false}
+  jwt:
+    # Required in production — no fallback, so the app fails fast at startup if the env var is unset
+    # rather than silently signing tokens with the committed dev-only secret.
+    secret: ${SIDEQUEST_JWT_SECRET}
+
+# The full API surface (including admin routes) should not be publicly browsable in production.
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false

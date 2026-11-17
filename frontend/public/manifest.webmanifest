@@ -1,0 +1,10 @@
+{
+  "name": "Side Quest Arena",
+  "short_name": "Side Quest",
+  "description": "Side Quest esports league — matches, standings, auctions.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FBF7F1",
+  "theme_color": "#FBF7F1",
+  "icons": []
+}

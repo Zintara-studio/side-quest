@@ -1,0 +1,8 @@
+import type { Metadata } from "next";
+import { PlayerScreen } from "@/components/sidequest/screens/player";
+
+export const metadata: Metadata = { title: "Player Profile" };
+
+export default function LeaguePlayerPage() {
+  return <PlayerScreen />;
+}

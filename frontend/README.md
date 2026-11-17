@@ -1,7 +1,7 @@
 # Side Quest — Frontend
 
 The web app for the **Side Quest** esports league — a **Next.js 15 / React 19 / TypeScript** client that
-talks to the [Side Quest backend](../SideQuests%20arena%20backend). It serves two audiences from one
+talks to the [Side Quest backend](../backend). It serves two audiences from one
 codebase: the **public league** (players, franchises, matches, standings, the live auction) and an
 **admin control room** (run seasons, matches, the auction, registrations, disputes).
 
